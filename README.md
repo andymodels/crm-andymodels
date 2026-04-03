@@ -18,6 +18,7 @@ Implementado até agora: **Dashboard** (resumo de caixa + alertas), **Cadastros*
 cd backend
 cp .env.example .env
 npm install
+npm run setup:db
 npm run dev
 ```
 
@@ -45,6 +46,12 @@ npm run dev
 
 Detalhes e regras de negócio: **`BLUEPRINT.md`**.
 
+## Deploy (Render)
+
+- **Root Directory:** `backend` (pasta do serviço Node no repositório).
+- **Start Command:** `node scripts/setup-db.js && node src/server.js`
+- Defina `DATABASE_URL` (e demais variáveis) no painel do Render. O script `setup-db.js` roda `initDb` antes do servidor subir, criando/atualizando tabelas e colunas conforme `src/config/db.js`.
+
 ## Observacao
 
-As tabelas sao criadas automaticamente na inicializacao da API.
+- O setup do banco também pode ser feito manualmente: na pasta `backend`, `npm run setup:db`.
