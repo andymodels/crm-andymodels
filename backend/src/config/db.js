@@ -2,16 +2,19 @@ const { Pool } = require('pg');
 
 const connectionString = process.env.DATABASE_URL;
 
-if (!connectionString) {
-  // Keep startup explicit: user must provide PostgreSQL connection.
-  throw new Error('DATABASE_URL is required in environment variables.');
+/** Sem DATABASE_URL o processo sobe na mesma; rotas de dados respondem 503 (ver app.js). */
+let pool = null;
+if (connectionString) {
+  pool = new Pool({
+    connectionString,
+  });
 }
 
-const pool = new Pool({
-  connectionString,
-});
-
 const initDb = async () => {
+  if (!pool) {
+    console.warn('[initDb] DATABASE_URL ausente — migrações não executadas.');
+    return;
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS clientes (
       id SERIAL PRIMARY KEY,
@@ -299,4 +302,5 @@ const initDb = async () => {
 module.exports = {
   pool,
   initDb,
+  isDbReady: () => Boolean(pool),
 };

@@ -1,20 +1,20 @@
 require('dotenv').config();
 
 const app = require('./app');
+const { initDb } = require('./config/db');
 
-// Render (e outros PaaS) definhem PORT; localmente usa 3001. PORT vem como string no ambiente.
+// Render (e outros PaaS) definhem PORT; localmente usa 3001.
 const PORT = Number(process.env.PORT) || 3001;
 const HOST = '0.0.0.0';
 
-function start() {
+// O HTTP sobe de imediato; initDb corre em background e não bloqueia o arranque.
+app.listen(PORT, HOST, () => {
+  console.log(`API running on http://${HOST}:${PORT}`);
   try {
-    app.listen(PORT, HOST, () => {
-      console.log(`API running on http://${HOST}:${PORT}`);
+    initDb().catch((err) => {
+      console.error('[initDb] falhou (API continua ativa):', err.message || err);
     });
-  } catch (error) {
-    console.error('Failed to start API:', error.message);
-    process.exit(1);
+  } catch (err) {
+    console.error('[initDb] erro ao agendar:', err.message || err);
   }
-}
-
-start();
+});

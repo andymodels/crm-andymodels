@@ -30,7 +30,7 @@ async function run() {
     console.error('Falha no setup do banco:', err.message || err);
     process.exitCode = 1;
   } finally {
-    await pool.end();
+    if (pool) await pool.end();
   }
 }
 

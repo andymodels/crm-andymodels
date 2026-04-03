@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { pool } = require('./config/db');
 const cadastrosRouter = require('./routes/cadastros');
 const orcamentosRouter = require('./routes/orcamentos');
 const ordensServicoRouter = require('./routes/ordens_servico');
@@ -12,6 +13,15 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.use((req, res, next) => {
+  if (req.path === '/health') return next();
+  if (pool) return next();
+  res.status(503).json({
+    message:
+      'Base de dados indisponível. Configure DATABASE_URL (variável de ambiente).',
+  });
+});
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
