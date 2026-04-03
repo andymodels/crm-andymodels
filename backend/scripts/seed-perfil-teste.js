@@ -13,7 +13,8 @@
  */
 
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+const { loadEnvFile } = require('../src/config/loadEnv');
+loadEnvFile(path.join(__dirname, '..'));
 
 if (!process.env.DATABASE_URL) {
   console.error('Erro: defina DATABASE_URL no arquivo backend/.env');

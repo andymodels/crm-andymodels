@@ -8,9 +8,10 @@
  */
 
 const path = require('path');
+const { loadEnvFile } = require('../src/config/loadEnv');
 
-// Carregar .env ANTES de `require('../src/config/db')`, que valida DATABASE_URL na carga do módulo.
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+// Local: backend/.env. Render: variáveis vêm do painel.
+loadEnvFile(path.join(__dirname, '..'));
 
 if (!process.env.DATABASE_URL) {
   console.error(
