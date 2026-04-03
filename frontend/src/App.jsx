@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import DynamicTextListField from './components/DynamicTextListField';
 import OperacaoCalendar from './components/OperacaoCalendar';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const rawApi = import.meta.env.VITE_API_URL;
+const API_URL =
+  rawApi !== undefined && String(rawApi).trim() !== ''
+    ? String(rawApi).replace(/\/$/, '')
+    : import.meta.env.DEV
+      ? 'http://localhost:3001'
+      : '';
 
 const formatBRL = (value) => {
   const n = Number(value || 0);

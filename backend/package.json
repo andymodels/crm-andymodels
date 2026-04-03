@@ -5,6 +5,8 @@
   "main": "src/server.js",
   "scripts": {
     "build": "node -e \"process.exit(0)\"",
+    "copy-frontend": "node scripts/copy-frontend.js",
+    "render-build": "npm install --prefix ../frontend && npm run build --prefix ../frontend && node scripts/copy-frontend.js",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "setup:db": "node scripts/setup-db.js",

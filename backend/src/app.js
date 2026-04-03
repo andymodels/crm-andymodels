@@ -1,3 +1,5 @@
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const { pool } = require('./config/db');
@@ -27,14 +29,6 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/', (_req, res) => {
-  res.json({
-    service: 'Andy Models CRM API',
-    health: '/health',
-    note: 'A interface web é o frontend (Vite/React); esta URL é só a API.',
-  });
-});
-
 app.use('/api', cadastrosRouter);
 app.use('/', cadastrosRouter);
 app.use('/api', orcamentosRouter);
@@ -49,6 +43,20 @@ app.use('/api', extratoModeloRouter);
 app.use('/', extratoModeloRouter);
 app.use('/api', financeiroRouter);
 app.use('/', financeiroRouter);
+
+const publicDir = path.join(__dirname, '..', 'public');
+if (fs.existsSync(path.join(publicDir, 'index.html'))) {
+  app.use(express.static(publicDir));
+} else {
+  app.get('/', (_req, res) => {
+    res.json({
+      service: 'Andy Models CRM API',
+      health: '/health',
+      note:
+        'Interface: faça build do frontend e copie para backend/public (npm run render-build no backend), ou use o Vite em dev.',
+    });
+  });
+}
 
 app.use((error, _req, res, _next) => {
   console.error(error);
