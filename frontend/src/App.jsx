@@ -88,7 +88,7 @@ const calculateAge = (birthDate) => {
 const cadastroConfig = {
   clientes: {
     label: 'Clientes',
-    endpoint: 'clients',
+    endpoint: 'clientes',
     columns: ['nome_empresa', 'tipo_pessoa', 'documento', 'contato_principal', 'documento_representante', 'telefones', 'emails'],
     form: {
       tipo_pessoa: 'PJ',
@@ -358,7 +358,7 @@ function App() {
   useEffect(() => {
     const loadClients = async () => {
       try {
-        const response = await fetch(`${API_URL}/clients`);
+        const response = await fetch(`${API_URL}/clientes`);
         if (!response.ok) throw new Error();
         const data = await response.json();
         setClients(data);
