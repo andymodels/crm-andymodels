@@ -27,6 +27,14 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.get('/', (_req, res) => {
+  res.json({
+    service: 'Andy Models CRM API',
+    health: '/health',
+    note: 'A interface web é o frontend (Vite/React); esta URL é só a API.',
+  });
+});
+
 app.use('/api', cadastrosRouter);
 app.use('/', cadastrosRouter);
 app.use('/api', orcamentosRouter);
