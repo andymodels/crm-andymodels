@@ -46,8 +46,12 @@ if (fs.existsSync(path.join(publicDir, 'index.html'))) {
     res.json({
       service: 'Andy Models CRM API',
       health: '/health',
-      note:
-        'Interface: faça build do frontend e copie para backend/public (npm run render-build no backend), ou use o Vite em dev.',
+      dev: {
+        recomendado:
+          'Dois terminais: (1) cd backend && npm run dev  (2) cd frontend && npm run dev — abra http://localhost:5173 (VITE_API_URL=http://localhost:3001 no frontend/.env).',
+        umaPortaSo:
+          'Na pasta backend: npm run build (compila o React e gera backend/public). Depois atualize esta página.',
+      },
     });
   });
 }
