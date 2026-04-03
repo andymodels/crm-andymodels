@@ -32,20 +32,31 @@ const makeCrudRoutes = ({
 
   router.post(`/${path}`, async (req, res, next) => {
     try {
+      const body = { ...req.body };
+      if (table === 'modelos') {
+        if (body.chave_pix == null) body.chave_pix = '';
+        if (body.banco_dados == null) body.banco_dados = '';
+      }
+      if (table === 'bookers' || table === 'parceiros') {
+        if (body.chave_pix == null) body.chave_pix = '';
+      }
+
       if (validatePayload) {
-        const validation = validatePayload(req.body);
+        const validation = validatePayload(body);
         if (!validation.valid) return res.status(400).json({ message: validation.message });
       }
 
-      const missing = requiredFields.filter((field) => req.body[field] === undefined || req.body[field] === null || req.body[field] === '');
+      const missing = requiredFields.filter(
+        (field) => body[field] === undefined || body[field] === null || body[field] === '',
+      );
       if (missing.length > 0) {
         return res.status(400).json({
           message: `Campos obrigatorios faltando: ${missing.join(', ')}`,
         });
       }
 
-      const columns = Object.keys(req.body);
-      const values = Object.values(req.body);
+      const columns = Object.keys(body);
+      const values = Object.values(body);
       const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(', ');
 
       const query = `

@@ -54,6 +54,22 @@ if (fs.existsSync(path.join(publicDir, 'index.html'))) {
 
 app.use((error, _req, res, _next) => {
   console.error(error);
+  if (error.code === '23502') {
+    return res.status(400).json({
+      message: `Campo obrigatorio no banco: ${error.column || 'desconhecido'}.`,
+    });
+  }
+  if (error.code === '23503') {
+    return res.status(400).json({ message: 'Referencia invalida (registro ligado nao existe).' });
+  }
+  if (error.code === '42703') {
+    return res.status(400).json({ message: 'Coluna invalida no pedido (verifique versao do sistema).' });
+  }
+  if (error.code && String(error.code).startsWith('23')) {
+    return res.status(400).json({
+      message: error.detail || error.message || 'Erro de validacao no banco de dados.',
+    });
+  }
   res.status(500).json({ message: 'Erro interno no servidor.' });
 });
 
