@@ -56,6 +56,11 @@ const makeCrudRoutes = ({
       const result = await pool.query(query, values);
       return res.status(201).json(result.rows[0]);
     } catch (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({
+          message: 'Ja existe um cadastro com este documento ou CPF/CNPJ (valor unico na base).',
+        });
+      }
       next(error);
     }
   });
@@ -100,6 +105,11 @@ const makeCrudRoutes = ({
 
       return res.json(result.rows[0]);
     } catch (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({
+          message: 'Ja existe um cadastro com este documento ou CPF/CNPJ (valor unico na base).',
+        });
+      }
       next(error);
     }
   });

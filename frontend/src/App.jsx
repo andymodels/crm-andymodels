@@ -829,18 +829,36 @@ function App() {
         payload.endereco_completo = `${form.logradouro || ''}, ${form.numero || ''} - ${form.bairro || ''}, ${form.cidade || ''}/${form.uf || ''} CEP ${form.cep || ''}`.trim();
       }
 
+      if (isModeloTab) {
+        const d = String(payload.data_nascimento || '').trim();
+        payload.data_nascimento = d || null;
+      }
+
+      if (method === 'POST') {
+        delete payload.id;
+      }
+
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || 'Erro ao salvar cadastro.');
+      const raw = await response.text();
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error(
+          raw?.slice(0, 300) || `Resposta inválida do servidor (HTTP ${response.status}).`,
+        );
       }
 
-      const saved = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `Erro ao salvar cadastro (HTTP ${response.status}).`);
+      }
+
+      const saved = data;
 
       if (editingId) {
         setItems((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
@@ -851,8 +869,12 @@ function App() {
       setError('');
       setEditingId(null);
       setForm(current.form);
-    } catch {
-      setError('Erro ao salvar cadastro. Verifique conexão com servidor.');
+    } catch (e) {
+      setError(
+        e?.message && String(e.message).trim()
+          ? e.message
+          : 'Erro ao salvar cadastro. Verifique conexão com servidor.',
+      );
     }
   };
 
