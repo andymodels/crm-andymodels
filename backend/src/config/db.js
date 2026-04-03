@@ -75,14 +75,6 @@ const initDb = async () => {
     ALTER TABLE clientes
     ADD COLUMN IF NOT EXISTS documento_representante TEXT NOT NULL DEFAULT '';
   `);
-  await pool.query(`
-    ALTER TABLE ordens_servico
-    ADD COLUMN IF NOT EXISTS data_vencimento_cliente DATE;
-  `);
-  await pool.query(`
-    ALTER TABLE os_modelos
-    ADD COLUMN IF NOT EXISTS data_prevista_pagamento DATE;
-  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS modelos (
@@ -251,6 +243,10 @@ const initDb = async () => {
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinado_em TIMESTAMP;`);
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_status TEXT;`);
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_observacao TEXT;`);
+  await pool.query(`
+    ALTER TABLE ordens_servico
+    ADD COLUMN IF NOT EXISTS data_vencimento_cliente DATE;
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS os_modelos (
@@ -261,6 +257,10 @@ const initDb = async () => {
       emite_nf_propria BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+  `);
+  await pool.query(`
+    ALTER TABLE os_modelos
+    ADD COLUMN IF NOT EXISTS data_prevista_pagamento DATE;
   `);
 
   await pool.query(`
