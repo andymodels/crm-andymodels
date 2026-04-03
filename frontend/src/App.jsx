@@ -171,6 +171,7 @@ function App() {
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cadastroSaving, setCadastroSaving] = useState(false);
   const [apiOnline, setApiOnline] = useState(true);
   const [clients, setClients] = useState([]);
   const [orcamentos, setOrcamentos] = useState([]);
@@ -772,11 +773,12 @@ function App() {
   const onSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    setCadastroSaving(true);
     try {
       const method = editingId ? 'PUT' : 'POST';
-      const url = editingId
-        ? `${API_BASE}/${current.endpoint}/${editingId}`
-        : `${API_BASE}/${current.endpoint}`;
+      const base = API_BASE.replace(/\/$/, '');
+      const ep = String(current.endpoint).replace(/^\/+/, '');
+      const url = editingId ? `${base}/${ep}/${editingId}` : `${base}/${ep}`;
 
       const payload = { ...form };
       if (Array.isArray(form.formas_pagamento)) {
@@ -878,6 +880,8 @@ function App() {
           ? e.message
           : 'Erro ao salvar cadastro. Verifique conexão com servidor.',
       );
+    } finally {
+      setCadastroSaving(false);
     }
   };
 
@@ -1894,7 +1898,11 @@ function App() {
           )}
 
           {module === 'cadastros' && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={onSubmit}>
+            <form
+              className="grid grid-cols-1 gap-3 md:grid-cols-2"
+              onSubmit={onSubmit}
+              noValidate
+            >
               {isModeloTab && (
                 <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   {idadeModelo === null
@@ -2035,20 +2043,25 @@ function App() {
                       value={form[field] ?? ''}
                       onChange={(event) => onChange(field, event.target.value)}
                       onBlur={isClienteTab && field === 'cep' ? buscarEnderecoPorCep : undefined}
-                      required={contractRequiredCliente || (isModeloTab && field === 'cpf')}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
                     />
                   </label>
                 );
               })}
 
+              {error && (
+                <p className="md:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+                  {error}
+                </p>
+              )}
               <div className="md:col-span-2 flex flex-wrap gap-3 pt-2">
                 <button
                   type="submit"
-                  className="rounded-xl px-4 py-2 text-sm font-medium text-white"
+                  disabled={cadastroSaving}
+                  className="rounded-xl px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                   style={{ backgroundColor: BRAND_ORANGE }}
                 >
-                  {editingId ? 'Atualizar cadastro' : 'Salvar cadastro'}
+                  {cadastroSaving ? 'Salvando…' : editingId ? 'Atualizar cadastro' : 'Salvar cadastro'}
                 </button>
                 {editingId && (
                   <button
@@ -2064,7 +2077,6 @@ function App() {
                 )}
               </div>
             </form>
-            {error && <p className="mt-3 text-sm font-medium text-red-600">{error}</p>}
           </section>}
 
           {module === 'cadastros' && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
