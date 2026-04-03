@@ -29,20 +29,14 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Rotas da API só em /api — evita conflito com express.static (SPA) no /
 app.use('/api', cadastrosRouter);
-app.use('/', cadastrosRouter);
 app.use('/api', orcamentosRouter);
-app.use('/', orcamentosRouter);
 app.use('/api', ordensServicoRouter);
-app.use('/', ordensServicoRouter);
 app.use('/api', osDocumentosRouter);
-app.use('/', osDocumentosRouter);
 app.use('/api', dashboardRouter);
-app.use('/', dashboardRouter);
 app.use('/api', extratoModeloRouter);
-app.use('/', extratoModeloRouter);
 app.use('/api', financeiroRouter);
-app.use('/', financeiroRouter);
 
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {

@@ -10,6 +10,9 @@ const API_URL =
       ? 'http://localhost:3001'
       : '';
 
+/** Rotas Express montadas em `/api` (ver backend/src/app.js). */
+const API_BASE = API_URL ? `${API_URL}/api` : '/api';
+
 const formatBRL = (value) => {
   const n = Number(value || 0);
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number.isFinite(n) ? n : 0);
@@ -257,7 +260,7 @@ function App() {
 
   const refreshAlertasOperacionais = async () => {
     try {
-      const response = await fetch(`${API_URL}/dashboard/alertas`);
+      const response = await fetch(`${API_BASE}/dashboard/alertas`);
       if (response.ok) setAlertasOperacionais(await response.json());
     } catch {
       /* ignore */
@@ -287,8 +290,8 @@ function App() {
       setDashboardResumoLoading(true);
       try {
         const [aRes, fRes] = await Promise.all([
-          fetch(`${API_URL}/dashboard/alertas`),
-          fetch(`${API_URL}/financeiro/resumo`),
+          fetch(`${API_BASE}/dashboard/alertas`),
+          fetch(`${API_BASE}/financeiro/resumo`),
         ]);
         if (cancelled) return;
         if (aRes.ok) setAlertasOperacionais(await aRes.json());
@@ -313,7 +316,7 @@ function App() {
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await fetch(`${API_URL}/financeiro/os/${finForm.os_id}/contexto`);
+        const r = await fetch(`${API_BASE}/financeiro/os/${finForm.os_id}/contexto`);
         if (!r.ok) {
           if (!cancelled) setFinOsContexto(null);
           return;
@@ -341,7 +344,7 @@ function App() {
     const load = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`${API_URL}/${current.endpoint}`);
+        const response = await fetch(`${API_BASE}/${current.endpoint}`);
         if (!response.ok) throw new Error(LOAD_ERROR_MESSAGE);
         const data = await response.json();
         setItems(data);
@@ -358,7 +361,7 @@ function App() {
   useEffect(() => {
     const loadClients = async () => {
       try {
-        const response = await fetch(`${API_URL}/clientes`);
+        const response = await fetch(`${API_BASE}/clientes`);
         if (!response.ok) throw new Error();
         const data = await response.json();
         setClients(data);
@@ -375,7 +378,7 @@ function App() {
     const loadOrcamentos = async () => {
       try {
         setOrcamentoLoading(true);
-        const response = await fetch(`${API_URL}/orcamentos`);
+        const response = await fetch(`${API_BASE}/orcamentos`);
         if (!response.ok) throw new Error();
         const data = await response.json();
         setOrcamentos(data);
@@ -400,9 +403,9 @@ function App() {
       setFinError('');
       try {
         const [r1, r2, r3] = await Promise.all([
-          fetch(`${API_URL}/financeiro/resumo`),
-          fetch(`${API_URL}/financeiro/recebimentos`),
-          fetch(`${API_URL}/ordens-servico`),
+          fetch(`${API_BASE}/financeiro/resumo`),
+          fetch(`${API_BASE}/financeiro/recebimentos`),
+          fetch(`${API_BASE}/ordens-servico`),
         ]);
         if (!r1.ok || !r2.ok || !r3.ok) throw new Error();
         setFinResumo(await r1.json());
@@ -424,11 +427,11 @@ function App() {
       setExtratoError('');
       try {
         const [mRes, exRes] = await Promise.all([
-          fetch(`${API_URL}/modelos`),
+          fetch(`${API_BASE}/modelos`),
           fetch(
             extratoModeloFilter
-              ? `${API_URL}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
-              : `${API_URL}/extrato-modelo`,
+              ? `${API_BASE}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
+              : `${API_BASE}/extrato-modelo`,
           ),
         ]);
         if (!mRes.ok || !exRes.ok) throw new Error();
@@ -449,10 +452,10 @@ function App() {
       try {
         setOsLoading(true);
         const [osRes, modRes, bookRes, parRes] = await Promise.all([
-          fetch(`${API_URL}/ordens-servico`),
-          fetch(`${API_URL}/modelos`),
-          fetch(`${API_URL}/bookers`),
-          fetch(`${API_URL}/parceiros`),
+          fetch(`${API_BASE}/ordens-servico`),
+          fetch(`${API_BASE}/modelos`),
+          fetch(`${API_BASE}/bookers`),
+          fetch(`${API_BASE}/parceiros`),
         ]);
         if (!osRes.ok || !modRes.ok || !bookRes.ok || !parRes.ok) throw new Error();
         setOsList(await osRes.json());
@@ -472,7 +475,7 @@ function App() {
   const loadOsDetail = async (id) => {
     setOsError('');
     try {
-      const response = await fetch(`${API_URL}/ordens-servico/${id}`);
+      const response = await fetch(`${API_BASE}/ordens-servico/${id}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || LOAD_ERROR_MESSAGE);
       setOsDraft({
@@ -591,7 +594,7 @@ function App() {
         payload.cache_modelo_total = Number(osDraft.cache_modelo_total ?? 0);
       }
 
-      const response = await fetch(`${API_URL}/ordens-servico/${osDraft.id}`, {
+      const response = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -615,7 +618,7 @@ function App() {
         documentos: Array.isArray(data.documentos) ? data.documentos : [],
       });
       if (data.cliente_email) setContratoEmailDest(String(data.cliente_email));
-      const listRes = await fetch(`${API_URL}/ordens-servico`);
+      const listRes = await fetch(`${API_BASE}/ordens-servico`);
       if (listRes.ok) setOsList(await listRes.json());
       await refreshAlertasOperacionais();
     } catch (requestError) {
@@ -632,12 +635,12 @@ function App() {
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('tipo', tipo);
-      const res = await fetch(`${API_URL}/ordens-servico/${osDraft.id}/documentos`, { method: 'POST', body: fd });
+      const res = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}/documentos`, { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erro no upload.');
       await loadOsDetail(osDraft.id);
       await refreshAlertasOperacionais();
-      const listRes = await fetch(`${API_URL}/ordens-servico`);
+      const listRes = await fetch(`${API_BASE}/ordens-servico`);
       if (listRes.ok) setOsList(await listRes.json());
     } catch (e) {
       setOsError(e.message || LOAD_ERROR_MESSAGE);
@@ -649,7 +652,7 @@ function App() {
     setContratoEmailLoading(true);
     setContratoEmailMsg('');
     try {
-      const r = await fetch(`${API_URL}/ordens-servico/${osDraft.id}/contrato-enviar-email`, {
+      const r = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}/contrato-enviar-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -671,7 +674,7 @@ function App() {
     if (!osDraft?.id || !window.confirm('Remover este arquivo?')) return;
     setOsError('');
     try {
-      const res = await fetch(`${API_URL}/ordens-servico/${osDraft.id}/documentos/${docId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}/documentos/${docId}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erro ao remover.');
       await loadOsDetail(osDraft.id);
@@ -685,7 +688,7 @@ function App() {
     event.preventDefault();
     setFinError('');
     try {
-      const res = await fetch(`${API_URL}/financeiro/recebimentos`, {
+      const res = await fetch(`${API_BASE}/financeiro/recebimentos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -700,9 +703,9 @@ function App() {
       setFinForm({ os_id: '', valor: '', data_recebimento: '', observacao: '' });
       setFinOsContexto(null);
       const [r1, r2, r3] = await Promise.all([
-        fetch(`${API_URL}/financeiro/resumo`),
-        fetch(`${API_URL}/financeiro/recebimentos`),
-        fetch(`${API_URL}/ordens-servico`),
+        fetch(`${API_BASE}/financeiro/resumo`),
+        fetch(`${API_BASE}/financeiro/recebimentos`),
+        fetch(`${API_BASE}/ordens-servico`),
       ]);
       if (r1.ok) setFinResumo(await r1.json());
       if (r2.ok) setFinRecebimentos(await r2.json());
@@ -717,7 +720,7 @@ function App() {
     event.preventDefault();
     setExtratoError('');
     try {
-      const res = await fetch(`${API_URL}/financeiro/pagamentos-modelo`, {
+      const res = await fetch(`${API_BASE}/financeiro/pagamentos-modelo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -732,8 +735,8 @@ function App() {
       setPagamentoForm({ os_modelo_id: '', valor: '', data_pagamento: '', observacao: '' });
       const exRes = await fetch(
         extratoModeloFilter
-          ? `${API_URL}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
-          : `${API_URL}/extrato-modelo`,
+          ? `${API_BASE}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
+          : `${API_BASE}/extrato-modelo`,
       );
       if (exRes.ok) setExtratoRows(await exRes.json());
       await refreshAlertasOperacionais();
@@ -772,8 +775,8 @@ function App() {
     try {
       const method = editingId ? 'PUT' : 'POST';
       const url = editingId
-        ? `${API_URL}/${current.endpoint}/${editingId}`
-        : `${API_URL}/${current.endpoint}`;
+        ? `${API_BASE}/${current.endpoint}/${editingId}`
+        : `${API_BASE}/${current.endpoint}`;
 
       const payload = { ...form };
       if (Array.isArray(form.formas_pagamento)) {
@@ -917,7 +920,7 @@ function App() {
 
     setError('');
     try {
-      const response = await fetch(`${API_URL}/${current.endpoint}/${id}`, { method: 'DELETE' });
+      const response = await fetch(`${API_BASE}/${current.endpoint}/${id}`, { method: 'DELETE' });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.message || 'Erro ao deletar cadastro.');
@@ -994,8 +997,8 @@ function App() {
     try {
       const method = orcamentoEditingId ? 'PUT' : 'POST';
       const url = orcamentoEditingId
-        ? `${API_URL}/orcamentos/${orcamentoEditingId}`
-        : `${API_URL}/orcamentos`;
+        ? `${API_BASE}/orcamentos/${orcamentoEditingId}`
+        : `${API_BASE}/orcamentos`;
 
       const payload = {
         ...orcamentoForm,
@@ -1036,7 +1039,7 @@ function App() {
         territorio: '',
       });
 
-      const refresh = await fetch(`${API_URL}/orcamentos`);
+      const refresh = await fetch(`${API_BASE}/orcamentos`);
       if (refresh.ok) setOrcamentos(await refresh.json());
     } catch (requestError) {
       setOrcamentoError(requestError.message);
@@ -1063,10 +1066,10 @@ function App() {
     if (!window.confirm('Aprovar este orçamento e gerar O.S.?')) return;
     setOrcamentoError('');
     try {
-      const response = await fetch(`${API_URL}/orcamentos/${id}/aprovar`, { method: 'POST' });
+      const response = await fetch(`${API_BASE}/orcamentos/${id}/aprovar`, { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'Erro ao aprovar orçamento.');
-      const refresh = await fetch(`${API_URL}/orcamentos`);
+      const refresh = await fetch(`${API_BASE}/orcamentos`);
       if (refresh.ok) setOrcamentos(await refresh.json());
       alert(data.message);
     } catch (requestError) {
@@ -1291,7 +1294,7 @@ function App() {
           {module === 'inicio' && (
             <>
               <OperacaoCalendar
-                apiUrl={API_URL}
+                apiUrl={API_BASE}
                 onOpenOs={(osId) => {
                   setModule('jobs');
                   loadOsDetail(osId);
@@ -2188,7 +2191,7 @@ function App() {
                     </button>
                     {orcamentoEditingId && (
                       <a
-                        href={`${API_URL}/orcamentos/${orcamentoEditingId}/pdf`}
+                        href={`${API_BASE}/orcamentos/${orcamentoEditingId}/pdf`}
                         target="_blank"
                         rel="noreferrer"
                         className="text-sm font-medium text-slate-700 underline"
@@ -2272,7 +2275,7 @@ function App() {
                                   Aprovar
                                 </button>
                                 <a
-                                  href={`${API_URL}/orcamentos/${item.id}/pdf`}
+                                  href={`${API_BASE}/orcamentos/${item.id}/pdf`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700"
@@ -2333,7 +2336,7 @@ function App() {
                                   Abrir
                                 </button>
                                 <a
-                                  href={`${API_URL}/ordens-servico/${row.id}/pdf`}
+                                  href={`${API_BASE}/ordens-servico/${row.id}/pdf`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700"
@@ -2362,7 +2365,7 @@ function App() {
                     </h3>
                     <div className="flex flex-wrap items-center gap-2">
                       <a
-                        href={`${API_URL}/ordens-servico/${osDraft.id}/pdf`}
+                        href={`${API_BASE}/ordens-servico/${osDraft.id}/pdf`}
                         target="_blank"
                         rel="noreferrer"
                         className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-800"
@@ -2661,7 +2664,7 @@ function App() {
                         <div className="mt-3 space-y-3 text-sm">
                           <p>
                             <a
-                              href={`${API_URL}/ordens-servico/${osDraft.id}/contrato-preview`}
+                              href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-preview`}
                               target="_blank"
                               rel="noreferrer"
                               className="font-medium text-amber-800 underline"
@@ -2738,7 +2741,7 @@ function App() {
                               <span className="text-xs font-medium uppercase text-slate-500">{d.tipo}</span>
                               <span className="flex-1 truncate">{d.nome_arquivo}</span>
                               <a
-                                href={`${API_URL}/ordens-servico/${osDraft.id}/documentos/${d.id}/download`}
+                                href={`${API_BASE}/ordens-servico/${osDraft.id}/documentos/${d.id}/download`}
                                 className="text-xs font-medium text-amber-700 underline"
                                 target="_blank"
                                 rel="noreferrer"

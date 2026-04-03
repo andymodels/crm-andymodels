@@ -50,6 +50,7 @@ Detalhes e regras de negócio: **`BLUEPRINT.md`**.
 
 - **Root Directory:** `backend` (pasta do serviço Node no repositório).
 - **Build Command:** `npm install` **ou** `npm install && npm run build` (no Render, após instalar dependências corre automaticamente o build do React para `backend/public`).
+- A API HTTP expõe rotas em **`/api/...`** (o frontend já usa esse prefixo; `/health` continua na raiz).
 - **Start Command:** `node scripts/setup-db.js && node src/server.js`
 - Defina `DATABASE_URL` (e demais variáveis) no painel do Render. O script `setup-db.js` roda `initDb` antes do servidor subir, criando/atualizando tabelas e colunas conforme `src/config/db.js`.
 
