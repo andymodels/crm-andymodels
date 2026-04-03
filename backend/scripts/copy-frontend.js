@@ -13,9 +13,13 @@ const pub = path.join(backendRoot, 'public');
 
 const index = path.join(dist, 'index.html');
 if (!fs.existsSync(index)) {
-  console.warn(
-    '[copy-frontend] frontend/dist não encontrado (corra npm run build no frontend). UI não será servida pela API.',
-  );
+  const msg =
+    '[copy-frontend] frontend/dist não encontrado. Corra: npm run build na pasta frontend (ou npm run build no backend).';
+  if (process.env.RENDER === 'true') {
+    console.error(msg);
+    process.exit(1);
+  }
+  console.warn(msg + ' UI não será servida pela API.');
   process.exit(0);
 }
 
