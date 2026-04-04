@@ -1,17 +1,59 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './components/DynamicTextListField';
 import OperacaoCalendar from './components/OperacaoCalendar';
+import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
+import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
+import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
 
 const rawApi = import.meta.env.VITE_API_URL;
-const API_URL =
-  rawApi !== undefined && String(rawApi).trim() !== ''
-    ? String(rawApi).replace(/\/$/, '')
-    : import.meta.env.DEV
-      ? 'http://localhost:3001'
-      : '';
+const trimmed =
+  rawApi !== undefined && rawApi !== null ? String(rawApi).trim() : '';
+const DEV_PROXY_PORT = import.meta.env.VITE_DEV_PROXY_PORT || '3030';
+
+/** Em dev, URLs locais passam pelo proxy do Vite (vite.config.js) — evita bloqueios entre portas. */
+const useViteProxy =
+  import.meta.env.DEV &&
+  (trimmed === '' ||
+    trimmed === `http://localhost:${DEV_PROXY_PORT}` ||
+    trimmed === `http://127.0.0.1:${DEV_PROXY_PORT}` ||
+    trimmed === 'http://localhost:3001' ||
+    trimmed === 'http://127.0.0.1:3001' ||
+    trimmed === 'http://localhost:3002' ||
+    trimmed === 'http://127.0.0.1:3002');
+const API_URL = useViteProxy
+  ? ''
+  : trimmed !== ''
+    ? trimmed.replace(/\/$/, '')
+    : '';
 
 /** Rotas Express montadas em `/api` (ver backend/src/app.js). */
 const API_BASE = API_URL ? `${API_URL}/api` : '/api';
+
+const API_REQUEST_MS = 25_000;
+
+/** Corta pedidos ao backend; sem isto o botão fica em "Salvando…" se a API não responder. */
+function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), API_REQUEST_MS);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+    clearTimeout(id);
+  });
+}
+
+/** Express devolve HTML "Cannot POST /api/..." quando não há rota — outro servidor na mesma porta. */
+function throwIfHtmlOrCannotPost(raw, httpStatus) {
+  const t = String(raw || '');
+  if (!t.includes('<') && !/cannot\s+post/i.test(t)) return;
+  const m = t.match(/Cannot POST\s+([^\s<]+)/i);
+  if (m) {
+    throw new Error(
+      `A porta do backend não é a deste CRM (pedido ${m[1]} foi recusado). Feche o outro programa nessa porta ou alinhe PORT no backend/.env com VITE_DEV_PROXY_PORT no frontend/.env e reinicie.`,
+    );
+  }
+  throw new Error(
+    `Resposta inválida (HTML) do servidor (HTTP ${httpStatus}). Confirme que corre "npm run dev" na pasta backend deste projeto.`,
+  );
+}
 
 const formatBRL = (value) => {
   const n = Number(value || 0);
@@ -54,22 +96,63 @@ const fieldLabels = {
   cnpj_ou_cpf: 'CNPJ ou CPF',
   tipo_servico: 'Tipo de serviço',
   contato: 'Contato',
+  website: 'Website',
 };
 
 const labelForField = (field) => fieldLabels[field] || field;
-const emptyFormaRecebimento = { tipo: 'PIX', tipo_chave_pix: 'CPF', valor: '' };
+
+const emptyFormaRecebimento = {
+  tipo: 'PIX',
+  tipo_chave_pix: 'CPF',
+  chave_pix: '',
+  banco: '',
+  agencia: '',
+  conta: '',
+  tipo_conta: 'corrente',
+};
+
 const normalizeFormasRecebimento = (formas) => {
   if (!Array.isArray(formas) || formas.length === 0) return [{ ...emptyFormaRecebimento }];
   return formas.map((item) => {
     if (typeof item === 'string') {
-      return { tipo: 'PIX', valor: item };
+      return { ...emptyFormaRecebimento, chave_pix: item };
+    }
+    const tipo = item?.tipo === 'Conta bancária' ? 'Conta bancária' : 'PIX';
+    if (tipo === 'PIX') {
+      const chave =
+        item?.chave_pix != null && String(item.chave_pix).trim() !== ''
+          ? String(item.chave_pix)
+          : String(item?.valor || '');
+      return {
+        ...emptyFormaRecebimento,
+        tipo: 'PIX',
+        tipo_chave_pix: item?.tipo_chave_pix || 'CPF',
+        chave_pix: chave,
+      };
     }
     return {
-      tipo: item?.tipo === 'Conta bancária' ? 'Conta bancária' : 'PIX',
-      tipo_chave_pix: item?.tipo_chave_pix || 'CPF',
-      valor: item?.valor || '',
+      ...emptyFormaRecebimento,
+      tipo: 'Conta bancária',
+      banco: String(item?.banco || '').trim(),
+      agencia: String(item?.agencia || '').trim(),
+      conta:
+        item?.conta != null && String(item.conta).trim() !== ''
+          ? String(item.conta).trim()
+          : String(item?.valor || '').trim(),
+      tipo_conta: item?.tipo_conta === 'poupanca' ? 'poupanca' : 'corrente',
     };
   });
+};
+
+const formatFormaResumo = (f) => {
+  if (!f || typeof f !== 'object') return '';
+  if (f.tipo === 'Conta bancária') {
+    const b = String(f.banco || '').trim();
+    const tc = f.tipo_conta === 'poupanca' ? 'Poupança' : 'Corrente';
+    return b ? `Conta (${tc}): ${b}` : 'Conta bancária';
+  }
+  const tk = f.tipo_chave_pix || 'CPF';
+  return `PIX (${tk})`;
 };
 
 const normalizeDynamicTextList = (items) => {
@@ -92,7 +175,7 @@ const cadastroConfig = {
   clientes: {
     label: 'Clientes',
     endpoint: 'clientes',
-    columns: ['nome_empresa', 'tipo_pessoa', 'documento', 'contato_principal', 'documento_representante', 'telefones', 'emails'],
+    columns: ['nome_empresa', 'tipo_pessoa', 'documento', 'contato_principal', 'documento_representante', 'telefones', 'emails', 'website'],
     form: {
       tipo_pessoa: 'PJ',
       documento: '',
@@ -109,6 +192,7 @@ const cadastroConfig = {
       bairro: '',
       cidade: '',
       uf: '',
+      website: '',
       observacoes: '',
     },
   },
@@ -165,12 +249,16 @@ const cadastroConfig = {
 
 function App() {
   const [module, setModule] = useState('inicio');
-  const [tab, setTab] = useState('clientes');
+  /** Bookers tem menos campos obrigatórios que Clientes — melhor para primeiro teste. */
+  const [tab, setTab] = useState('bookers');
   const [items, setItems] = useState([]);
-  const [form, setForm] = useState(cadastroConfig.clientes.form);
+  const [form, setForm] = useState(cadastroConfig.bookers.form);
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
+  /** Erros do formulário (validação, salvar, apagar). */
   const [error, setError] = useState('');
+  /** Erro ao carregar a lista (GET); separado para não apagar mensagens do formulário quando o GET termina depois. */
+  const [cadastroListError, setCadastroListError] = useState('');
   const [cadastroSaving, setCadastroSaving] = useState(false);
   const [apiOnline, setApiOnline] = useState(true);
   const [clients, setClients] = useState([]);
@@ -257,7 +345,14 @@ function App() {
     setForm(cadastroConfig[tab].form);
     setEditingId(null);
     setError('');
+    setCadastroListError('');
   }, [tab]);
+
+  const cadastroErrorRef = useRef(null);
+  useEffect(() => {
+    if (!error && !cadastroListError) return;
+    cadastroErrorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [error, cadastroListError]);
 
   const refreshAlertasOperacionais = async () => {
     try {
@@ -271,8 +366,17 @@ function App() {
   useEffect(() => {
     const checkApi = async () => {
       try {
-        const response = await fetch(`${API_URL}/health`);
-        setApiOnline(response.ok);
+        const response = await fetch(API_URL ? `${API_URL}/health` : '/health');
+        if (!response.ok) {
+          setApiOnline(false);
+          return;
+        }
+        const data = await response.json();
+        const ok =
+          data?.ok === true &&
+          data?.status === 'ok' &&
+          (data?.service === undefined || data?.service === 'andy-models-crm');
+        setApiOnline(!!ok);
       } catch {
         setApiOnline(false);
       }
@@ -345,13 +449,30 @@ function App() {
     const load = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`${API_BASE}/${current.endpoint}`);
-        if (!response.ok) throw new Error(LOAD_ERROR_MESSAGE);
-        const data = await response.json();
-        setItems(data);
-        setError('');
-      } catch {
-        setError(LOAD_ERROR_MESSAGE);
+        const response = await fetchWithTimeout(`${API_BASE}/${current.endpoint}`);
+        const raw = await response.text();
+        throwIfHtmlOrCannotPost(raw, response.status);
+        if (!response.ok) {
+          let msg = LOAD_ERROR_MESSAGE;
+          try {
+            const err = raw ? JSON.parse(raw) : {};
+            if (err && err.message) msg = String(err.message);
+          } catch {
+            /* ignore */
+          }
+          throw new Error(msg);
+        }
+        const data = raw ? JSON.parse(raw) : [];
+        setItems(Array.isArray(data) ? data : []);
+        setCadastroListError('');
+      } catch (e) {
+        setCadastroListError(
+          e?.name === 'AbortError'
+            ? 'Servidor não respondeu. Inicie o backend (pasta backend: npm run dev).'
+            : e?.message && String(e.message).trim()
+              ? e.message
+              : LOAD_ERROR_MESSAGE,
+        );
       } finally {
         setLoading(false);
       }
@@ -770,6 +891,35 @@ function App() {
     }
   };
 
+  const handleMaskedCadastroChange = (field, value) => {
+    if (isClienteTab && field === 'documento') {
+      const d = onlyDigits(value);
+      onChange(field, form.tipo_pessoa === 'PF' ? formatCpfDisplay(d) : formatCnpjDisplay(d));
+      return;
+    }
+    if (isClienteTab && field === 'documento_representante') {
+      onChange(field, formatCpfDisplay(onlyDigits(value)));
+      return;
+    }
+    if (isClienteTab && field === 'cep') {
+      onChange(field, formatCepDisplay(onlyDigits(value)));
+      return;
+    }
+    if (isModeloTab && field === 'cpf') {
+      onChange(field, formatCpfDisplay(onlyDigits(value)));
+      return;
+    }
+    if (isModeloTab && field === 'responsavel_cpf') {
+      onChange(field, formatCpfDisplay(onlyDigits(value)));
+      return;
+    }
+    if (isModeloTab && field === 'responsavel_telefone') {
+      onChange(field, formatPhoneDisplay(onlyDigits(value)));
+      return;
+    }
+    onChange(field, value);
+  };
+
   const onSubmit = async (event) => {
     event.preventDefault();
     setError('');
@@ -781,21 +931,25 @@ function App() {
       const url = editingId ? `${base}/${ep}/${editingId}` : `${base}/${ep}`;
 
       const payload = { ...form };
-      if (Array.isArray(form.formas_pagamento)) {
-        payload.formas_pagamento = form.formas_pagamento
-          .map((item) => ({
-            tipo: item?.tipo === 'Conta bancária' ? 'Conta bancária' : 'PIX',
-            tipo_chave_pix: item?.tipo === 'PIX' ? (item?.tipo_chave_pix || 'CPF') : null,
-            valor: (item?.valor || '').trim(),
-          }))
-          .filter((item) => item.valor);
+      if (
+        (isModeloTab || isBookerTab || isParceiroTab)
+        && Array.isArray(form.formas_pagamento)
+      ) {
+        const fr = sanitizeAndValidateFormasPagamentoArray(form.formas_pagamento);
+        if (!fr.ok) {
+          setError(fr.message);
+          return;
+        }
+        payload.formas_pagamento = fr.formas;
       }
 
       if (hasDynamicContacts) {
-        const telefones = normalizeDynamicTextList(form.telefones).map((item) => item.trim()).filter(Boolean);
-        const emails = normalizeDynamicTextList(form.emails).map((item) => item.trim()).filter(Boolean);
+        const telefones = normalizeDynamicTextList(form.telefones)
+          .map((item) => onlyDigits(String(item || '')))
+          .filter(Boolean);
+        const emails = normalizeDynamicTextList(form.emails).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean);
         if (telefones.length === 0 || emails.length === 0) {
-          setError('Informe ao menos um telefone e um email.');
+          setError('Informe ao menos um telefone e um email válidos.');
           return;
         }
 
@@ -809,47 +963,35 @@ function App() {
         payload.telefone = telefones[0];
         payload.email = emails[0];
       }
-      if (isModeloTab && !String(form.cpf || '').trim()) {
-        setError('CPF do modelo é obrigatório (contrato).');
-        return;
-      }
-      if (isClienteTab) {
-        if (!String(form.documento_representante || '').trim()) {
-          setError('Informe o CPF do representante legal (campo próprio; não é o CNPJ da empresa).');
-          return;
-        }
-        if (!String(form.inscricao_estadual || '').trim()) {
-          setError('Inscrição estadual é obrigatória para o contrato (use “ISENTO” se aplicável).');
-          return;
-        }
-        if (
-          !String(form.logradouro || '').trim()
-          || !String(form.cidade || '').trim()
-          || !String(form.uf || '').trim()
-        ) {
-          setError('Preencha logradouro, cidade e UF para montar o endereço completo no contrato.');
-          return;
-        }
-        payload.cnpj = form.documento;
-        payload.endereco_completo = `${form.logradouro || ''}, ${form.numero || ''} - ${form.bairro || ''}, ${form.cidade || ''}/${form.uf || ''} CEP ${form.cep || ''}`.trim();
-      }
 
-      if (isModeloTab) {
-        const d = String(payload.data_nascimento || '').trim();
-        payload.data_nascimento = d || null;
+      if (isClienteTab) {
+        const sv = sanitizeAndValidateCliente(payload, false);
+        if (!sv.ok) {
+          setError(sv.message);
+          return;
+        }
+        Object.assign(payload, sv.body);
+      } else if (isModeloTab) {
+        const sv = sanitizeAndValidateModelo(payload, false);
+        if (!sv.ok) {
+          setError(sv.message);
+          return;
+        }
+        Object.assign(payload, sv.body);
       }
 
       if (method === 'POST') {
         delete payload.id;
       }
 
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
       const raw = await response.text();
+      throwIfHtmlOrCannotPost(raw, response.status);
       let data;
       try {
         data = raw ? JSON.parse(raw) : {};
@@ -872,13 +1014,26 @@ function App() {
       }
 
       setError('');
+      setCadastroListError('');
       setEditingId(null);
       setForm(current.form);
     } catch (e) {
+      if (e?.name === 'AbortError') {
+        setError(
+          `O servidor não respondeu a tempo. Na pasta backend: npm run dev (porta ${DEV_PROXY_PORT} no .env). Se já está, veja se o PostgreSQL está ligado.`,
+        );
+        return;
+      }
+      const msg = e?.message ? String(e.message).trim() : '';
+      const network =
+        !msg ||
+        msg === 'Failed to fetch' ||
+        msg === 'Load failed' ||
+        e?.name === 'TypeError';
       setError(
-        e?.message && String(e.message).trim()
-          ? e.message
-          : 'Erro ao salvar cadastro. Verifique conexão com servidor.',
+        network
+          ? 'Sem ligação ao servidor. No Terminal, na pasta backend, deixe rodando: npm run dev (e reinicie o frontend depois desta alteração).'
+          : msg || 'Erro ao salvar cadastro. Verifique conexão com servidor.',
       );
     } finally {
       setCadastroSaving(false);
@@ -892,20 +1047,28 @@ function App() {
       formas_pagamento: normalizeFormasRecebimento(item.formas_pagamento),
     };
     if (tab === 'modelos') {
-      nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]);
+      nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).map(
+        (t) => formatPhoneDisplay(onlyDigits(String(t))),
+      );
       nextForm.emails = normalizeDynamicTextList(item.emails?.length ? item.emails : [item.email]);
       nextForm.data_nascimento = item.data_nascimento || '';
       nextForm.responsavel_nome = item.responsavel_nome || '';
-      nextForm.responsavel_cpf = item.responsavel_cpf || '';
-      nextForm.responsavel_telefone = item.responsavel_telefone || '';
+      nextForm.responsavel_cpf = formatCpfDisplay(onlyDigits(item.responsavel_cpf || ''));
+      nextForm.responsavel_telefone = formatPhoneDisplay(onlyDigits(item.responsavel_telefone || ''));
+      nextForm.cpf = formatCpfDisplay(onlyDigits(item.cpf || ''));
     }
     if (tab === 'clientes') {
-      nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]);
+      nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).map(
+        (t) => formatPhoneDisplay(onlyDigits(String(t))),
+      );
       nextForm.emails = normalizeDynamicTextList(item.emails?.length ? item.emails : [item.email]);
       nextForm.tipo_pessoa = item.tipo_pessoa || 'PJ';
-      nextForm.documento = item.documento || item.cnpj || '';
-      nextForm.documento_representante = item.documento_representante || '';
-      nextForm.cep = item.cep || '';
+      const docRaw = onlyDigits(item.documento || item.cnpj || '');
+      nextForm.documento =
+        nextForm.tipo_pessoa === 'PF' ? formatCpfDisplay(docRaw) : formatCnpjDisplay(docRaw);
+      nextForm.documento_representante = formatCpfDisplay(onlyDigits(item.documento_representante || ''));
+      nextForm.cep = formatCepDisplay(onlyDigits(item.cep || ''));
+      nextForm.website = item.website != null ? String(item.website) : '';
       nextForm.logradouro = item.logradouro || '';
       nextForm.numero = item.numero || '';
       nextForm.bairro = item.bairro || '';
@@ -924,7 +1087,7 @@ function App() {
 
     setError('');
     try {
-      const response = await fetch(`${API_BASE}/${current.endpoint}/${id}`, { method: 'DELETE' });
+      const response = await fetchWithTimeout(`${API_BASE}/${current.endpoint}/${id}`, { method: 'DELETE' });
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.message || 'Erro ao deletar cadastro.');
@@ -934,8 +1097,12 @@ function App() {
         setEditingId(null);
         setForm(current.form);
       }
-    } catch {
-      setError('Erro ao deletar cadastro. Verifique conexão com servidor.');
+    } catch (e) {
+      setError(
+        e?.name === 'AbortError'
+          ? 'Servidor não respondeu. Inicie o backend (npm run dev na pasta backend).'
+          : e?.message || 'Erro ao deletar cadastro. Verifique conexão com servidor.',
+      );
     }
   };
 
@@ -949,10 +1116,40 @@ function App() {
   const updateFormaPagamento = (index, key, value) => {
     setForm((prev) => ({
       ...prev,
-      formas_pagamento: normalizeFormasRecebimento(prev.formas_pagamento).map((item, itemIndex) => (
-        itemIndex === index ? { ...item, [key]: value } : item
-      )),
+      formas_pagamento: normalizeFormasRecebimento(prev.formas_pagamento).map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        if (key === 'tipo') {
+          if (value === 'Conta bancária') {
+            return {
+              ...emptyFormaRecebimento,
+              tipo: 'Conta bancária',
+              banco: '',
+              agencia: '',
+              conta: '',
+              tipo_conta: 'corrente',
+            };
+          }
+          return {
+            ...emptyFormaRecebimento,
+            tipo: 'PIX',
+            tipo_chave_pix: 'CPF',
+            chave_pix: '',
+          };
+        }
+        if (key === 'tipo_chave_pix') {
+          return { ...item, tipo_chave_pix: value, chave_pix: '' };
+        }
+        return { ...item, [key]: value };
+      }),
     }));
+  };
+
+  const handleFormaChavePixChange = (index, tipoChave, raw) => {
+    let v = raw;
+    if (tipoChave === 'CPF') v = formatCpfDisplay(onlyDigits(raw));
+    else if (tipoChave === 'CNPJ') v = formatCnpjDisplay(onlyDigits(raw));
+    else if (tipoChave === 'Celular') v = formatPhoneDisplay(onlyDigits(raw));
+    updateFormaPagamento(index, 'chave_pix', v);
   };
 
   const removeFormaPagamento = (index) => {
@@ -1202,7 +1399,9 @@ function App() {
           <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             {!apiOnline && (
               <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                API offline em `{API_URL}`. Verifique se o backend está rodando e se o `.env` do frontend está correto.
+                API offline
+                {API_URL ? ` em ${API_URL}` : ` (esperado o backend em http://127.0.0.1:${DEV_PROXY_PORT})`}. Abra o Terminal na pasta{' '}
+                <code className="rounded bg-red-100 px-1">backend</code> e deixe <code className="rounded bg-red-100 px-1">npm run dev</code> a correr.
               </div>
             )}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1903,6 +2102,13 @@ function App() {
               onSubmit={onSubmit}
               noValidate
             >
+              {isBookerTab && (
+                <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
+                  <strong>Teste rápido:</strong> preencha <strong>nome</strong> e <strong>CPF</strong>, depois nas listas
+                  <strong> Telefones</strong> e <strong>Emails</strong> pelo menos um número e um email, e clique em{' '}
+                  <strong>Salvar cadastro</strong>. Sem terminal do backend a correr, não grava.
+                </div>
+              )}
               {isModeloTab && (
                 <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   {idadeModelo === null
@@ -1921,7 +2127,17 @@ function App() {
                       items={normalizeDynamicTextList(form[field])}
                       placeholder={field === 'telefones' ? 'Ex: (11) 99999-9999' : 'Ex: contato@modelo.com'}
                       onAdd={() => addDynamicItem(field)}
-                      onUpdate={(index, value) => updateDynamicItem(field, index, value)}
+                      onUpdate={(index, value) => {
+                        if (field === 'telefones' && (isClienteTab || isModeloTab)) {
+                          updateDynamicItem(
+                            field,
+                            index,
+                            formatPhoneDisplay(onlyDigits(value)),
+                          );
+                        } else {
+                          updateDynamicItem(field, index, value);
+                        }
+                      }}
                       onRemove={(index) => removeDynamicItem(field, index)}
                     />
                   );
@@ -1930,7 +2146,7 @@ function App() {
                 if (field === 'formas_pagamento') {
                   return (
                     <div key={field} className="md:col-span-2 rounded-lg border border-slate-200 p-3">
-                      <div className="mb-2 flex items-center justify-between">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <span className="text-sm font-medium text-slate-700">Formas de recebimento</span>
                         <button
                           type="button"
@@ -1940,42 +2156,134 @@ function App() {
                           + adicionar
                         </button>
                       </div>
-                      <div className="space-y-2">
+                      <p className="mb-3 text-xs text-slate-500">
+                        Pix: informe o tipo de chave e o valor (validado). Conta bancária: banco, agência e conta só com
+                        números (padrão brasileiro).
+                      </p>
+                      <div className="space-y-4">
                         {normalizeFormasRecebimento(form.formas_pagamento).map((forma, index) => (
-                          <div key={`forma-${index}`} className="grid gap-2 md:grid-cols-[160px_170px_1fr_auto]">
-                            <select
-                              value={forma.tipo}
-                              onChange={(event) => updateFormaPagamento(index, 'tipo', event.target.value)}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            >
-                              <option value="PIX">PIX</option>
-                              <option value="Conta bancária">Conta bancária</option>
-                            </select>
-                            <select
-                              value={forma.tipo === 'PIX' ? (forma.tipo_chave_pix || 'CPF') : 'Conta'}
-                              onChange={(event) => updateFormaPagamento(index, 'tipo_chave_pix', event.target.value)}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                              disabled={forma.tipo !== 'PIX'}
-                            >
-                              <option value="CPF">CPF</option>
-                              <option value="Celular">Celular</option>
-                              <option value="E-mail">E-mail</option>
-                              <option value="Aleatória">Aleatória</option>
-                              <option value="Conta">Conta bancária</option>
-                            </select>
-                            <input
-                              value={forma.valor}
-                              onChange={(event) => updateFormaPagamento(index, 'valor', event.target.value)}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none ring-slate-300 focus:ring"
-                              placeholder={forma.tipo === 'PIX' ? 'Ex: pix@agencia.com' : 'Ex: Banco X Ag 0001 Conta 12345-6'}
-                            />
-                            <button
-                              type="button"
-                              className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700"
-                              onClick={() => removeFormaPagamento(index)}
-                            >
-                              remover
-                            </button>
+                          <div
+                            key={`forma-${index}`}
+                            className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                          >
+                            <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                              <label className="text-xs text-slate-600">
+                                <span className="mb-1 block font-medium text-slate-700">Receber via</span>
+                                <select
+                                  value={forma.tipo}
+                                  onChange={(event) => updateFormaPagamento(index, 'tipo', event.target.value)}
+                                  className="w-full min-w-[140px] rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                >
+                                  <option value="PIX">PIX</option>
+                                  <option value="Conta bancária">Conta bancária</option>
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700"
+                                onClick={() => removeFormaPagamento(index)}
+                              >
+                                Remover
+                              </button>
+                            </div>
+
+                            {forma.tipo === 'PIX' ? (
+                              <div className="grid gap-3 md:grid-cols-[200px_1fr]">
+                                <label className="text-xs text-slate-600">
+                                  <span className="mb-1 block font-medium text-slate-700">Tipo de chave Pix</span>
+                                  <select
+                                    value={forma.tipo_chave_pix || 'CPF'}
+                                    onChange={(event) =>
+                                      updateFormaPagamento(index, 'tipo_chave_pix', event.target.value)
+                                    }
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                  >
+                                    <option value="CPF">CPF</option>
+                                    <option value="CNPJ">CNPJ</option>
+                                    <option value="E-mail">E-mail</option>
+                                    <option value="Celular">Telefone (celular)</option>
+                                    <option value="Aleatória">Chave aleatória (UUID)</option>
+                                  </select>
+                                </label>
+                                <label className="text-xs text-slate-600 md:col-span-1">
+                                  <span className="mb-1 block font-medium text-slate-700">Chave Pix</span>
+                                  <input
+                                    value={forma.chave_pix ?? ''}
+                                    onChange={(event) =>
+                                      handleFormaChavePixChange(
+                                        index,
+                                        forma.tipo_chave_pix || 'CPF',
+                                        event.target.value,
+                                      )
+                                    }
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none ring-slate-300 focus:ring"
+                                    placeholder={
+                                      (forma.tipo_chave_pix || 'CPF') === 'E-mail'
+                                        ? 'nome@provedor.com'
+                                        : (forma.tipo_chave_pix || 'CPF') === 'Aleatória'
+                                          ? 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+                                          : (forma.tipo_chave_pix || 'CPF') === 'Celular'
+                                            ? '(11) 99999-9999'
+                                            : (forma.tipo_chave_pix || 'CPF') === 'CNPJ'
+                                              ? '00.000.000/0000-00'
+                                              : '000.000.000-00'
+                                    }
+                                    autoComplete="off"
+                                  />
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="grid gap-3">
+                                <label className="text-xs text-slate-600 md:col-span-2">
+                                  <span className="mb-1 block font-medium text-slate-700">Banco (nome ou código FEBRABAN)</span>
+                                  <input
+                                    value={forma.banco ?? ''}
+                                    onChange={(event) => updateFormaPagamento(index, 'banco', event.target.value)}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                    placeholder="Ex: 001 — Banco do Brasil"
+                                  />
+                                </label>
+                                <div className="grid gap-3 md:grid-cols-3">
+                                  <label className="text-xs text-slate-600">
+                                    <span className="mb-1 block font-medium text-slate-700">Agência (só números)</span>
+                                    <input
+                                      inputMode="numeric"
+                                      value={forma.agencia ?? ''}
+                                      onChange={(event) =>
+                                        updateFormaPagamento(index, 'agencia', onlyDigits(event.target.value))
+                                      }
+                                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                      placeholder="Ex: 1234"
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-600">
+                                    <span className="mb-1 block font-medium text-slate-700">Conta (só números)</span>
+                                    <input
+                                      inputMode="numeric"
+                                      value={forma.conta ?? ''}
+                                      onChange={(event) =>
+                                        updateFormaPagamento(index, 'conta', onlyDigits(event.target.value))
+                                      }
+                                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                      placeholder="Ex: 12345"
+                                    />
+                                  </label>
+                                  <label className="text-xs text-slate-600">
+                                    <span className="mb-1 block font-medium text-slate-700">Tipo de conta</span>
+                                    <select
+                                      value={forma.tipo_conta === 'poupanca' ? 'poupanca' : 'corrente'}
+                                      onChange={(event) =>
+                                        updateFormaPagamento(index, 'tipo_conta', event.target.value)
+                                      }
+                                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                    >
+                                      <option value="corrente">Corrente</option>
+                                      <option value="poupanca">Poupança</option>
+                                    </select>
+                                  </label>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2006,7 +2314,15 @@ function App() {
                       <span className="mb-1 block">{labelForField(field)}</span>
                       <select
                         value={form.tipo_pessoa || 'PJ'}
-                        onChange={(event) => onChange('tipo_pessoa', event.target.value)}
+                        onChange={(event) => {
+                          const v = event.target.value;
+                          setForm((prev) => {
+                            const d = onlyDigits(prev.documento);
+                            const nextDoc =
+                              v === 'PF' ? formatCpfDisplay(d) : formatCnpjDisplay(d);
+                            return { ...prev, tipo_pessoa: v, documento: nextDoc };
+                          });
+                        }}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2"
                       >
                         <option value="PF">PF</option>
@@ -2025,9 +2341,37 @@ function App() {
                     'inscricao_estadual',
                     'cep',
                     'logradouro',
+                    'numero',
+                    'bairro',
                     'cidade',
                     'uf',
                   ].includes(field);
+                const useMaskedCadastroInput =
+                  (isClienteTab
+                    && (field === 'documento' || field === 'documento_representante' || field === 'cep'))
+                  || (isModeloTab
+                    && (field === 'cpf' || field === 'responsavel_cpf' || field === 'responsavel_telefone'));
+
+                if (isClienteTab && field === 'website') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">
+                        {labelForField(field)}
+                        <span className="font-normal text-slate-500"> (opcional)</span>
+                      </span>
+                      <input
+                        type="url"
+                        inputMode="url"
+                        autoComplete="url"
+                        placeholder="https://www.exemplo.com.br"
+                        value={form[field] ?? ''}
+                        onChange={(event) => onChange(field, event.target.value.trim())}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+                      />
+                    </label>
+                  );
+                }
+
                 return (
                   <label key={field} className="text-sm text-slate-600">
                     <span className="mb-1 block">
@@ -2041,7 +2385,11 @@ function App() {
                     <input
                       type={field === 'data_nascimento' ? 'date' : 'text'}
                       value={form[field] ?? ''}
-                      onChange={(event) => onChange(field, event.target.value)}
+                      onChange={(event) =>
+                        useMaskedCadastroInput
+                          ? handleMaskedCadastroChange(field, event.target.value)
+                          : onChange(field, event.target.value)
+                      }
                       onBlur={isClienteTab && field === 'cep' ? buscarEnderecoPorCep : undefined}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
                     />
@@ -2049,10 +2397,23 @@ function App() {
                 );
               })}
 
-              {error && (
-                <p className="md:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
-                  {error}
-                </p>
+              {(cadastroListError || error) && (
+                <div
+                  ref={cadastroErrorRef}
+                  className="md:col-span-2 space-y-2"
+                  role="alert"
+                >
+                  {cadastroListError ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                      {cadastroListError}
+                    </p>
+                  ) : null}
+                  {error ? (
+                    <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      {error}
+                    </p>
+                  ) : null}
+                </div>
               )}
               <div className="md:col-span-2 flex flex-wrap gap-3 pt-2">
                 <button
@@ -2105,7 +2466,7 @@ function App() {
                         {current.columns.map((column) => (
                           <td key={column} className="px-2 py-2">
                             {column === 'formas_pagamento'
-                              ? `${normalizeFormasRecebimento(item.formas_pagamento).length} forma(s)`
+                              ? normalizeFormasRecebimento(item.formas_pagamento).map(formatFormaResumo).join(' · ')
                               : column === 'telefones'
                                 ? `${normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).filter(Boolean).length} telefone(s)`
                                 : column === 'emails'

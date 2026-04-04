@@ -1,12 +1,17 @@
 /**
  * No Render, após `npm install` no backend, gera frontend/dist e copia para backend/public.
- * Variável RENDER=true no ambiente do Render (não corre em npm install local).
+ * - RENDER=true: ambiente Web Service Render (runtime e, em geral, build).
+ * - CI=true: o Render define durante o build; cobre o caso de RENDER não estar definido no painel.
+ * Local: não corre (evita compilar o front a cada npm install).
  */
 
 const { execSync } = require('child_process');
 const path = require('path');
 
-if (process.env.RENDER !== 'true') {
+const isRenderLike =
+  process.env.RENDER === 'true' || process.env.CI === 'true';
+
+if (!isRenderLike) {
   process.exit(0);
 }
 

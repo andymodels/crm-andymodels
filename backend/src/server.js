@@ -6,12 +6,13 @@ loadEnvFile(path.join(__dirname, '..'));
 const app = require('./app');
 const { initDb } = require('./config/db');
 
-// Render (e outros PaaS) definhem PORT; localmente usa 3001.
-const PORT = Number(process.env.PORT) || 3001;
+// Render define PORT; localmente o projeto usa 3030 por defeito (evita conflito com Replit/outros na 3001).
+const PORT = Number(process.env.PORT) || 3030;
 const HOST = '0.0.0.0';
 
-// O HTTP sobe de imediato; initDb corre em background e não bloqueia o arranque.
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST);
+
+server.once('listening', () => {
   console.log(`API running on http://${HOST}:${PORT}`);
   const publicIndex = path.join(__dirname, '..', 'public', 'index.html');
   if (!fs.existsSync(publicIndex)) {
@@ -26,4 +27,14 @@ app.listen(PORT, HOST, () => {
   } catch (err) {
     console.error('[initDb] erro ao agendar:', err.message || err);
   }
+});
+
+server.on('error', (err) => {
+  console.error('[server] erro ao escutar:', err.message || err);
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+      `[server] A porta ${PORT} já está em uso. Feche o outro programa ou defina PORT=3031 no backend/.env e VITE_DEV_PROXY_PORT=3031 no frontend/.env`,
+    );
+  }
+  process.exit(1);
 });

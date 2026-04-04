@@ -1,0 +1,13 @@
+COMO RODAR O CRM NO SEU COMPUTADOR
+
+1) Abra o Terminal.
+2) cd para a pasta CRM ANDYMODELS
+3) Primeira vez: npm run install:all
+4) Depois: npm run dev
+5) Abra no navegador o link que aparecer (ex.: http://localhost:5173)
+
+A API do CRM usa a porta 3030 (para não bater com Replit / outras coisas na 3001).
+
+PostgreSQL ligado, banco andy_models.
+
+Se der "porta em uso", no Terminal: lsof -i :3030

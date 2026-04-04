@@ -1,18 +1,48 @@
 const express = require('express');
 const { pool } = require('../config/db');
+const {
+  sanitizeAndValidateCliente,
+  sanitizeAndValidateModelo,
+  sanitizeAndValidateBooker,
+  sanitizeAndValidateParceiro,
+} = require('../utils/brValidators');
 
 const router = express.Router();
 
-const getAge = (birthDate) => {
-  if (!birthDate) return null;
-  const today = new Date();
-  const birth = new Date(birthDate);
-  if (Number.isNaN(birth.getTime())) return null;
-  let age = today.getFullYear() - birth.getFullYear();
-  const monthDiff = today.getMonth() - birth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age -= 1;
-  return age;
-};
+/** Campos obrigatorios: strings vazias e arrays vazios contam como faltando (backend nao confia no frontend). */
+function missingRequiredFields(body, requiredFields) {
+  return requiredFields.filter((field) => {
+    const v = body[field];
+    if (v === undefined || v === null) return true;
+    if (typeof v === 'string' && v.trim() === '') return true;
+    if (Array.isArray(v) && v.length === 0) return true;
+    return false;
+  });
+}
+
+/**
+ * Colunas JSONB (telefones, emails, formas_pagamento): o pg pode serializar arrays JS
+ * como literal PostgreSQL `{...}` em vez de JSON — o Postgres espera `["a"]`, não `{"a"}`.
+ * Isto evita: invalid input syntax for type json (22P02).
+ */
+function stringifyJsonbColumns(body) {
+  const keys = ['telefones', 'emails', 'formas_pagamento'];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    const v = body[key];
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string') {
+      try {
+        JSON.parse(v);
+        body[key] = v;
+      } catch {
+        body[key] = JSON.stringify(v);
+      }
+    } else {
+      body[key] = JSON.stringify(v);
+    }
+  }
+}
 
 const makeCrudRoutes = ({
   path,
@@ -41,19 +71,35 @@ const makeCrudRoutes = ({
         if (body.chave_pix == null) body.chave_pix = '';
       }
 
-      if (validatePayload) {
+      if (table === 'clientes') {
+        const sv = sanitizeAndValidateCliente(body, false);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (table === 'modelos') {
+        const sv = sanitizeAndValidateModelo(body, false);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (table === 'bookers') {
+        const sv = sanitizeAndValidateBooker(body, false);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (table === 'parceiros') {
+        const sv = sanitizeAndValidateParceiro(body, false);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (validatePayload) {
         const validation = validatePayload(body);
         if (!validation.valid) return res.status(400).json({ message: validation.message });
       }
 
-      const missing = requiredFields.filter(
-        (field) => body[field] === undefined || body[field] === null || body[field] === '',
-      );
+      const missing = missingRequiredFields(body, requiredFields);
       if (missing.length > 0) {
         return res.status(400).json({
-          message: `Campos obrigatorios faltando: ${missing.join(', ')}`,
+          message: `Campos obrigatorios faltando ou vazios: ${missing.join(', ')}`,
         });
       }
+
+      stringifyJsonbColumns(body);
 
       const columns = Object.keys(body);
       const values = Object.values(body);
@@ -68,8 +114,9 @@ const makeCrudRoutes = ({
       return res.status(201).json(result.rows[0]);
     } catch (error) {
       if (error.code === '23505') {
-        return res.status(409).json({
-          message: 'Ja existe um cadastro com este documento ou CPF/CNPJ (valor unico na base).',
+        return res.status(400).json({
+          message:
+            'Este CPF ou CNPJ ja esta cadastrado. Nao e permitido duplicar documento na base.',
         });
       }
       next(error);
@@ -78,10 +125,39 @@ const makeCrudRoutes = ({
 
   router.put(`/${path}/:id`, async (req, res, next) => {
     try {
-      if (validatePayload) {
-        const validation = validatePayload(req.body, true);
+      const body = { ...req.body };
+
+      if (table === 'clientes') {
+        const sv = sanitizeAndValidateCliente(body, false);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (table === 'modelos') {
+        const sv = sanitizeAndValidateModelo(body, false);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (table === 'bookers') {
+        const sv = sanitizeAndValidateBooker(body, true);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (table === 'parceiros') {
+        const sv = sanitizeAndValidateParceiro(body, true);
+        if (!sv.ok) return res.status(400).json({ message: sv.message });
+        Object.assign(body, sv.body);
+      } else if (validatePayload) {
+        const validation = validatePayload(body, true);
         if (!validation.valid) return res.status(400).json({ message: validation.message });
       }
+
+      if (table === 'clientes' || table === 'modelos') {
+        const missing = missingRequiredFields(body, requiredFields);
+        if (missing.length > 0) {
+          return res.status(400).json({
+            message: `Campos obrigatorios faltando ou vazios: ${missing.join(', ')}`,
+          });
+        }
+      }
+
+      stringifyJsonbColumns(body);
 
       const id = Number(req.params.id);
       if (Number.isNaN(id)) {
@@ -89,7 +165,7 @@ const makeCrudRoutes = ({
       }
 
       const setFields = updateFields
-        .filter((field) => Object.prototype.hasOwnProperty.call(req.body, field))
+        .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
         .map((field, idx) => `${field} = $${idx + 1}`);
 
       if (setFields.length === 0) {
@@ -97,8 +173,8 @@ const makeCrudRoutes = ({
       }
 
       const values = updateFields
-        .filter((field) => Object.prototype.hasOwnProperty.call(req.body, field))
-        .map((field) => req.body[field]);
+        .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
+        .map((field) => body[field]);
 
       values.push(id);
 
@@ -117,8 +193,9 @@ const makeCrudRoutes = ({
       return res.json(result.rows[0]);
     } catch (error) {
       if (error.code === '23505') {
-        return res.status(409).json({
-          message: 'Ja existe um cadastro com este documento ou CPF/CNPJ (valor unico na base).',
+        return res.status(400).json({
+          message:
+            'Este CPF ou CNPJ ja esta cadastrado. Nao e permitido duplicar documento na base.',
         });
       }
       next(error);
@@ -139,6 +216,12 @@ const makeCrudRoutes = ({
 
       return res.status(204).send();
     } catch (error) {
+      if (error.code === '23503') {
+        return res.status(409).json({
+          message:
+            'Nao e possivel excluir: existem registros ligados (orcamentos, ordens de servico ou outros). Apague ou altere esses dados antes.',
+        });
+      }
       next(error);
     }
   });
@@ -163,7 +246,6 @@ makeCrudRoutes({
     'bairro',
     'cidade',
     'uf',
-    'observacoes',
   ],
   updateFields: [
     'tipo_pessoa',
@@ -185,31 +267,9 @@ makeCrudRoutes({
     'bairro',
     'cidade',
     'uf',
+    'website',
     'observacoes',
   ],
-  validatePayload: (payload, partial = false) => {
-    const telefones = Array.isArray(payload.telefones) ? payload.telefones.filter(Boolean) : [];
-    const emails = Array.isArray(payload.emails) ? payload.emails.filter(Boolean) : [];
-    if ((!partial || payload.telefones !== undefined) && telefones.length === 0) {
-      return { valid: false, message: 'Informe ao menos um telefone.' };
-    }
-    if ((!partial || payload.emails !== undefined) && emails.length === 0) {
-      return { valid: false, message: 'Informe ao menos um email.' };
-    }
-    if ((!partial || payload.tipo_pessoa !== undefined) && !['PF', 'PJ'].includes(payload.tipo_pessoa)) {
-      return { valid: false, message: 'Tipo de pessoa deve ser PF ou PJ.' };
-    }
-    if ((!partial || payload.documento !== undefined) && !String(payload.documento || '').trim()) {
-      return { valid: false, message: 'Documento e obrigatorio (CPF ou CNPJ conforme tipo; usado no contrato).' };
-    }
-    if ((!partial || payload.contato_principal !== undefined) && !String(payload.contato_principal || '').trim()) {
-      return { valid: false, message: 'Nome do representante (contato principal) e obrigatorio.' };
-    }
-    if ((!partial || payload.documento_representante !== undefined) && !String(payload.documento_representante || '').trim()) {
-      return { valid: false, message: 'CPF do representante legal e obrigatorio (campo proprio; contrato).' };
-    }
-    return { valid: true };
-  },
 });
 
 makeCrudRoutes({
@@ -231,7 +291,6 @@ makeCrudRoutes({
     'bairro',
     'cidade',
     'uf',
-    'observacoes',
   ],
   updateFields: [
     'tipo_pessoa',
@@ -253,31 +312,9 @@ makeCrudRoutes({
     'bairro',
     'cidade',
     'uf',
+    'website',
     'observacoes',
   ],
-  validatePayload: (payload, partial = false) => {
-    const telefones = Array.isArray(payload.telefones) ? payload.telefones.filter(Boolean) : [];
-    const emails = Array.isArray(payload.emails) ? payload.emails.filter(Boolean) : [];
-    if ((!partial || payload.telefones !== undefined) && telefones.length === 0) {
-      return { valid: false, message: 'Informe ao menos um telefone.' };
-    }
-    if ((!partial || payload.emails !== undefined) && emails.length === 0) {
-      return { valid: false, message: 'Informe ao menos um email.' };
-    }
-    if ((!partial || payload.tipo_pessoa !== undefined) && !['PF', 'PJ'].includes(payload.tipo_pessoa)) {
-      return { valid: false, message: 'Tipo de pessoa deve ser PF ou PJ.' };
-    }
-    if ((!partial || payload.documento !== undefined) && !String(payload.documento || '').trim()) {
-      return { valid: false, message: 'Documento e obrigatorio (CPF ou CNPJ conforme tipo; usado no contrato).' };
-    }
-    if ((!partial || payload.contato_principal !== undefined) && !String(payload.contato_principal || '').trim()) {
-      return { valid: false, message: 'Nome do representante (contato principal) e obrigatorio.' };
-    }
-    if ((!partial || payload.documento_representante !== undefined) && !String(payload.documento_representante || '').trim()) {
-      return { valid: false, message: 'CPF do representante legal e obrigatorio (campo proprio; contrato).' };
-    }
-    return { valid: true };
-  },
 });
 
 makeCrudRoutes({
@@ -293,7 +330,6 @@ makeCrudRoutes({
     'telefones',
     'emails',
     'formas_pagamento',
-    'observacoes',
     'ativo',
   ],
   updateFields: [
@@ -312,64 +348,13 @@ makeCrudRoutes({
     'observacoes',
     'ativo',
   ],
-  validatePayload: (payload, partial = false) => {
-    const telefones = Array.isArray(payload.telefones) ? payload.telefones.filter(Boolean) : [];
-    const emails = Array.isArray(payload.emails) ? payload.emails.filter(Boolean) : [];
-    const formas = Array.isArray(payload.formas_pagamento) ? payload.formas_pagamento : [];
-
-    if (!partial || payload.telefones !== undefined) {
-      if (telefones.length === 0) {
-        return { valid: false, message: 'Informe ao menos um telefone.' };
-      }
-    }
-
-    if (!partial || payload.emails !== undefined) {
-      if (emails.length === 0) {
-        return { valid: false, message: 'Informe ao menos um email.' };
-      }
-    }
-
-    if (!partial || payload.formas_pagamento !== undefined) {
-      if (formas.length === 0) {
-        return { valid: false, message: 'Informe ao menos uma forma de recebimento.' };
-      }
-      const pixWithoutType = formas.some((item) => item?.tipo === 'PIX' && !item?.tipo_chave_pix);
-      if (pixWithoutType) {
-        return { valid: false, message: 'Selecione o tipo de chave para todas as formas PIX.' };
-      }
-    }
-
-    const age = getAge(payload.data_nascimento);
-    if (age !== null && age < 18) {
-      if (!payload.responsavel_nome || !payload.responsavel_cpf || !payload.responsavel_telefone) {
-        return { valid: false, message: 'Modelo menor de idade exige dados completos do responsável.' };
-      }
-    }
-
-    if ((!partial || payload.cpf !== undefined) && !String(payload.cpf || '').trim()) {
-      return { valid: false, message: 'CPF do modelo e obrigatorio (contrato).' };
-    }
-
-    return { valid: true };
-  },
 });
 
 makeCrudRoutes({
   path: 'bookers',
   table: 'bookers',
-  requiredFields: ['nome', 'cpf', 'telefones', 'emails', 'formas_pagamento', 'observacoes', 'ativo'],
+  requiredFields: ['nome', 'cpf', 'telefones', 'emails', 'formas_pagamento', 'ativo'],
   updateFields: ['nome', 'cpf', 'telefone', 'email', 'telefones', 'emails', 'formas_pagamento', 'observacoes', 'ativo'],
-  validatePayload: (payload, partial = false) => {
-    const telefones = Array.isArray(payload.telefones) ? payload.telefones.filter(Boolean) : [];
-    const emails = Array.isArray(payload.emails) ? payload.emails.filter(Boolean) : [];
-    if ((!partial || payload.telefones !== undefined) && telefones.length === 0) {
-      return { valid: false, message: 'Informe ao menos um telefone.' };
-    }
-    if ((!partial || payload.emails !== undefined) && emails.length === 0) {
-      return { valid: false, message: 'Informe ao menos um email.' };
-    }
-    return { valid: true };
-  },
 });
 
 makeCrudRoutes({
@@ -383,7 +368,6 @@ makeCrudRoutes({
     'telefones',
     'emails',
     'formas_pagamento',
-    'observacoes',
     'ativo',
   ],
   updateFields: [
@@ -399,17 +383,6 @@ makeCrudRoutes({
     'observacoes',
     'ativo',
   ],
-  validatePayload: (payload, partial = false) => {
-    const telefones = Array.isArray(payload.telefones) ? payload.telefones.filter(Boolean) : [];
-    const emails = Array.isArray(payload.emails) ? payload.emails.filter(Boolean) : [];
-    if ((!partial || payload.telefones !== undefined) && telefones.length === 0) {
-      return { valid: false, message: 'Informe ao menos um telefone.' };
-    }
-    if ((!partial || payload.emails !== undefined) && emails.length === 0) {
-      return { valid: false, message: 'Informe ao menos um email.' };
-    }
-    return { valid: true };
-  },
 });
 
 module.exports = router;

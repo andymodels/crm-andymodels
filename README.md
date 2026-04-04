@@ -48,12 +48,27 @@ Detalhes e regras de negócio: **`BLUEPRINT.md`**.
 
 ## Deploy (Render)
 
+Ficheiro **`render.yaml`** na raiz do repo: Blueprint (Web + Postgres + `DATABASE_URL` ligada). No Dashboard: **Blueprints** → ligar o repositório → rever e aplicar.
+
+Manual (sem Blueprint):
+
 - **Root Directory:** `backend` (pasta do serviço Node no repositório).
-- **Build Command:** `npm install` **ou** `npm install && npm run build` (no Render, após instalar dependências corre automaticamente o build do React para `backend/public`).
+- **Build Command:** `npm install && npm run build` (obrigatório incluir `npm run build` para gerar `backend/public/`).
 - A API HTTP expõe rotas em **`/api/...`** (o frontend já usa esse prefixo; `/health` continua na raiz).
-- **Start Command:** `node scripts/setup-db.js && node src/server.js`
-- Defina `DATABASE_URL` (e demais variáveis) no painel do Render. O script `setup-db.js` roda `initDb` antes do servidor subir, criando/atualizando tabelas e colunas conforme `src/config/db.js`.
+- **Start Command:** `npm run start:render` (equivale a garantir `public/` → `setup-db` → servidor; ver `backend/package.json`).
+- Defina `DATABASE_URL` (e demais variáveis) no painel do Render se não usar o Blueprint.
+
+**Logs no Render:** a fase **Build** (`npm install`, `npm run build`) aparece no separador **Build** de cada deploy — **não** nos logs de runtime do serviço, onde só vês o **Start Command**. Se só vires `node ...` ou `npm run start:render`, estás nos logs do **arranque do container**, não do build.
+
+**Estrutura:** não há Dockerfile. O `package.json` do `backend` tem o script `build` que instala/compila o `frontend/` e corre `copy-frontend.js`. Nada no listener Express desativa o build; o Render trata build e start como etapas separadas.
 
 ## Observacao
 
 - O setup do banco também pode ser feito manualmente: na pasta `backend`, `npm run setup:db`.
+
+### Site no Render não atualiza depois do deploy
+
+1. **Build Command** tem de incluir o build do React: `npm install && npm run build` (com Root Directory `backend`). Só `npm install` pode deixar `backend/public/` antigo ou vazio.
+2. Nos **logs do deploy**, procura `copy-frontend` e `OK: frontend/dist -> backend/public`.
+3. **Hard refresh** no browser (Ctrl+Shift+R ou Cmd+Shift+R) ou janela anónima — cache do `index.html` ou do CDN.
+4. Confirma que o deploy terminou **com sucesso** (verde) e que foi o **commit/branch** certos.

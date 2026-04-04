@@ -1,0 +1,28 @@
+# Blueprint Render — Andy Models CRM
+# Doc: https://docs.render.com/blueprint-spec
+#
+# Novo ambiente: Dashboard → Blueprint → Connect repository → este ficheiro.
+# Já tens serviço na Render? Não sincronizes tudo de uma vez: pode duplicar recursos.
+# Nesse caso usa só como referência ou ajusta nomes (name) para não colidir.
+
+services:
+  - type: web
+    name: andy-models-crm
+    runtime: node
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:render
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: andy-models-db
+          property: connectionString
+      - key: RENDER
+        value: "true"
+
+databases:
+  - name: andy-models-db
+    databaseName: andy_models

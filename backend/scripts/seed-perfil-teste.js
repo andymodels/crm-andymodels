@@ -137,7 +137,7 @@ async function garantirModelo(client) {
       '1995-06-15',
       '["(11) 97777-6666"]'::jsonb,
       '["modelo.perfil.seed@teste.com"]'::jsonb,
-      '[{"tipo":"PIX","tipo_chave_pix":"CPF","valor":"52998224725"}]'::jsonb
+      '[{"tipo":"PIX","tipo_chave_pix":"CPF","chave_pix":"11144477735"}]'::jsonb
     )
     RETURNING id
     `,

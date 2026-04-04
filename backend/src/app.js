@@ -18,6 +18,8 @@ app.use(express.json());
 
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
+  // Identidade da API sem DB (útil para ver se a porta 3001 é mesmo este projeto)
+  if (req.method === 'GET' && req.path === '/api') return next();
   if (pool) return next();
   res.status(503).json({
     message:
@@ -26,7 +28,12 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ ok: true, status: 'ok', service: 'andy-models-crm' });
+});
+
+/** Confirma que este processo é o CRM (outro Express na mesma porta devolve 404 em POST /api/...). */
+app.get('/api', (_req, res) => {
+  res.json({ ok: true, service: 'andy-models-crm' });
 });
 
 // Rotas da API só em /api — evita conflito com express.static (SPA) no /
@@ -64,7 +71,14 @@ app.use((error, _req, res, _next) => {
     });
   }
   if (error.code === '23503') {
-    return res.status(400).json({ message: 'Referencia invalida (registro ligado nao existe).' });
+    const d = String(error.detail || error.message || '');
+    const bloqueioPorLigacao =
+      d.includes('still referenced') || d.includes('update or delete on table');
+    return res.status(bloqueioPorLigacao ? 409 : 400).json({
+      message: bloqueioPorLigacao
+        ? 'Nao e possivel excluir ou alterar: ainda existem registros ligados (orcamentos, ordens de servico, etc.). Ajuste ou apague esses dados primeiro.'
+        : 'Referencia invalida: registro ligado inexistente ou nao permitido.',
+    });
   }
   if (error.code === '42703') {
     return res.status(400).json({ message: 'Coluna invalida no pedido (verifique versao do sistema).' });

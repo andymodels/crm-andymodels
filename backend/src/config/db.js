@@ -7,6 +7,7 @@ let pool = null;
 if (connectionString) {
   pool = new Pool({
     connectionString,
+    connectionTimeoutMillis: 12_000,
   });
 }
 
@@ -75,6 +76,22 @@ const initDb = async () => {
     ALTER TABLE clientes
     ADD COLUMN IF NOT EXISTS documento_representante TEXT NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE clientes
+    ADD COLUMN IF NOT EXISTS website TEXT NOT NULL DEFAULT '';
+  `);
+
+  try {
+    await pool.query(`
+      UPDATE clientes SET documento = cnpj
+      WHERE documento IS NULL OR btrim(documento) = '';
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS clientes_documento_unique ON clientes (documento);
+    `);
+  } catch (e) {
+    console.warn('[initDb] indice unico em clientes.documento:', e.message);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS modelos (
