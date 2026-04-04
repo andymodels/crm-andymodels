@@ -10,6 +10,7 @@
     "render-build": "npm run build",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "start:render": "node scripts/ensure-frontend-built.js && node scripts/setup-db.js && node src/server.js",
     "setup:db": "node scripts/setup-db.js",
     "seed:perfil": "node scripts/seed-perfil-teste.js"
   },
