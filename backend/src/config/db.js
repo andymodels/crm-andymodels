@@ -212,6 +212,69 @@ const initDb = async () => {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS data_trabalho DATE;
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS horario_trabalho TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS local_trabalho TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS tipo_proposta_os TEXT NOT NULL DEFAULT 'com_modelo';
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS valor_servico_sem_modelo NUMERIC(12, 2) NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS os_id_gerada INTEGER;
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS modelos_definicao TEXT NOT NULL DEFAULT 'cadastrados';
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS quantidade_modelos_referencia INTEGER;
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS valor_nota_fiscal NUMERIC(12, 2) NOT NULL DEFAULT 0;
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS imposto_percent NUMERIC(5, 2) NOT NULL DEFAULT 10;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orcamento_modelos (
+      id SERIAL PRIMARY KEY,
+      orcamento_id INTEGER NOT NULL REFERENCES orcamentos(id) ON DELETE CASCADE,
+      modelo_id INTEGER NOT NULL REFERENCES modelos(id),
+      cache_modelo NUMERIC(12, 2) NOT NULL,
+      emite_nf_propria BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_orcamento_modelos_orcamento ON orcamento_modelos(orcamento_id);
+  `);
+  await pool.query(`
+    ALTER TABLE orcamento_modelos
+    ADD COLUMN IF NOT EXISTS rotulo TEXT NOT NULL DEFAULT '';
+  `);
+  try {
+    await pool.query(`ALTER TABLE orcamento_modelos ALTER COLUMN modelo_id DROP NOT NULL;`);
+  } catch (e) {
+    console.warn('[initDb] orcamento_modelos.modelo_id nullable:', e.message);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ordens_servico (
@@ -279,6 +342,30 @@ const initDb = async () => {
     ALTER TABLE os_modelos
     ADD COLUMN IF NOT EXISTS data_prevista_pagamento DATE;
   `);
+  await pool.query(`
+    ALTER TABLE os_modelos
+    ADD COLUMN IF NOT EXISTS rotulo TEXT NOT NULL DEFAULT '';
+  `);
+  try {
+    await pool.query(`ALTER TABLE os_modelos ALTER COLUMN modelo_id DROP NOT NULL;`);
+  } catch (e) {
+    console.warn('[initDb] os_modelos.modelo_id nullable:', e.message);
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS os_historico (
+      id SERIAL PRIMARY KEY,
+      os_id INTEGER NOT NULL REFERENCES ordens_servico(id) ON DELETE CASCADE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      usuario TEXT NOT NULL,
+      campo TEXT NOT NULL,
+      valor_anterior TEXT,
+      valor_novo TEXT
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_os_historico_os ON os_historico(os_id);
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS os_documentos (
@@ -314,6 +401,18 @@ const initDb = async () => {
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+
+  try {
+    await pool.query(`
+      ALTER TABLE orcamentos
+      ADD CONSTRAINT orcamentos_os_id_gerada_fkey
+      FOREIGN KEY (os_id_gerada) REFERENCES ordens_servico(id) ON DELETE SET NULL;
+    `);
+  } catch (e) {
+    if (!String(e.message || '').includes('already exists')) {
+      console.warn('[initDb] FK orcamentos.os_id_gerada:', e.message);
+    }
+  }
 };
 
 module.exports = {

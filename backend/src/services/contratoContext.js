@@ -35,9 +35,11 @@ async function loadContratoContext(pool, osId) {
 
   const linhasR = await pool.query(
     `
-    SELECT m.nome AS modelo_nome, m.cpf AS modelo_cpf
+    SELECT
+      COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'Modelo') AS modelo_nome,
+      m.cpf AS modelo_cpf
     FROM os_modelos om
-    JOIN modelos m ON m.id = om.modelo_id
+    LEFT JOIN modelos m ON m.id = om.modelo_id
     WHERE om.os_id = $1
     ORDER BY om.id
     `,
@@ -46,7 +48,7 @@ async function loadContratoContext(pool, osId) {
 
   const linhas = linhasR.rows.map((l) => ({
     modelo_nome: l.modelo_nome,
-    modelo_cpf: l.modelo_cpf,
+    modelo_cpf: l.modelo_cpf || '',
   }));
 
   const cliente = {

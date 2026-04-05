@@ -169,10 +169,13 @@ router.get('/financeiro/pagamentos-modelo', async (req, res, next) => {
   try {
     const osId = req.query.os_id ? Number(req.query.os_id) : null;
     let sql = `
-      SELECT p.*, m.nome AS modelo_nome, om.os_id
+      SELECT
+        p.*,
+        COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
+        om.os_id
       FROM pagamentos_modelo p
       JOIN os_modelos om ON om.id = p.os_modelo_id
-      JOIN modelos m ON m.id = om.modelo_id
+      LEFT JOIN modelos m ON m.id = om.modelo_id
     `;
     const params = [];
     if (osId != null && !Number.isNaN(osId)) {

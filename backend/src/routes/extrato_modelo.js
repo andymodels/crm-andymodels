@@ -22,12 +22,12 @@ router.get('/extrato-modelo', async (req, res, next) => {
         os.agencia_fee_percent,
         c.nome_empresa,
         c.nome_fantasia,
-        m.nome AS modelo_nome,
+        COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
         os.status AS os_status
       FROM os_modelos om
       JOIN ordens_servico os ON os.id = om.os_id
       JOIN clientes c ON c.id = os.cliente_id
-      JOIN modelos m ON m.id = om.modelo_id
+      LEFT JOIN modelos m ON m.id = om.modelo_id
     `;
     const params = [];
     if (modeloId != null) {

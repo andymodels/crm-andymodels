@@ -59,6 +59,81 @@ const formatBRL = (value) => {
   const n = Number(value || 0);
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number.isFinite(n) ? n : 0);
 };
+
+const formatOrcamentoCriadoEm = (value) => {
+  if (value == null || value === '') return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+};
+
+const labelOrcamentoStatus = (s) => {
+  if (s === 'rascunho') return 'Rascunho';
+  if (s === 'aprovado') return 'Aprovado';
+  if (s === 'cancelado') return 'Cancelado';
+  return s ? String(s) : '—';
+};
+
+const nPrev = (v) => Number(v || 0);
+
+function createEmptyOrcamentoForm() {
+  return {
+    cliente_id: '',
+    tipo_proposta_os: 'com_modelo',
+    tipo_trabalho: '',
+    descricao: '',
+    data_trabalho: '',
+    horario_trabalho: '',
+    local_trabalho: '',
+    cache_base_estimado_total: '',
+    valor_servico_sem_modelo: '',
+    taxa_agencia_percent: '',
+    extras_agencia_valor: '',
+    imposto_percent: '10',
+    condicoes_pagamento: '',
+    uso_imagem: '',
+    prazo: '',
+    territorio: '',
+    quantidade_modelos_referencia: '',
+    linhas: [],
+  };
+}
+
+/** Espelha `computeOsFinancials` do backend para exibir % taxa / NF e valores em R$ no formulário. */
+function previewOrcamentoFinanceiro(form) {
+  const tipo = form.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
+  const impPct = nPrev(form.imposto_percent ?? 10);
+  const feePct = nPrev(form.taxa_agencia_percent);
+  const extrasAg = nPrev(form.extras_agencia_valor);
+  const linhas = (form.linhas || [])
+    .filter((l) => {
+      const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+      return Number.isFinite(mid) && mid > 0;
+    })
+    .map((l) => ({
+      cache_modelo: nPrev(l.cache_modelo),
+      emite_nf_propria: Boolean(l.emite_nf_propria),
+    }));
+
+  if (tipo === 'sem_modelo') {
+    const vs = nPrev(form.valor_servico_sem_modelo);
+    const totalCliente = vs + extrasAg;
+    const impostoValor = totalCliente * (impPct / 100);
+    return { totalCliente, taxa_agencia_valor: 0, impostoValor };
+  }
+
+  let cacheTotal;
+  if (linhas.length > 0) {
+    cacheTotal = linhas.reduce((s, l) => s + l.cache_modelo, 0);
+  } else {
+    cacheTotal = nPrev(form.cache_base_estimado_total);
+  }
+  const taxaAgenciaValor = cacheTotal * (feePct / 100);
+  const totalCliente = cacheTotal + taxaAgenciaValor + extrasAg;
+  const impostoValor = totalCliente * (impPct / 100);
+  return { totalCliente, taxa_agencia_valor: taxaAgenciaValor, impostoValor };
+}
+
 const CADASTROS_COM_MULTI_PAGAMENTO = ['modelos', 'bookers', 'parceiros'];
 const BRAND_ORANGE = '#F59E0B';
 const LOAD_ERROR_MESSAGE = 'Erro ao carregar dados. Verifique conexão com servidor.';
@@ -263,19 +338,22 @@ function App() {
   const [apiOnline, setApiOnline] = useState(true);
   const [clients, setClients] = useState([]);
   const [orcamentos, setOrcamentos] = useState([]);
-  const [orcamentoForm, setOrcamentoForm] = useState({
-    cliente_id: '',
-    tipo_trabalho: '',
-    descricao: '',
-    cache_base_estimado_total: '',
-    taxa_agencia_percent: '',
-    extras_agencia_valor: '',
-    condicoes_pagamento: '',
-    uso_imagem: '',
-    prazo: '',
-    territorio: '',
-  });
+  /** gestao = lista + busca + novo; formulario = criar/editar; lista = paginação completa */
+  const [orcamentosSubView, setOrcamentosSubView] = useState('gestao');
+  const [orcamentoBuscaInput, setOrcamentoBuscaInput] = useState('');
+  const [orcamentoBuscaDebounced, setOrcamentoBuscaDebounced] = useState('');
+  const [orcamentosTotal, setOrcamentosTotal] = useState(0);
+  const [orcamentosListaPage, setOrcamentosListaPage] = useState(1);
+  const [orcamentosListaPageSize, setOrcamentosListaPageSize] = useState(20);
+  const [orcamentosListaStatus, setOrcamentosListaStatus] = useState('');
+  const [orcamentosListaClienteId, setOrcamentosListaClienteId] = useState('');
+  const [orcamentosListaSort, setOrcamentosListaSort] = useState('created_at_desc');
+  const [orcamentosRefreshTick, setOrcamentosRefreshTick] = useState(0);
+  const [orcamentoForm, setOrcamentoForm] = useState(() => createEmptyOrcamentoForm());
   const [orcamentoEditingId, setOrcamentoEditingId] = useState(null);
+  /** Sincronizado com o orçamento em edição (lista/API); usado para travar o formulário se não for rascunho. */
+  const [orcamentoEditingStatus, setOrcamentoEditingStatus] = useState(null);
+  const [orcamentoEditingOsId, setOrcamentoEditingOsId] = useState(null);
   const [orcamentoError, setOrcamentoError] = useState('');
   const [orcamentoLoading, setOrcamentoLoading] = useState(false);
 
@@ -284,6 +362,7 @@ function App() {
   const [osError, setOsError] = useState('');
   const [osSaving, setOsSaving] = useState(false);
   const [osDraft, setOsDraft] = useState(null);
+  const [osUsuarioAlteracao, setOsUsuarioAlteracao] = useState('');
   const [modelosList, setModelosList] = useState([]);
   const [bookersList, setBookersList] = useState([]);
   const [parceirosList, setParceirosList] = useState([]);
@@ -481,6 +560,11 @@ function App() {
   }, [current.endpoint, module]);
 
   useEffect(() => {
+    const t = setTimeout(() => setOrcamentoBuscaDebounced(orcamentoBuscaInput), 300);
+    return () => clearTimeout(t);
+  }, [orcamentoBuscaInput]);
+
+  useEffect(() => {
     const loadClients = async () => {
       try {
         const response = await fetch(`${API_BASE}/clientes`);
@@ -497,22 +581,97 @@ function App() {
 
   useEffect(() => {
     if (module !== 'orcamentos') return;
-    const loadOrcamentos = async () => {
+    (async () => {
+      try {
+        const m = await fetch(`${API_BASE}/modelos`);
+        if (m.ok) setModelosList(await m.json());
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [module]);
+
+  useEffect(() => {
+    if (module !== 'orcamentos' || orcamentosSubView !== 'gestao') return;
+    let cancelled = false;
+    (async () => {
       try {
         setOrcamentoLoading(true);
-        const response = await fetch(`${API_BASE}/orcamentos`);
+        const params = new URLSearchParams();
+        const q = orcamentoBuscaDebounced.trim();
+        params.set('limit', q ? '25' : '20');
+        params.set('offset', '0');
+        params.set('sort', 'created_at_desc');
+        if (q) params.set('q', q);
+        const response = await fetch(`${API_BASE}/orcamentos?${params}`);
         if (!response.ok) throw new Error();
         const data = await response.json();
-        setOrcamentos(data);
+        if (cancelled) return;
+        setOrcamentos(Array.isArray(data.rows) ? data.rows : []);
+        setOrcamentosTotal(typeof data.total === 'number' ? data.total : 0);
         setOrcamentoError('');
       } catch {
-        setOrcamentoError(LOAD_ERROR_MESSAGE);
+        if (!cancelled) setOrcamentoError(LOAD_ERROR_MESSAGE);
       } finally {
-        setOrcamentoLoading(false);
+        if (!cancelled) setOrcamentoLoading(false);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    loadOrcamentos();
-  }, [module]);
+  }, [module, orcamentosSubView, orcamentoBuscaDebounced, orcamentosRefreshTick]);
+
+  useEffect(() => {
+    if (module !== 'orcamentos' || orcamentosSubView !== 'lista') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setOrcamentoLoading(true);
+        const params = new URLSearchParams();
+        params.set('limit', String(orcamentosListaPageSize));
+        params.set(
+          'offset',
+          String(Math.max(0, (orcamentosListaPage - 1) * orcamentosListaPageSize)),
+        );
+        params.set('sort', orcamentosListaSort);
+        if (orcamentosListaStatus) params.set('status', orcamentosListaStatus);
+        if (orcamentosListaClienteId) params.set('cliente_id', orcamentosListaClienteId);
+        const response = await fetch(`${API_BASE}/orcamentos?${params}`);
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (cancelled) return;
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        const total = typeof data.total === 'number' ? data.total : 0;
+        setOrcamentos(rows);
+        setOrcamentosTotal(total);
+        const maxPage = Math.max(1, Math.ceil(total / orcamentosListaPageSize) || 1);
+        if (orcamentosListaPage > maxPage && maxPage >= 1) {
+          setOrcamentosListaPage(maxPage);
+        }
+        setOrcamentoError('');
+      } catch {
+        if (!cancelled) setOrcamentoError(LOAD_ERROR_MESSAGE);
+      } finally {
+        if (!cancelled) setOrcamentoLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    module,
+    orcamentosSubView,
+    orcamentosListaPage,
+    orcamentosListaPageSize,
+    orcamentosListaStatus,
+    orcamentosListaClienteId,
+    orcamentosListaSort,
+    orcamentosRefreshTick,
+  ]);
+
+  useEffect(() => {
+    setOrcamentosListaPage(1);
+  }, [orcamentosListaStatus, orcamentosListaClienteId, orcamentosListaPageSize, orcamentosListaSort]);
 
   useEffect(() => {
     if (module === 'jobs') refreshAlertasOperacionais();
@@ -605,7 +764,9 @@ function App() {
         linhas: Array.isArray(data.linhas)
           ? data.linhas.map((l) => ({
             id: l.id,
-            modelo_id: l.modelo_id,
+            modelo_id: l.modelo_id != null ? l.modelo_id : '',
+            rotulo: l.rotulo ?? '',
+            modelo_nome: l.modelo_nome,
             cache_modelo: l.cache_modelo,
             emite_nf_propria: Boolean(l.emite_nf_propria),
             data_prevista_pagamento: l.data_prevista_pagamento
@@ -614,7 +775,9 @@ function App() {
           }))
           : [],
         documentos: Array.isArray(data.documentos) ? data.documentos : [],
+        historico: Array.isArray(data.historico) ? data.historico : [],
       });
+      setOsUsuarioAlteracao('');
       setContratoEmailDest(data.cliente_email ? String(data.cliente_email) : '');
       setContratoEmailMsg('');
     } catch {
@@ -630,12 +793,18 @@ function App() {
   const addOsLinha = () => {
     setOsDraft((prev) => {
       if (!prev) return prev;
-      const firstModelo = modelosList[0]?.id;
+      const n = prev.linhas.length + 1;
       return {
         ...prev,
         linhas: [
           ...prev.linhas,
-          { modelo_id: firstModelo || '', cache_modelo: '', emite_nf_propria: false, data_prevista_pagamento: '' },
+          {
+            modelo_id: '',
+            rotulo: `Modelo ${n}`,
+            cache_modelo: '',
+            emite_nf_propria: false,
+            data_prevista_pagamento: '',
+          },
         ],
       };
     });
@@ -679,6 +848,30 @@ function App() {
           return;
         }
       }
+      if (tipo === 'com_modelo') {
+        if (!osDraft.linhas || osDraft.linhas.length === 0) {
+          setOsError('Com o tipo “Com modelo”, adicione pelo menos um modelo ao job e preencha cachê e NF.');
+          setOsSaving(false);
+          return;
+        }
+        for (let i = 0; i < osDraft.linhas.length; i += 1) {
+          const l = osDraft.linhas[i];
+          const cacheNum = Number(l.cache_modelo);
+          if (!Number.isFinite(cacheNum) || cacheNum < 0) {
+            setOsError(`Modelos do job — linha ${i + 1}: informe o cachê do modelo (valor numérico ≥ 0).`);
+            setOsSaving(false);
+            return;
+          }
+          if (!l.modelo_id && !String(l.rotulo ?? '').trim()) {
+            setOsError(
+              `Modelos do job — linha ${i + 1}: selecione um modelo cadastrado ou preencha a referência da vaga.`,
+            );
+            setOsSaving(false);
+            return;
+          }
+        }
+      }
+
       const payload = {
         tipo_os: tipo,
         descricao: osDraft.descricao,
@@ -704,17 +897,19 @@ function App() {
         contrato_observacao: osDraft.contrato_observacao ?? '',
         data_vencimento_cliente: osDraft.data_vencimento_cliente || null,
       };
-      if (tipo === 'com_modelo' && osDraft.linhas.length > 0) {
-        payload.linhas = osDraft.linhas.map((l) => ({
-          modelo_id: Number(l.modelo_id),
-          cache_modelo: Number(l.cache_modelo),
-          emite_nf_propria: Boolean(l.emite_nf_propria),
-          data_prevista_pagamento: l.data_prevista_pagamento || null,
-        }));
+      if (tipo === 'com_modelo') {
+        payload.linhas = osDraft.linhas.map((l) => {
+          const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : null;
+          return {
+            modelo_id: mid != null && !Number.isNaN(mid) && mid > 0 ? mid : null,
+            rotulo: String(l.rotulo ?? '').trim() || undefined,
+            cache_modelo: Number(l.cache_modelo),
+            emite_nf_propria: Boolean(l.emite_nf_propria),
+            data_prevista_pagamento: l.data_prevista_pagamento || null,
+          };
+        });
       }
-      if (tipo === 'com_modelo' && osDraft.linhas.length === 0) {
-        payload.cache_modelo_total = Number(osDraft.cache_modelo_total ?? 0);
-      }
+      payload.usuario = osUsuarioAlteracao.trim();
 
       const response = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}`, {
         method: 'PUT',
@@ -729,7 +924,9 @@ function App() {
         linhas: Array.isArray(data.linhas)
           ? data.linhas.map((l) => ({
             id: l.id,
-            modelo_id: l.modelo_id,
+            modelo_id: l.modelo_id != null ? l.modelo_id : '',
+            rotulo: l.rotulo ?? '',
+            modelo_nome: l.modelo_nome,
             cache_modelo: l.cache_modelo,
             emite_nf_propria: Boolean(l.emite_nf_propria),
             data_prevista_pagamento: l.data_prevista_pagamento
@@ -738,7 +935,9 @@ function App() {
           }))
           : [],
         documentos: Array.isArray(data.documentos) ? data.documentos : [],
+        historico: Array.isArray(data.historico) ? data.historico : [],
       });
+      setOsUsuarioAlteracao('');
       if (data.cliente_email) setContratoEmailDest(String(data.cliente_email));
       const listRes = await fetch(`${API_BASE}/ordens-servico`);
       if (listRes.ok) setOsList(await listRes.json());
@@ -1192,8 +1391,73 @@ function App() {
     setOrcamentoForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const handleQuantidadeModelosRefChange = (e) => {
+    const raw = e.target.value;
+    if (raw === '') {
+      onChangeOrcamento('quantidade_modelos_referencia', '');
+      return;
+    }
+    const n = parseInt(raw, 10);
+    if (Number.isNaN(n)) return;
+    onChangeOrcamento('quantidade_modelos_referencia', String(Math.max(0, Math.min(999, n))));
+  };
+
+  const addOrcamentoLinhaCadastro = () => {
+    setOrcamentoForm((prev) => ({
+      ...prev,
+      linhas: [
+        ...(prev.linhas || []),
+        {
+          origemCadastro: true,
+          modelo_id: '',
+          cache_modelo: '',
+          emite_nf_propria: false,
+        },
+      ],
+    }));
+  };
+
+  const updateOrcamentoLinha = (index, patch) => {
+    setOrcamentoForm((prev) => ({
+      ...prev,
+      linhas: (prev.linhas || []).map((line, i) => (i === index ? { ...line, ...patch } : line)),
+    }));
+  };
+
+  const removeOrcamentoLinha = (index) => {
+    setOrcamentoForm((prev) => ({
+      ...prev,
+      linhas: (prev.linhas || []).filter((_, i) => i !== index),
+    }));
+  };
+
+  const clearOrcamentoEdicao = () => {
+    setOrcamentoEditingId(null);
+    setOrcamentoEditingStatus(null);
+    setOrcamentoEditingOsId(null);
+    setOrcamentoForm(createEmptyOrcamentoForm());
+  };
+
+  const voltarParaGestaoOrcamentos = () => {
+    clearOrcamentoEdicao();
+    setOrcamentosSubView('gestao');
+  };
+
+  const iniciarNovoOrcamento = () => {
+    clearOrcamentoEdicao();
+    setOrcamentosSubView('formulario');
+    setOrcamentoError('');
+  };
+
   const saveOrcamento = async (event) => {
     event.preventDefault();
+    if (
+      orcamentoEditingId != null &&
+      orcamentoEditingStatus != null &&
+      orcamentoEditingStatus !== 'rascunho'
+    ) {
+      return;
+    }
     setOrcamentoError('');
     try {
       const method = orcamentoEditingId ? 'PUT' : 'POST';
@@ -1201,12 +1465,51 @@ function App() {
         ? `${API_BASE}/orcamentos/${orcamentoEditingId}`
         : `${API_BASE}/orcamentos`;
 
+      const tipoProp = orcamentoForm.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
+      let linhasPayload = [];
+      if (tipoProp === 'com_modelo') {
+        linhasPayload = (orcamentoForm.linhas || [])
+          .filter((l) => {
+            const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+            return Number.isFinite(mid) && mid > 0;
+          })
+          .map((l) => ({
+            modelo_id: Number(l.modelo_id),
+            cache_modelo: Number(l.cache_modelo),
+            emite_nf_propria: Boolean(l.emite_nf_propria),
+            rotulo: String(l.rotulo || '').trim() || undefined,
+          }));
+      }
+      let cacheBase = Number(orcamentoForm.cache_base_estimado_total || 0);
+      if (tipoProp === 'com_modelo' && linhasPayload.length > 0) {
+        cacheBase = linhasPayload.reduce(
+          (s, l) => s + (Number.isFinite(l.cache_modelo) ? l.cache_modelo : 0),
+          0,
+        );
+      }
+
+      const qtdRefPayload =
+        tipoProp === 'com_modelo' &&
+        orcamentoForm.quantidade_modelos_referencia !== '' &&
+        orcamentoForm.quantidade_modelos_referencia != null
+          ? Number(orcamentoForm.quantidade_modelos_referencia)
+          : null;
+
+      const ip = Number(orcamentoForm.imposto_percent);
       const payload = {
         ...orcamentoForm,
+        tipo_proposta_os: tipoProp,
         cliente_id: Number(orcamentoForm.cliente_id),
-        cache_base_estimado_total: Number(orcamentoForm.cache_base_estimado_total),
+        cache_base_estimado_total: cacheBase,
+        valor_servico_sem_modelo: Number(orcamentoForm.valor_servico_sem_modelo || 0),
         taxa_agencia_percent: Number(orcamentoForm.taxa_agencia_percent),
         extras_agencia_valor: Number(orcamentoForm.extras_agencia_valor),
+        imposto_percent: Number.isFinite(ip) && ip >= 0 && ip <= 100 ? ip : 10,
+        data_trabalho: orcamentoForm.data_trabalho ? String(orcamentoForm.data_trabalho).trim() : '',
+        horario_trabalho: String(orcamentoForm.horario_trabalho ?? '').trim(),
+        local_trabalho: String(orcamentoForm.local_trabalho ?? '').trim(),
+        quantidade_modelos_referencia: Number.isFinite(qtdRefPayload) ? qtdRefPayload : null,
+        linhas: linhasPayload,
       };
 
       const response = await fetch(url, {
@@ -1219,64 +1522,256 @@ function App() {
         throw new Error(data.message || 'Erro ao salvar orçamento.');
       }
 
-      const saved = await response.json();
-      if (orcamentoEditingId) {
-        setOrcamentos((prev) => prev.map((item) => (item.id === saved.id ? { ...item, ...saved } : item)));
-      } else {
-        setOrcamentos((prev) => [saved, ...prev]);
-      }
+      await response.json();
 
-      setOrcamentoEditingId(null);
-      setOrcamentoForm({
-        cliente_id: '',
-        tipo_trabalho: '',
-        descricao: '',
-        cache_base_estimado_total: '',
-        taxa_agencia_percent: '',
-        extras_agencia_valor: '',
-        condicoes_pagamento: '',
-        uso_imagem: '',
-        prazo: '',
-        territorio: '',
-      });
+      clearOrcamentoEdicao();
+      setOrcamentosSubView('gestao');
 
-      const refresh = await fetch(`${API_BASE}/orcamentos`);
-      if (refresh.ok) setOrcamentos(await refresh.json());
+      setOrcamentosRefreshTick((x) => x + 1);
     } catch (requestError) {
       setOrcamentoError(requestError.message);
     }
   };
 
-  const editOrcamento = (item) => {
+  const editOrcamento = async (item) => {
+    setOrcamentosSubView('formulario');
     setOrcamentoEditingId(item.id);
-    setOrcamentoForm({
-      cliente_id: String(item.cliente_id),
-      tipo_trabalho: item.tipo_trabalho,
-      descricao: item.descricao,
-      cache_base_estimado_total: item.cache_base_estimado_total,
-      taxa_agencia_percent: item.taxa_agencia_percent,
-      extras_agencia_valor: item.extras_agencia_valor,
-      condicoes_pagamento: item.condicoes_pagamento,
-      uso_imagem: item.uso_imagem,
-      prazo: item.prazo,
-      territorio: item.territorio,
-    });
+    setOrcamentoEditingStatus(item.status ?? 'rascunho');
+    setOrcamentoEditingOsId(
+      item.os_id_gerada != null && item.os_id_gerada !== '' ? Number(item.os_id_gerada) : null,
+    );
+    setOrcamentoError('');
+    try {
+      const r = await fetch(`${API_BASE}/orcamentos/${item.id}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || LOAD_ERROR_MESSAGE);
+      const dt = data.data_trabalho;
+      let dataInput = '';
+      if (dt) {
+        const s = String(dt);
+        dataInput = s.includes('T') ? s.slice(0, 10) : s.slice(0, 10);
+      }
+      const mappedLinhas = Array.isArray(data.linhas)
+        ? data.linhas
+            .filter((l) => l.modelo_id != null && l.modelo_id !== '')
+            .map((l) => ({
+              id: l.id,
+              modelo_id: l.modelo_id,
+              rotulo: l.rotulo ?? '',
+              cache_modelo: l.cache_modelo,
+              emite_nf_propria: Boolean(l.emite_nf_propria),
+              origemCadastro: true,
+            }))
+        : [];
+      setOrcamentoForm({
+        cliente_id: String(data.cliente_id),
+        tipo_proposta_os: data.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo',
+        tipo_trabalho: data.tipo_trabalho,
+        descricao: data.descricao,
+        data_trabalho: dataInput,
+        horario_trabalho: data.horario_trabalho ?? '',
+        local_trabalho: data.local_trabalho ?? '',
+        cache_base_estimado_total: data.cache_base_estimado_total,
+        valor_servico_sem_modelo:
+          data.valor_servico_sem_modelo != null ? String(data.valor_servico_sem_modelo) : '',
+        taxa_agencia_percent: data.taxa_agencia_percent,
+        extras_agencia_valor: data.extras_agencia_valor,
+        imposto_percent:
+          data.imposto_percent != null && data.imposto_percent !== ''
+            ? String(data.imposto_percent)
+            : '10',
+        condicoes_pagamento: data.condicoes_pagamento,
+        uso_imagem: data.uso_imagem,
+        prazo: data.prazo,
+        territorio: data.territorio,
+        quantidade_modelos_referencia:
+          data.quantidade_modelos_referencia != null && data.quantidade_modelos_referencia !== ''
+            ? String(data.quantidade_modelos_referencia)
+            : '',
+        linhas: mappedLinhas,
+      });
+      setOrcamentoEditingStatus(data.status ?? 'rascunho');
+      setOrcamentoEditingOsId(
+        data.os_id_gerada != null && data.os_id_gerada !== '' ? Number(data.os_id_gerada) : null,
+      );
+    } catch {
+      setOrcamentoError(LOAD_ERROR_MESSAGE);
+    }
+  };
+
+  const cancelarOrcamento = async (id) => {
+    if (
+      !window.confirm(
+        'Cancelar este orçamento? O status passará a Cancelado e não será possível aprovar nem editar.',
+      )
+    ) {
+      return;
+    }
+    setOrcamentoError('');
+    try {
+      const response = await fetch(`${API_BASE}/orcamentos/${id}/cancelar`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Erro ao cancelar orçamento.');
+      if (orcamentoEditingId === id) {
+        clearOrcamentoEdicao();
+        setOrcamentosSubView('gestao');
+      }
+      setOrcamentosRefreshTick((x) => x + 1);
+      alert(data.message || 'Orçamento cancelado.');
+    } catch (requestError) {
+      setOrcamentoError(requestError.message);
+    }
+  };
+
+  const abrirOsGerada = (osId) => {
+    const oid = Number(osId);
+    if (!Number.isFinite(oid) || oid <= 0) return;
+    setModule('jobs');
+    setOrcamentosSubView('gestao');
+    setOsDraft(null);
+    loadOsDetail(oid);
   };
 
   const aprovarOrcamento = async (id) => {
-    if (!window.confirm('Aprovar este orçamento e gerar O.S.?')) return;
+    if (
+      !window.confirm(
+        'Aprovar este orçamento? O status passará a Aprovado, a ordem de serviço será gerada automaticamente e o orçamento deixará de poder ser editado.',
+      )
+    ) {
+      return;
+    }
     setOrcamentoError('');
     try {
+      const checkRes = await fetch(`${API_BASE}/orcamentos/${id}`);
+      const budget = await checkRes.json();
+      if (!checkRes.ok) throw new Error(budget.message || 'Orçamento não encontrado.');
+      const tipo = budget.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
+      if (tipo === 'com_modelo') {
+        const linhas = Array.isArray(budget.linhas) ? budget.linhas : [];
+        const reais = linhas.filter((l) => l.modelo_id != null && Number(l.modelo_id) > 0);
+        if (reais.length === 0) {
+          setOrcamentoError(
+            'Para aprovar com modelos, cadastre pelo menos um modelo do cadastro com cachê. A quantidade de referência não autoriza a O.S.',
+          );
+          return;
+        }
+        const invalid = reais.some((l) => !Number.isFinite(Number(l.cache_modelo)) || Number(l.cache_modelo) < 0);
+        if (invalid) {
+          setOrcamentoError('Cada modelo do cadastro precisa de cachê válido (≥ 0) antes de aprovar.');
+          return;
+        }
+      } else if (!(Number(budget.valor_servico_sem_modelo) > 0)) {
+        setOrcamentoError('Para aprovar “sem modelo”, defina o valor do serviço no orçamento.');
+        return;
+      }
+
       const response = await fetch(`${API_BASE}/orcamentos/${id}/aprovar`, { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || 'Erro ao aprovar orçamento.');
-      const refresh = await fetch(`${API_BASE}/orcamentos`);
-      if (refresh.ok) setOrcamentos(await refresh.json());
+      if (orcamentoEditingId === id) {
+        setOrcamentoEditingStatus('aprovado');
+        const oid = data.os?.id;
+        setOrcamentoEditingOsId(Number.isFinite(Number(oid)) ? Number(oid) : null);
+      }
+      setOrcamentosRefreshTick((x) => x + 1);
       alert(data.message);
     } catch (requestError) {
       setOrcamentoError(requestError.message);
     }
   };
+
+  /** Na lista: abrir o orçamento na tela de edição; aprovação fica só no topo do formulário (rascunho). */
+  const renderOrcamentoAcoes = (item) => {
+    if (item.status === 'rascunho') {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+            onClick={() => editOrcamento(item)}
+          >
+            Abrir
+          </button>
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-xs text-red-700"
+            onClick={() => cancelarOrcamento(item.id)}
+          >
+            Cancelar
+          </button>
+          <a
+            href={`${API_BASE}/orcamentos/${item.id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-slate-600 underline"
+          >
+            PDF
+          </a>
+        </div>
+      );
+    }
+    if (item.status === 'aprovado') {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+            onClick={() => editOrcamento(item)}
+          >
+            Abrir
+          </button>
+          {item.os_id_gerada != null ? (
+            <button
+              type="button"
+              className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700"
+              onClick={() => abrirOsGerada(item.os_id_gerada)}
+            >
+              Ver O.S. #{item.os_id_gerada}
+            </button>
+          ) : (
+            <span className="text-xs text-slate-500">Sem O.S.</span>
+          )}
+          <a
+            href={`${API_BASE}/orcamentos/${item.id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-slate-600 underline"
+          >
+            PDF
+          </a>
+        </div>
+      );
+    }
+    if (item.status === 'cancelado') {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+            onClick={() => editOrcamento(item)}
+          >
+            Abrir
+          </button>
+          <a
+            href={`${API_BASE}/orcamentos/${item.id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-slate-600 underline"
+          >
+            PDF
+          </a>
+        </div>
+      );
+    }
+    return <span className="text-xs text-slate-400">—</span>;
+  };
+
+  const orcamentoFormLocked =
+    orcamentoEditingId != null &&
+    orcamentoEditingStatus != null &&
+    orcamentoEditingStatus !== 'rascunho';
+
+  const orcamentoFinanceiroPreview = previewOrcamentoFinanceiro(orcamentoForm);
 
   return (
     <div className="min-h-screen bg-[#F7F7F7] text-slate-900">
@@ -1309,7 +1804,10 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setModule('orcamentos')}
+              onClick={() => {
+                setModule('orcamentos');
+                setOrcamentosSubView('gestao');
+              }}
               className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
               style={{
                 backgroundColor: module === 'orcamentos' ? BRAND_ORANGE : '#fff',
@@ -1410,7 +1908,13 @@ function App() {
                   {module === 'cadastros'
                     ? current.label
                     : module === 'orcamentos'
-                      ? 'Orçamentos'
+                      ? orcamentosSubView === 'lista'
+                        ? 'Todos os orçamentos'
+                        : orcamentosSubView === 'formulario'
+                          ? orcamentoEditingId
+                            ? `Orçamento #${orcamentoEditingId}`
+                            : 'Novo orçamento'
+                          : 'Gestão de orçamentos'
                       : module === 'inicio'
                         ? 'Dashboard'
                         : module === 'financeiro'
@@ -1423,7 +1927,11 @@ function App() {
                   {module === 'cadastros'
                     ? 'Cadastro simples e operacional, pronto para alimentar O.S. e financeiro.'
                     : module === 'orcamentos'
-                      ? 'Orçamento comercial sem modelos e sem financeiro.'
+                      ? orcamentosSubView === 'lista'
+                        ? 'Listagem completa com filtros e paginação.'
+                        : orcamentosSubView === 'formulario'
+                          ? 'Preencha o rascunho, salve e use “Aprovar Orçamento” no topo para gerar a O.S.'
+                          : 'Busque orçamentos, abra para revisar ou aprovar, ou crie um novo.'
                       : module === 'inicio'
                         ? 'Caixa, resultado da agência e pendências (contrato, receber, pagar modelos).'
                         : module === 'financeiro'
@@ -1440,7 +1948,15 @@ function App() {
                 {module === 'cadastros'
                   ? `${items.length} registros`
                   : module === 'orcamentos'
-                    ? `${orcamentos.length} registros`
+                    ? orcamentosSubView === 'gestao'
+                      ? orcamentoBuscaDebounced.trim()
+                        ? `${orcamentosTotal} resultado(s)`
+                        : `${orcamentosTotal} orçamentos`
+                      : orcamentosSubView === 'formulario'
+                        ? orcamentoEditingId
+                          ? labelOrcamentoStatus(orcamentoEditingStatus)
+                          : 'Novo'
+                        : `${orcamentosTotal} registro(s)`
                     : module === 'inicio'
                       ? dashboardResumo
                         ? `${formatBRL(dashboardResumo.saldo_aproximado)} caixa`
@@ -1477,7 +1993,11 @@ function App() {
                   {module === 'cadastros'
                     ? current.label
                     : module === 'orcamentos'
-                      ? 'Comercial'
+                      ? orcamentosSubView === 'lista'
+                        ? 'Lista completa'
+                        : orcamentosSubView === 'formulario'
+                          ? 'Formulário'
+                          : 'Painel'
                       : module === 'inicio'
                         ? 'Operação'
                         : module === 'financeiro'
@@ -2505,42 +3025,435 @@ function App() {
 
           {module === 'orcamentos' && (
             <>
+              {orcamentoError && (
+                <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700">
+                  {orcamentoError}
+                </p>
+              )}
+
+              {orcamentosSubView === 'gestao' && (
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={saveOrcamento}>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Cliente</span>
-                    <select
-                      value={orcamentoForm.cliente_id}
-                      onChange={(event) => onChangeOrcamento('cliente_id', event.target.value)}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-semibold text-slate-900">Gestão de orçamentos</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Busque, abra um orçamento para revisar ou aprove, ou crie um novo.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow-sm"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={iniciarNovoOrcamento}
+                  >
+                    Novo Orçamento
+                  </button>
+                </div>
+                <label className="mb-4 block text-sm text-slate-600">
+                  <span className="mb-1 block font-medium">Buscar</span>
+                  <input
+                    type="search"
+                    value={orcamentoBuscaInput}
+                    onChange={(event) => setOrcamentoBuscaInput(event.target.value)}
+                    placeholder="Cliente, tipo de trabalho ou descrição"
+                    className="w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <div className="mb-4">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                    onClick={() => {
+                      setOrcamentosListaPage(1);
+                      setOrcamentosSubView('lista');
+                    }}
+                  >
+                    Ver todos os orçamentos
+                  </button>
+                </div>
+                {orcamentoLoading ? (
+                  <p className="text-sm text-slate-500">Carregando...</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-2 py-2 font-medium">Cliente</th>
+                          <th className="px-2 py-2 font-medium">Tipo</th>
+                          <th className="px-2 py-2 font-medium whitespace-nowrap">Criado em</th>
+                          <th className="px-2 py-2 font-medium">Cachê base</th>
+                          <th className="px-2 py-2 font-medium">Taxa agência</th>
+                          <th className="px-2 py-2 font-medium">Status</th>
+                          <th className="px-2 py-2 font-medium whitespace-nowrap">O.S. gerada</th>
+                          <th className="px-2 py-2 font-medium">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orcamentos.map((item) => (
+                          <tr key={item.id} className="border-b border-slate-100">
+                            <td className="px-2 py-2">{item.nome_empresa || item.nome_fantasia}</td>
+                            <td className="px-2 py-2">{item.tipo_trabalho}</td>
+                            <td className="px-2 py-2 whitespace-nowrap text-slate-600">
+                              {formatOrcamentoCriadoEm(item.created_at)}
+                            </td>
+                            <td className="px-2 py-2">R$ {Number(item.cache_base_estimado_total).toFixed(2)}</td>
+                            <td className="px-2 py-2">{Number(item.taxa_agencia_percent).toFixed(2)}%</td>
+                            <td className="px-2 py-2">{labelOrcamentoStatus(item.status)}</td>
+                            <td className="px-2 py-2 whitespace-nowrap text-slate-600">
+                              {item.status === 'aprovado' && item.os_id_gerada != null ? (
+                                <span title="O.S. gerada a partir deste orçamento">#{item.os_id_gerada}</span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="px-2 py-2">{renderOrcamentoAcoes(item)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <p className="mt-3 text-xs text-slate-500">
+                  {orcamentoBuscaDebounced.trim()
+                    ? 'Até 25 resultados na busca.'
+                    : 'Lista dos 20 orçamentos mais recentes.'}
+                </p>
+              </section>
+              )}
+
+              {orcamentosSubView === 'formulario' && (
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                    <button
+                      type="button"
+                      className="shrink-0 self-start rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                      onClick={voltarParaGestaoOrcamentos}
                     >
-                      <option value="">Selecione</option>
-                      {clients.map((client) => (
-                        <option key={client.id} value={client.id}>
-                          {client.nome_empresa}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
+                      ← Gestão de orçamentos
+                    </button>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {orcamentoEditingId ? `Orçamento #${orcamentoEditingId}` : 'Novo orçamento'}
+                      </p>
+                      <p className="mt-0.5 text-sm text-slate-600">
+                        {orcamentoEditingId
+                          ? labelOrcamentoStatus(orcamentoEditingStatus)
+                          : 'Salve como rascunho antes de aprovar.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+                    {orcamentoEditingId &&
+                      orcamentoEditingStatus === 'rascunho' &&
+                      !orcamentoFormLocked && (
+                        <button
+                          type="button"
+                          className="w-full rounded-xl px-6 py-3.5 text-base font-semibold text-white shadow-md sm:min-w-[220px]"
+                          style={{ backgroundColor: BRAND_ORANGE }}
+                          onClick={() => aprovarOrcamento(orcamentoEditingId)}
+                        >
+                          Aprovar Orçamento
+                        </button>
+                      )}
+                    {orcamentoEditingId &&
+                      orcamentoEditingStatus === 'aprovado' &&
+                      orcamentoEditingOsId != null && (
+                        <button
+                          type="button"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 sm:min-w-[200px]"
+                          onClick={() => abrirOsGerada(orcamentoEditingOsId)}
+                        >
+                          Ver O.S. #{orcamentoEditingOsId}
+                        </button>
+                      )}
+                  </div>
+                </div>
+                <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={saveOrcamento}>
+                  {orcamentoFormLocked && (
+                    <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                      <p className="font-medium">
+                        Este orçamento está {labelOrcamentoStatus(orcamentoEditingStatus)} — a edição está bloqueada.
+                      </p>
+                      {orcamentoEditingStatus === 'aprovado' && orcamentoEditingOsId != null && (
+                        <button
+                          type="button"
+                          className="mt-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+                          onClick={() => abrirOsGerada(orcamentoEditingOsId)}
+                        >
+                          Ver O.S. #{orcamentoEditingOsId}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <fieldset
+                    disabled={orcamentoFormLocked}
+                    className="md:col-span-2 grid min-w-0 grid-cols-1 gap-3 border-0 p-0 md:grid-cols-2 [&:disabled]:opacity-60"
+                  >
+                  <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                    <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">1. Cliente</p>
+                    <label className="text-sm text-slate-600">
+                      <span className="mb-1 block font-medium">Cliente</span>
+                      <select
+                        value={orcamentoForm.cliente_id}
+                        onChange={(event) => onChangeOrcamento('cliente_id', event.target.value)}
+                        className="w-full max-w-lg rounded-lg border border-slate-300 bg-white px-3 py-2"
+                      >
+                        <option value="">Selecione o cliente</option>
+                        {clients.map((client) => (
+                          <option key={client.id} value={client.id}>
+                            {client.nome_empresa}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <label
+                    className={`text-sm text-slate-600 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
+                  >
                     <span className="mb-1 block">Tipo de trabalho</span>
-                    <input value={orcamentoForm.tipo_trabalho} onChange={(event) => onChangeOrcamento('tipo_trabalho', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
+                    <input
+                      value={orcamentoForm.tipo_trabalho}
+                      onChange={(event) => onChangeOrcamento('tipo_trabalho', event.target.value)}
+                      disabled={!orcamentoForm.cliente_id}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    />
                   </label>
+
+                  <div
+                    className={`rounded-xl border border-slate-200 bg-white p-4 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
+                  >
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      2. O job inclui modelos?
+                    </p>
+                    <label className="text-sm text-slate-600">
+                      <span className="mb-1 block font-medium">Resposta</span>
+                      <select
+                        value={orcamentoForm.tipo_proposta_os || 'com_modelo'}
+                        disabled={!orcamentoForm.cliente_id}
+                        onChange={(event) => {
+                          const v = event.target.value;
+                        setOrcamentoForm((prev) => ({
+                          ...prev,
+                          tipo_proposta_os: v,
+                          linhas: v === 'sem_modelo' ? [] : prev.linhas || [],
+                          quantidade_modelos_referencia: v === 'sem_modelo' ? '' : prev.quantidade_modelos_referencia ?? '',
+                        }));
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                      >
+                        <option value="com_modelo">Sim</option>
+                        <option value="sem_modelo">Não (serviço sem modelo)</option>
+                      </select>
+                    </label>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Com modelos: use a quantidade como referência e, quando souber, adicione modelos do cadastro com
+                      cachê. Para aprovar, é obrigatório ter modelos reais definidos.
+                    </p>
+                  </div>
+
+                  {orcamentoForm.tipo_proposta_os === 'sem_modelo' && (
+                    <label className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">Valor do serviço (sem modelo)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={orcamentoForm.valor_servico_sem_modelo}
+                        onChange={(event) => onChangeOrcamento('valor_servico_sem_modelo', event.target.value)}
+                        disabled={!orcamentoForm.cliente_id}
+                        className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                      />
+                      <span className="mt-1 block text-xs text-slate-500">
+                        Obrigatório para aprovar quando não houver modelos. No rascunho pode ficar zero.
+                      </span>
+                    </label>
+                  )}
+
+                  {orcamentoForm.tipo_proposta_os === 'com_modelo' && (
+                    <div
+                      className={`md:col-span-2 rounded-xl border border-amber-200 bg-amber-50/60 p-4 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
+                    >
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-amber-900/80">
+                        3. Modelos no orçamento
+                      </p>
+                      <label className="mb-4 block max-w-xs text-sm text-slate-700">
+                        <span className="mb-1 block font-medium">Quantidade de modelos</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={999}
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={orcamentoForm.quantidade_modelos_referencia}
+                          onChange={handleQuantidadeModelosRefChange}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                        />
+                        <span className="mt-1 block text-xs text-slate-600">
+                          Referência inicial (opcional). Não gera linhas automáticas. Na aprovação, serão exigidos
+                          modelos do cadastro com cachê.
+                        </span>
+                      </label>
+
+                      <p className="mb-2 text-sm font-medium text-slate-800">Modelos do cadastro (opcional no rascunho)</p>
+                      {(orcamentoForm.linhas || []).length === 0 ? (
+                        <p className="text-sm text-slate-600">
+                          Adicione modelos reais quando já souber quem entra no job. Para aprovar, preencha pelo menos um
+                          modelo com cachê.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {(orcamentoForm.linhas || []).map((line, index) => (
+                            <div
+                              key={line.id ?? `ol-${index}`}
+                              className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[1fr_minmax(100px,1fr)_auto_auto]"
+                            >
+                              <select
+                                value={line.modelo_id ?? ''}
+                                onChange={(event) =>
+                                  updateOrcamentoLinha(index, {
+                                    modelo_id: event.target.value ? Number(event.target.value) : '',
+                                    origemCadastro: true,
+                                  })}
+                                className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                              >
+                                <option value="">Selecione o modelo…</option>
+                                {modelosList.map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.nome}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="Cachê R$"
+                                value={line.cache_modelo ?? ''}
+                                onChange={(event) =>
+                                  updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
+                                className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                              />
+                              <label className="flex items-center gap-2 text-xs text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(line.emite_nf_propria)}
+                                  onChange={(event) =>
+                                    updateOrcamentoLinha(index, { emite_nf_propria: event.target.checked })}
+                                />
+                                NF própria
+                              </label>
+                              <button
+                                type="button"
+                                className="text-xs text-red-700"
+                                onClick={() => removeOrcamentoLinha(index)}
+                              >
+                                remover
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-white"
+                          style={{ backgroundColor: BRAND_ORANGE }}
+                          onClick={addOrcamentoLinhaCadastro}
+                        >
+                          + Modelo do cadastro
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <label className="text-sm text-slate-600 md:col-span-2">
                     <span className="mb-1 block">Descrição</span>
                     <input value={orcamentoForm.descricao} onChange={(event) => onChangeOrcamento('descricao', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
                   </label>
                   <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Cachê base estimado (total)</span>
-                    <input type="number" value={orcamentoForm.cache_base_estimado_total} onChange={(event) => onChangeOrcamento('cache_base_estimado_total', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
+                    <span className="mb-1 block">Data do trabalho</span>
+                    <input
+                      type="date"
+                      value={orcamentoForm.data_trabalho}
+                      onChange={(event) => onChangeOrcamento('data_trabalho', event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Horário</span>
+                    <input
+                      value={orcamentoForm.horario_trabalho}
+                      onChange={(event) => onChangeOrcamento('horario_trabalho', event.target.value)}
+                      placeholder="Ex.: 09h–18h"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600 md:col-span-2">
+                    <span className="mb-1 block">Local</span>
+                    <input
+                      value={orcamentoForm.local_trabalho}
+                      onChange={(event) => onChangeOrcamento('local_trabalho', event.target.value)}
+                      placeholder="Endereço ou estúdio"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">
+                      Cachê base estimado (total)
+                      {orcamentoForm.tipo_proposta_os === 'com_modelo' &&
+                        (orcamentoForm.linhas || []).length > 0 &&
+                        ' — soma dos modelos'}
+                    </span>
+                    {orcamentoForm.tipo_proposta_os === 'com_modelo' && (orcamentoForm.linhas || []).length > 0 ? (
+                      <input
+                        type="text"
+                        readOnly
+                        value={String(
+                          (orcamentoForm.linhas || []).reduce(
+                            (s, l) => s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0),
+                            0,
+                          ),
+                        )}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700"
+                      />
+                    ) : (
+                      <input
+                        type="number"
+                        value={orcamentoForm.cache_base_estimado_total}
+                        onChange={(event) => onChangeOrcamento('cache_base_estimado_total', event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      />
+                    )}
                   </label>
                   <label className="text-sm text-slate-600">
                     <span className="mb-1 block">Taxa da agência (%)</span>
                     <input type="number" value={orcamentoForm.taxa_agencia_percent} onChange={(event) => onChangeOrcamento('taxa_agencia_percent', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Valor ref. da taxa: {formatBRL(orcamentoFinanceiroPreview.taxa_agencia_valor)}
+                    </span>
                   </label>
                   <label className="text-sm text-slate-600">
                     <span className="mb-1 block">Extras da agência (valor)</span>
                     <input type="number" value={orcamentoForm.extras_agencia_valor} onChange={(event) => onChangeOrcamento('extras_agencia_valor', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
+                  </label>
+                  <label className="text-sm text-slate-600 md:col-span-2">
+                    <span className="mb-1 block font-medium">Nota fiscal / imposto (%)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={orcamentoForm.imposto_percent}
+                      onChange={(event) => onChangeOrcamento('imposto_percent', event.target.value)}
+                      className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2"
+                      placeholder="10"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Padrão 10%. O valor em reais é sempre sobre o <strong>total ao cliente</strong> (serviço + taxa +
+                      extras): {formatBRL(orcamentoFinanceiroPreview.impostoValor)}. Não aparece discriminado no PDF ao
+                      cliente — só o total.
+                    </span>
                   </label>
                   <label className="text-sm text-slate-600">
                     <span className="mb-1 block">Condições de pagamento</span>
@@ -2558,112 +3471,204 @@ function App() {
                     <span className="mb-1 block">Território</span>
                     <input value={orcamentoForm.territorio} onChange={(event) => onChangeOrcamento('territorio', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
                   </label>
+                  </fieldset>
                   <div className="md:col-span-2 flex flex-wrap items-center gap-3">
-                    <button type="submit" className="rounded-xl px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: BRAND_ORANGE }}>
-                      {orcamentoEditingId ? 'Atualizar orçamento' : 'Salvar orçamento'}
-                    </button>
+                    {!orcamentoFormLocked && (
+                      <button type="submit" className="rounded-xl px-4 py-2 text-sm font-medium text-white" style={{ backgroundColor: BRAND_ORANGE }}>
+                        {orcamentoEditingId ? 'Atualizar orçamento' : 'Salvar orçamento'}
+                      </button>
+                    )}
                     {orcamentoEditingId && (
                       <a
                         href={`${API_BASE}/orcamentos/${orcamentoEditingId}/pdf`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-sm font-medium text-slate-700 underline"
+                        className="inline-flex items-center rounded-xl px-4 py-2 text-sm font-medium text-white no-underline"
+                        style={{ backgroundColor: BRAND_ORANGE }}
                       >
-                        Ver proposta para impressão / PDF
+                        Gerar PDF
                       </a>
                     )}
                     {orcamentoEditingId && (
                       <button
                         type="button"
                         className="rounded-lg border border-slate-300 px-4 py-2 text-sm"
-                        onClick={() => {
-                          setOrcamentoEditingId(null);
-                          setOrcamentoForm({
-                            cliente_id: '',
-                            tipo_trabalho: '',
-                            descricao: '',
-                            cache_base_estimado_total: '',
-                            taxa_agencia_percent: '',
-                            extras_agencia_valor: '',
-                            condicoes_pagamento: '',
-                            uso_imagem: '',
-                            prazo: '',
-                            territorio: '',
-                          });
-                        }}
+                        onClick={voltarParaGestaoOrcamentos}
                       >
-                        Cancelar edição
+                        {orcamentoFormLocked ? 'Fechar' : 'Cancelar edição'}
                       </button>
                     )}
                   </div>
+                  {orcamentoEditingId && (
+                    <p className="md:col-span-2 text-xs text-slate-500">
+                      No PDF ao cliente: lista de modelos (apenas nomes), valor total e a frase sobre serviços da agência e
+                      cachê dos modelos — o detalhamento financeiro fica só no sistema.
+                    </p>
+                  )}
                 </form>
-                {orcamentoError && <p className="mt-3 text-sm font-medium text-red-600">{orcamentoError}</p>}
               </section>
+              )}
 
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-base font-semibold">Lista de orçamentos</h3>
-                  <span className="text-xs font-medium text-slate-500">Aprovar gera O.S. automaticamente</span>
-                </div>
-                {orcamentoLoading ? (
-                  <p className="text-sm text-slate-500">Carregando...</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2 font-medium">Cliente</th>
-                          <th className="px-2 py-2 font-medium">Tipo</th>
-                          <th className="px-2 py-2 font-medium">Cachê base</th>
-                          <th className="px-2 py-2 font-medium">Taxa agência</th>
-                          <th className="px-2 py-2 font-medium">Status</th>
-                          <th className="px-2 py-2 font-medium">Ações</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {orcamentos.map((item) => (
-                          <tr key={item.id} className="border-b border-slate-100">
-                            <td className="px-2 py-2">{item.nome_empresa || item.nome_fantasia}</td>
-                            <td className="px-2 py-2">{item.tipo_trabalho}</td>
-                            <td className="px-2 py-2">R$ {Number(item.cache_base_estimado_total).toFixed(2)}</td>
-                            <td className="px-2 py-2">{Number(item.taxa_agencia_percent).toFixed(2)}%</td>
-                            <td className="px-2 py-2">{item.status}</td>
-                            <td className="px-2 py-2">
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                  onClick={() => editOrcamento(item)}
-                                  disabled={item.status !== 'rascunho'}
-                                >
-                                  Editar
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded-md px-2 py-1 text-xs font-medium text-white disabled:opacity-50"
-                                  style={{ backgroundColor: BRAND_ORANGE }}
-                                  onClick={() => aprovarOrcamento(item.id)}
-                                  disabled={item.status !== 'rascunho'}
-                                >
-                                  Aprovar
-                                </button>
-                                <a
-                                  href={`${API_BASE}/orcamentos/${item.id}/pdf`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700"
-                                >
-                                  PDF
-                                </a>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              {orcamentosSubView === 'lista' && (
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="mb-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                      onClick={() => setOrcamentosSubView('gestao')}
+                    >
+                      ← Voltar à gestão
+                    </button>
+                    <h3 className="text-base font-semibold">Todos os orçamentos</h3>
                   </div>
-                )}
-              </section>
+                  <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+                    <label className="text-sm text-slate-600">
+                      <span className="mb-1 block font-medium">Status</span>
+                      <select
+                        value={orcamentosListaStatus}
+                        onChange={(event) => setOrcamentosListaStatus(event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      >
+                        <option value="">Todos</option>
+                        <option value="rascunho">Rascunho</option>
+                        <option value="aprovado">Aprovado</option>
+                        <option value="cancelado">Cancelado</option>
+                      </select>
+                    </label>
+                    <label className="text-sm text-slate-600">
+                      <span className="mb-1 block font-medium">Cliente</span>
+                      <select
+                        value={orcamentosListaClienteId}
+                        onChange={(event) => setOrcamentosListaClienteId(event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      >
+                        <option value="">Todos</option>
+                        {clients.map((client) => (
+                          <option key={client.id} value={String(client.id)}>
+                            {client.nome_empresa}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-sm text-slate-600">
+                      <span className="mb-1 block font-medium">Ordenar por data de criação</span>
+                      <select
+                        value={orcamentosListaSort}
+                        onChange={(event) => setOrcamentosListaSort(event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      >
+                        <option value="created_at_desc">Mais recente primeiro</option>
+                        <option value="created_at_asc">Mais antigo primeiro</option>
+                      </select>
+                    </label>
+                    <label className="text-sm text-slate-600">
+                      <span className="mb-1 block font-medium">Itens por página</span>
+                      <select
+                        value={String(orcamentosListaPageSize)}
+                        onChange={(event) => setOrcamentosListaPageSize(Number(event.target.value))}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      >
+                        <option value="10">10</option>
+                        <option value="20">20</option>
+                      </select>
+                    </label>
+                  </div>
+                  {orcamentoLoading ? (
+                    <p className="text-sm text-slate-500">Carregando...</p>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-left text-slate-500">
+                              <th className="px-2 py-2 font-medium">#</th>
+                              <th className="px-2 py-2 font-medium">Cliente</th>
+                              <th className="px-2 py-2 font-medium">Tipo</th>
+                              <th className="px-2 py-2 font-medium whitespace-nowrap">Criado em</th>
+                              <th className="px-2 py-2 font-medium">Cachê base</th>
+                              <th className="px-2 py-2 font-medium">Taxa agência</th>
+                              <th className="px-2 py-2 font-medium">Status</th>
+                              <th className="px-2 py-2 font-medium whitespace-nowrap">O.S. gerada</th>
+                              <th className="px-2 py-2 font-medium">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {orcamentos.map((item) => (
+                              <tr key={item.id} className="border-b border-slate-100">
+                                <td className="px-2 py-2 font-medium text-slate-600">#{item.id}</td>
+                                <td className="px-2 py-2">{item.nome_empresa || item.nome_fantasia}</td>
+                                <td className="px-2 py-2">{item.tipo_trabalho}</td>
+                                <td className="px-2 py-2 whitespace-nowrap text-slate-600">
+                                  {formatOrcamentoCriadoEm(item.created_at)}
+                                </td>
+                                <td className="px-2 py-2">R$ {Number(item.cache_base_estimado_total).toFixed(2)}</td>
+                                <td className="px-2 py-2">{Number(item.taxa_agencia_percent).toFixed(2)}%</td>
+                                <td className="px-2 py-2">{labelOrcamentoStatus(item.status)}</td>
+                                <td className="px-2 py-2 whitespace-nowrap text-slate-600">
+                                  {item.status === 'aprovado' && item.os_id_gerada != null ? (
+                                    <span title="O.S. gerada a partir deste orçamento">#{item.os_id_gerada}</span>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                                <td className="px-2 py-2">{renderOrcamentoAcoes(item)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {(() => {
+                        const totalPages = Math.max(
+                          1,
+                          Math.ceil(orcamentosTotal / orcamentosListaPageSize) || 1,
+                        );
+                        const from =
+                          orcamentosTotal === 0
+                            ? 0
+                            : (orcamentosListaPage - 1) * orcamentosListaPageSize + 1;
+                        const to = Math.min(
+                          orcamentosListaPage * orcamentosListaPageSize,
+                          orcamentosTotal,
+                        );
+                        return (
+                          <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+                            <p>
+                              {orcamentosTotal === 0
+                                ? 'Nenhum registro nesta página.'
+                                : `Mostrando ${from}–${to} de ${orcamentosTotal}`}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                                disabled={orcamentosListaPage <= 1 || orcamentoLoading}
+                                onClick={() => setOrcamentosListaPage((p) => Math.max(1, p - 1))}
+                              >
+                                Anterior
+                              </button>
+                              <span className="text-xs">
+                                Página {orcamentosListaPage} de {totalPages}
+                              </span>
+                              <button
+                                type="button"
+                                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                                disabled={
+                                  orcamentosListaPage >= totalPages || orcamentoLoading || orcamentosTotal === 0
+                                }
+                                onClick={() =>
+                                  setOrcamentosListaPage((p) => Math.min(totalPages, p + 1))
+                                }
+                              >
+                                Próxima
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </>
+                  )}
+                </section>
+              )}
             </>
           )}
 
@@ -2754,13 +3759,45 @@ function App() {
                       </button>
                     </div>
                   </div>
+                  <p className="mb-4 text-sm text-slate-600">
+                    Orçamento de origem:{' '}
+                    <strong>#{osDraft.orcamento_numero ?? osDraft.orcamento_id}</strong>
+                    <span className="ml-2 text-xs text-slate-500">
+                      (O.S. e orçamento têm numerações distintas; a O.S. permanece vinculada a este orçamento.)
+                    </span>
+                  </p>
 
                   <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={saveOs}>
                     <label className="text-sm text-slate-600">
                       <span className="mb-1 block">Tipo de O.S.</span>
                       <select
                         value={osDraft.tipo_os || 'com_modelo'}
-                        onChange={(e) => updateOsDraft('tipo_os', e.target.value)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setOsDraft((prev) => {
+                            if (!prev || prev.status === 'recebida') return prev;
+                            if (v === 'sem_modelo') {
+                              return { ...prev, tipo_os: v, linhas: [] };
+                            }
+                            if (v === 'com_modelo') {
+                              if (prev.linhas && prev.linhas.length > 0) return { ...prev, tipo_os: v };
+                              return {
+                                ...prev,
+                                tipo_os: v,
+                                linhas: [
+                                  {
+                                    modelo_id: '',
+                                    rotulo: 'Modelo 1',
+                                    cache_modelo: '',
+                                    emite_nf_propria: false,
+                                    data_prevista_pagamento: '',
+                                  },
+                                ],
+                              };
+                            }
+                            return { ...prev, tipo_os: v };
+                          });
+                        }}
                         disabled={osDraft.status === 'recebida'}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2"
                       >
@@ -2872,18 +3909,118 @@ function App() {
                       </label>
                     )}
 
-                    {osDraft.tipo_os === 'com_modelo' && osDraft.linhas.length === 0 && (
-                      <label className="text-sm text-slate-600 md:col-span-2">
-                        <span className="mb-1 block">Cachê modelo total (até definir linhas)</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={osDraft.cache_modelo_total ?? ''}
-                          onChange={(e) => updateOsDraft('cache_modelo_total', e.target.value)}
-                          disabled={osDraft.status === 'recebida'}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                        />
-                      </label>
+                    {osDraft.tipo_os === 'com_modelo' && (
+                      <div className="md:col-span-2 rounded-xl border-2 border-amber-200 bg-amber-50/50 p-4">
+                        <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900">Modelos do job</h4>
+                            <p className="mt-0.5 text-xs text-slate-600">
+                              Cachê e NF por linha. Pode haver vaga só com referência (sem cadastro); para contrato, vincule o
+                              modelo depois. Use “Adicionar modelo” para mais linhas.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={osDraft.status === 'recebida'}
+                            className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-white"
+                            style={{ backgroundColor: BRAND_ORANGE }}
+                            onClick={addOsLinha}
+                          >
+                            + Adicionar modelo
+                          </button>
+                        </div>
+                        {osDraft.linhas.length === 0 ? (
+                          <p className="text-sm text-red-700">
+                            Nenhum modelo na lista — clique em “Adicionar modelo” ou altere o tipo de O.S.
+                          </p>
+                        ) : (
+                          <div className="space-y-3">
+                            {osDraft.linhas.map((line, index) => (
+                              <div
+                                key={line.id ?? `new-${index}`}
+                                className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                              >
+                                <div className="mb-2 text-xs font-medium text-slate-500">Modelo {index + 1}</div>
+                                <div className="grid gap-3 md:grid-cols-[1fr_minmax(120px,1fr)_auto_auto] md:items-end">
+                                  <label className="text-sm text-slate-600">
+                                    <span className="mb-1 block">Modelo (cadastro)</span>
+                                    <select
+                                      value={line.modelo_id ?? ''}
+                                      onChange={(e) =>
+                                        updateOsLinha(index, {
+                                          modelo_id: e.target.value ? Number(e.target.value) : '',
+                                        })}
+                                      disabled={osDraft.status === 'recebida'}
+                                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                                    >
+                                      <option value="">A definir / selecione…</option>
+                                      {modelosList.map((m) => (
+                                        <option key={m.id} value={m.id}>
+                                          {m.nome}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="text-sm text-slate-600">
+                                    <span className="mb-1 block">Cachê (R$)</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      placeholder="0,00"
+                                      value={line.cache_modelo ?? ''}
+                                      onChange={(e) => updateOsLinha(index, { cache_modelo: e.target.value })}
+                                      disabled={osDraft.status === 'recebida'}
+                                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                                    />
+                                  </label>
+                                  <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                                    <input
+                                      type="checkbox"
+                                      className="h-4 w-4 rounded border-slate-300"
+                                      checked={Boolean(line.emite_nf_propria)}
+                                      onChange={(e) =>
+                                        updateOsLinha(index, { emite_nf_propria: e.target.checked })}
+                                      disabled={osDraft.status === 'recebida'}
+                                    />
+                                    Emite NF própria
+                                  </label>
+                                  <button
+                                    type="button"
+                                    disabled={osDraft.status === 'recebida' || osDraft.linhas.length <= 1}
+                                    className="rounded-md border border-red-200 px-2 py-2 text-xs text-red-700 disabled:opacity-40"
+                                    title={osDraft.linhas.length <= 1 ? 'Mínimo de uma linha em “Com modelo”' : 'Remover linha'}
+                                    onClick={() => removeOsLinha(index)}
+                                  >
+                                    Remover
+                                  </button>
+                                </div>
+                                <label className="mt-2 block text-xs text-slate-600">
+                                  <span className="mb-0.5 block">Referência da vaga (obrigatória se não houver modelo no cadastro)</span>
+                                  <input
+                                    value={line.rotulo ?? ''}
+                                    onChange={(e) => updateOsLinha(index, { rotulo: e.target.value })}
+                                    disabled={osDraft.status === 'recebida'}
+                                    placeholder="Ex.: Modelo 1"
+                                    className="w-full max-w-md rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                  />
+                                </label>
+                                <label className="mt-2 block text-xs text-slate-600">
+                                  <span className="mb-0.5 block">Previsão pagamento ao modelo</span>
+                                  <input
+                                    type="date"
+                                    value={line.data_prevista_pagamento || ''}
+                                    onChange={(e) =>
+                                      updateOsLinha(index, { data_prevista_pagamento: e.target.value || '' })}
+                                    disabled={osDraft.status === 'recebida'}
+                                    className="w-full max-w-[220px] rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                                  />
+                                </label>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     <label className="text-sm text-slate-600">
@@ -3149,90 +4286,6 @@ function App() {
                       </label>
                     </div>
 
-                    {osDraft.tipo_os === 'com_modelo' && (
-                      <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-slate-700">Linhas de modelo</span>
-                          <button
-                            type="button"
-                            disabled={osDraft.status === 'recebida'}
-                            className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-                            onClick={addOsLinha}
-                          >
-                            + Linha
-                          </button>
-                        </div>
-                        {osDraft.linhas.length === 0 ? (
-                          <p className="text-xs text-slate-500">
-                            Nenhuma linha ainda — valores usam o cachê total acima ou adicione modelos.
-                          </p>
-                        ) : (
-                          <div className="space-y-2">
-                            {osDraft.linhas.map((line, index) => (
-                              <div
-                                key={line.id ?? `new-${index}`}
-                                className="space-y-2 rounded-lg border border-slate-200 bg-white p-3"
-                              >
-                                <div className="grid gap-2 md:grid-cols-[1fr_140px_auto_auto]">
-                                  <select
-                                    value={line.modelo_id ?? ''}
-                                    onChange={(e) =>
-                                      updateOsLinha(index, { modelo_id: e.target.value ? Number(e.target.value) : '' })}
-                                    disabled={osDraft.status === 'recebida'}
-                                    className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
-                                  >
-                                    <option value="">Modelo</option>
-                                    {modelosList.map((m) => (
-                                      <option key={m.id} value={m.id}>
-                                        {m.nome}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    placeholder="Cachê"
-                                    value={line.cache_modelo ?? ''}
-                                    onChange={(e) => updateOsLinha(index, { cache_modelo: e.target.value })}
-                                    disabled={osDraft.status === 'recebida'}
-                                    className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
-                                  />
-                                  <label className="flex items-center gap-2 text-xs text-slate-600">
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(line.emite_nf_propria)}
-                                      onChange={(e) => updateOsLinha(index, { emite_nf_propria: e.target.checked })}
-                                      disabled={osDraft.status === 'recebida'}
-                                    />
-                                    NF própria
-                                  </label>
-                                  <button
-                                    type="button"
-                                    disabled={osDraft.status === 'recebida'}
-                                    className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-700"
-                                    onClick={() => removeOsLinha(index)}
-                                  >
-                                    remover
-                                  </button>
-                                </div>
-                                <label className="block text-xs text-slate-600">
-                                  <span className="mb-0.5 block">Previsão pagamento ao modelo (calendário)</span>
-                                  <input
-                                    type="date"
-                                    value={line.data_prevista_pagamento || ''}
-                                    onChange={(e) =>
-                                      updateOsLinha(index, { data_prevista_pagamento: e.target.value || '' })}
-                                    disabled={osDraft.status === 'recebida'}
-                                    className="w-full max-w-[200px] rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-                                  />
-                                </label>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     <div className="md:col-span-2 grid gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm md:grid-cols-2 lg:grid-cols-3">
                       <div>
                         <p className="text-xs text-slate-500">Total cliente</p>
@@ -3275,6 +4328,44 @@ function App() {
                         <p className="font-semibold text-slate-900">{formatBRL(osDraft.resultado_agencia)}</p>
                       </div>
                     </div>
+
+                    <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <h4 className="text-sm font-semibold text-slate-800">Histórico de alterações</h4>
+                      <p className="text-xs text-slate-500">
+                        Alterações na O.S. ficam registradas com data, usuário e campos modificados.
+                      </p>
+                      {(osDraft.historico || []).length === 0 ? (
+                        <p className="mt-2 text-sm text-slate-500">Nenhum registro ainda.</p>
+                      ) : (
+                        <ul className="mt-2 max-h-52 space-y-2 overflow-y-auto text-xs">
+                          {(osDraft.historico || []).map((h) => (
+                            <li key={h.id} className="rounded border border-slate-100 bg-white p-2">
+                              <span className="font-medium text-slate-700">{h.campo}</span>
+                              <span className="text-slate-500">
+                                {' '}
+                                — {h.usuario} — {String(h.created_at || '').slice(0, 19).replace('T', ' ')}
+                              </span>
+                              <div className="mt-1 text-slate-600">Anterior: {h.valor_anterior ?? '—'}</div>
+                              <div>Novo: {h.valor_novo ?? '—'}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {osDraft.status !== 'recebida' && (
+                      <label className="md:col-span-2 text-sm text-slate-600">
+                        <span className="mb-1 block font-medium">
+                          Usuário (obrigatório ao salvar alterações)
+                        </span>
+                        <input
+                          value={osUsuarioAlteracao}
+                          onChange={(e) => setOsUsuarioAlteracao(e.target.value)}
+                          placeholder="Nome de quem está alterando"
+                          className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2"
+                        />
+                      </label>
+                    )}
 
                     {osDraft.status !== 'recebida' && (
                       <div className="md:col-span-2">

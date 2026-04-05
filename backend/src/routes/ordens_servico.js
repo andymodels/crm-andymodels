@@ -27,15 +27,90 @@ async function loadDocumentos(osId) {
 async function loadLinhas(osId) {
   const r = await pool.query(
     `
-    SELECT om.*, m.nome AS modelo_nome
+    SELECT
+      om.*,
+      COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome
     FROM os_modelos om
-    JOIN modelos m ON m.id = om.modelo_id
+    LEFT JOIN modelos m ON m.id = om.modelo_id
     WHERE om.os_id = $1
     ORDER BY om.id
     `,
     [osId],
   );
   return r.rows;
+}
+
+async function loadOsHistorico(osId) {
+  const r = await pool.query(
+    `
+    SELECT id, created_at, usuario, campo, valor_anterior, valor_novo
+    FROM os_historico
+    WHERE os_id = $1
+    ORDER BY id DESC
+    `,
+    [osId],
+  );
+  return r.rows;
+}
+
+function strVal(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+function collectOsDiffs({ prev, next, linhasAntes, linhasDepois }) {
+  const diffs = [];
+  const cmp = (campo, a, b) => {
+    if (strVal(a) !== strVal(b)) {
+      diffs.push({ campo, valor_anterior: strVal(a), valor_novo: strVal(b) });
+    }
+  };
+  cmp('descricao', prev.descricao, next.descricao);
+  cmp('data_trabalho', prev.data_trabalho, next.data_trabalho);
+  cmp('uso_imagem', prev.uso_imagem, next.uso_imagem);
+  cmp('tipo_trabalho', prev.tipo_trabalho, next.tipo_trabalho);
+  cmp('prazo', prev.prazo, next.prazo);
+  cmp('territorio', prev.territorio, next.territorio);
+  cmp('condicoes_pagamento', prev.condicoes_pagamento, next.condicoes_pagamento);
+  cmp('valor_servico', prev.valor_servico, next.valor_servico);
+  cmp('tipo_os', prev.tipo_os, next.tipo_os);
+  cmp('agencia_fee_percent', prev.agencia_fee_percent, next.agencia_fee_percent);
+  cmp('extras_agencia_valor', prev.extras_agencia_valor, next.extras_agencia_valor);
+  cmp('extras_despesa_valor', prev.extras_despesa_valor, next.extras_despesa_valor);
+  cmp('extras_despesa_descricao', prev.extras_despesa_descricao, next.extras_despesa_descricao);
+  cmp('imposto_percent', prev.imposto_percent, next.imposto_percent);
+  cmp('parceiro_id', prev.parceiro_id, next.parceiro_id);
+  cmp('parceiro_percent', prev.parceiro_percent, next.parceiro_percent);
+  cmp('booker_id', prev.booker_id, next.booker_id);
+  cmp('booker_percent', prev.booker_percent, next.booker_percent);
+  cmp('emitir_contrato', prev.emitir_contrato, next.emitir_contrato);
+  cmp('contrato_template_versao', prev.contrato_template_versao, next.contrato_template_versao);
+  cmp('contrato_observacao', prev.contrato_observacao, next.contrato_observacao);
+  cmp('data_vencimento_cliente', prev.data_vencimento_cliente, next.data_vencimento_cliente);
+
+  const la = (linhasAntes || []).map((l) => ({
+    modelo_id: l.modelo_id,
+    rotulo: l.rotulo || '',
+    cache_modelo: n(l.cache_modelo),
+    emite_nf_propria: Boolean(l.emite_nf_propria),
+    data_prevista_pagamento: l.data_prevista_pagamento || null,
+  }));
+  const ld = (linhasDepois || []).map((l) => ({
+    modelo_id: l.modelo_id,
+    rotulo: l.rotulo || '',
+    cache_modelo: n(l.cache_modelo),
+    emite_nf_propria: Boolean(l.emite_nf_propria),
+    data_prevista_pagamento: l.data_prevista_pagamento || null,
+  }));
+  if (JSON.stringify(la) !== JSON.stringify(ld)) {
+    diffs.push({
+      campo: 'linhas_modelos',
+      valor_anterior: JSON.stringify(la),
+      valor_novo: JSON.stringify(ld),
+    });
+  }
+  return diffs;
 }
 
 router.get('/ordens-servico/:id/pdf', async (req, res, next) => {
@@ -153,6 +228,7 @@ router.get('/ordens-servico/:id', async (req, res, next) => {
     row.linhas = linhas.map((l) => ({
       id: l.id,
       modelo_id: l.modelo_id,
+      rotulo: l.rotulo,
       modelo_nome: l.modelo_nome,
       cache_modelo: l.cache_modelo,
       emite_nf_propria: l.emite_nf_propria,
@@ -160,6 +236,7 @@ router.get('/ordens-servico/:id', async (req, res, next) => {
       modelo_liquido: n(lineLiquido(l.cache_modelo, row.imposto_percent, row.agencia_fee_percent, l.emite_nf_propria)),
     }));
     row.documentos = await loadDocumentos(id);
+    row.historico = await loadOsHistorico(id);
     res.json(row);
   } catch (e) {
     next(e);
@@ -176,6 +253,9 @@ router.put('/ordens-servico/:id', async (req, res, next) => {
     if (existing.rows[0].status === 'recebida') {
       return res.status(400).json({ message: 'O.S. recebida nao pode ser editada.' });
     }
+
+    const oldRow = existing.rows[0];
+    const oldLinhas = await loadLinhas(id);
 
     const body = req.body;
     const tipoOs = body.tipo_os || existing.rows[0].tipo_os || 'com_modelo';
@@ -234,45 +314,57 @@ router.put('/ordens-servico/:id', async (req, res, next) => {
       let linhasForCalc = [];
       if (tipoOs === 'sem_modelo') {
         await pool.query('DELETE FROM os_modelos WHERE os_id = $1', [id]);
-      } else if (linhasBody && linhasBody.length > 0) {
+      } else if (tipoOs === 'com_modelo') {
+        if (!Array.isArray(linhasBody)) {
+          await pool.query('ROLLBACK');
+          return res.status(400).json({
+            message: 'O.S. com modelo: envie o array "linhas" com pelo menos um modelo (modelo_id, cache_modelo).',
+          });
+        }
+        if (linhasBody.length === 0) {
+          await pool.query('ROLLBACK');
+          return res.status(400).json({
+            message: 'O.S. com modelo exige pelo menos uma linha de modelo com cachê definido.',
+          });
+        }
         await pool.query('DELETE FROM os_modelos WHERE os_id = $1', [id]);
         for (const l of linhasBody) {
-          if (!l.modelo_id || l.cache_modelo == null || l.cache_modelo === '') {
+          const midRaw = l.modelo_id != null && l.modelo_id !== '' ? Number(l.modelo_id) : NaN;
+          const cacheVal = l.cache_modelo != null && l.cache_modelo !== '' ? Number(l.cache_modelo) : NaN;
+          if (!Number.isFinite(cacheVal) || cacheVal < 0) {
             await pool.query('ROLLBACK');
-            return res.status(400).json({ message: 'Cada linha precisa de modelo_id e cache_modelo.' });
+            return res.status(400).json({ message: 'Cada linha precisa de cachê do modelo (valor numérico ≥ 0).' });
           }
           const emite = Boolean(l.emite_nf_propria);
           const prev = l.data_prevista_pagamento || null;
-          await pool.query(
-            `
-            INSERT INTO os_modelos (os_id, modelo_id, cache_modelo, emite_nf_propria, data_prevista_pagamento)
-            VALUES ($1, $2, $3, $4, $5)
-            `,
-            [id, l.modelo_id, l.cache_modelo, emite, prev],
-          );
+          const rotulo = String(l.rotulo ?? '').trim() || 'Modelo';
+          if (Number.isFinite(midRaw) && midRaw > 0) {
+            await pool.query(
+              `
+              INSERT INTO os_modelos (os_id, modelo_id, cache_modelo, emite_nf_propria, data_prevista_pagamento, rotulo)
+              VALUES ($1, $2, $3, $4, $5, $6)
+              `,
+              [id, midRaw, cacheVal, emite, prev, rotulo],
+            );
+          } else {
+            await pool.query(
+              `
+              INSERT INTO os_modelos (os_id, modelo_id, cache_modelo, emite_nf_propria, data_prevista_pagamento, rotulo)
+              VALUES ($1, NULL, $2, $3, $4, $5)
+              `,
+              [id, cacheVal, emite, prev, rotulo],
+            );
+          }
         }
-        linhasForCalc = await loadLinhas(id);
-      } else if (tipoOs === 'com_modelo') {
         linhasForCalc = await loadLinhas(id);
       }
 
       const cacheModeloTotalField =
-        tipoOs === 'com_modelo' && linhasForCalc.length > 0
+        tipoOs === 'com_modelo'
           ? linhasForCalc.reduce((s, l) => s + n(l.cache_modelo), 0)
           : body.cache_modelo_total != null
             ? body.cache_modelo_total
             : existing.rows[0].cache_modelo_total;
-
-      if (
-        tipoOs === 'com_modelo'
-        && linhasForCalc.length === 0
-        && (!cacheModeloTotalField || n(cacheModeloTotalField) <= 0)
-      ) {
-        await pool.query('ROLLBACK');
-        return res.status(400).json({
-          message: 'O.S. com modelo: informe linhas de modelo ou cachê modelo total valido.',
-        });
-      }
 
       if (merged.emitir_contrato) {
         const errosContrato = await validarContratoPronto(pool, id, merged, tipoOs);
@@ -379,6 +471,57 @@ router.put('/ordens-servico/:id', async (req, res, next) => {
         ],
       );
 
+      const newLinhasSnapshot = await loadLinhas(id);
+      const usuario = String(body.usuario || '').trim();
+      const snapshotNext = {
+        descricao: merged.descricao,
+        data_trabalho: merged.data_trabalho || null,
+        uso_imagem: merged.uso_imagem,
+        tipo_trabalho: merged.tipo_trabalho,
+        prazo: merged.prazo,
+        territorio: merged.territorio,
+        condicoes_pagamento: merged.condicoes_pagamento,
+        valor_servico: merged.valor_servico,
+        tipo_os: merged.tipo_os,
+        agencia_fee_percent: merged.agencia_fee_percent,
+        extras_agencia_valor: merged.extras_agencia_valor,
+        extras_despesa_valor: merged.extras_despesa_valor,
+        extras_despesa_descricao: merged.extras_despesa_descricao || '',
+        imposto_percent: merged.imposto_percent,
+        parceiro_id: merged.parceiro_id,
+        parceiro_percent: merged.parceiro_percent,
+        booker_id: merged.booker_id,
+        booker_percent: merged.booker_percent,
+        emitir_contrato: merged.emitir_contrato,
+        contrato_template_versao: merged.contrato_template_versao,
+        contrato_observacao: merged.contrato_observacao || '',
+        data_vencimento_cliente: merged.data_vencimento_cliente || null,
+      };
+      const diffs = collectOsDiffs({
+        prev: oldRow,
+        next: snapshotNext,
+        linhasAntes: oldLinhas,
+        linhasDepois: newLinhasSnapshot,
+      });
+      if (diffs.length > 0) {
+        if (!usuario || usuario.length < 2) {
+          await pool.query('ROLLBACK');
+          return res.status(400).json({
+            message:
+              'Informe o campo "usuario" (nome de quem altera) com pelo menos 2 caracteres para registrar o histórico de alterações da O.S.',
+          });
+        }
+        for (const d of diffs) {
+          await pool.query(
+            `
+            INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
+            VALUES ($1, $2, $3, $4, $5)
+            `,
+            [id, usuario, d.campo, d.valor_anterior, d.valor_novo],
+          );
+        }
+      }
+
       await pool.query('COMMIT');
       const updated = await pool.query(
         `
@@ -395,6 +538,7 @@ router.put('/ordens-servico/:id', async (req, res, next) => {
       row.linhas = (await loadLinhas(id)).map((l) => ({
         id: l.id,
         modelo_id: l.modelo_id,
+        rotulo: l.rotulo,
         modelo_nome: l.modelo_nome,
         cache_modelo: l.cache_modelo,
         emite_nf_propria: l.emite_nf_propria,
@@ -404,6 +548,7 @@ router.put('/ordens-servico/:id', async (req, res, next) => {
         ),
       }));
       row.documentos = await loadDocumentos(id);
+      row.historico = await loadOsHistorico(id);
       res.json(row);
     } catch (e) {
       await pool.query('ROLLBACK');

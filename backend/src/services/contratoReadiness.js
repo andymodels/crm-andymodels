@@ -47,9 +47,9 @@ async function validarContratoPronto(pool, osId, osCampos, tipoOs) {
   if (tipoOs === 'com_modelo') {
     const mod = await pool.query(
       `
-      SELECT m.nome, m.cpf
+      SELECT om.modelo_id, om.rotulo, m.nome, m.cpf
       FROM os_modelos om
-      JOIN modelos m ON m.id = om.modelo_id
+      LEFT JOIN modelos m ON m.id = om.modelo_id
       WHERE om.os_id = $1
       ORDER BY om.id
       `,
@@ -61,7 +61,14 @@ async function validarContratoPronto(pool, osId, osCampos, tipoOs) {
       );
     }
     for (const row of mod.rows) {
-      if (!t(row.cpf)) erros.push(`CPF do modelo "${row.nome}" no cadastro`);
+      const rot = t(row.nome) || t(row.rotulo) || 'Modelo';
+      if (row.modelo_id == null) {
+        erros.push(
+          `Contrato: a linha "${rot}" ainda não está vinculada a um modelo do cadastro — associe o cadastro na O.S. antes de gerar o contrato.`,
+        );
+        continue;
+      }
+      if (!t(row.cpf)) erros.push(`CPF do modelo "${rot}" no cadastro`);
     }
   }
 

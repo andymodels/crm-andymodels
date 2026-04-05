@@ -93,13 +93,13 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
         om.emite_nf_propria,
         os.imposto_percent,
         os.agencia_fee_percent,
-        m.nome AS modelo_nome,
+        COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
         c.nome_empresa,
         c.nome_fantasia
       FROM os_modelos om
       JOIN ordens_servico os ON os.id = om.os_id
       JOIN clientes c ON c.id = os.cliente_id
-      JOIN modelos m ON m.id = om.modelo_id
+      LEFT JOIN modelos m ON m.id = om.modelo_id
       ORDER BY om.id DESC
       LIMIT 300
     `);
@@ -181,7 +181,8 @@ router.get('/dashboard/calendario', async (req, res, next) => {
           c.nome_empresa,
           c.nome_fantasia,
           COALESCE(
-            STRING_AGG(m.nome, ', ' ORDER BY m.nome) FILTER (WHERE m.nome IS NOT NULL),
+            STRING_AGG(COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om2.rotulo), ''), 'Modelo'), ', ' ORDER BY om2.id)
+              FILTER (WHERE om2.id IS NOT NULL),
             ''
           ) AS modelos_nomes
         FROM ordens_servico os
@@ -233,14 +234,14 @@ router.get('/dashboard/calendario', async (req, res, next) => {
           om.data_prevista_pagamento::text AS data_evento,
           om.cache_modelo,
           om.emite_nf_propria,
-          m.nome AS modelo_nome,
+          COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
           os.imposto_percent,
           os.agencia_fee_percent,
           c.nome_empresa,
           c.nome_fantasia
         FROM os_modelos om
         JOIN ordens_servico os ON os.id = om.os_id
-        JOIN modelos m ON m.id = om.modelo_id
+        LEFT JOIN modelos m ON m.id = om.modelo_id
         JOIN clientes c ON c.id = os.cliente_id
         WHERE om.data_prevista_pagamento IS NOT NULL
           AND om.data_prevista_pagamento >= $1::date
@@ -256,12 +257,12 @@ router.get('/dashboard/calendario', async (req, res, next) => {
           p.valor,
           p.observacao,
           om.os_id,
-          m.nome AS modelo_nome,
+          COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
           c.nome_empresa,
           c.nome_fantasia
         FROM pagamentos_modelo p
         JOIN os_modelos om ON om.id = p.os_modelo_id
-        JOIN modelos m ON m.id = om.modelo_id
+        LEFT JOIN modelos m ON m.id = om.modelo_id
         JOIN ordens_servico os ON os.id = om.os_id
         JOIN clientes c ON c.id = os.cliente_id
         WHERE p.data_pagamento >= $1::date
