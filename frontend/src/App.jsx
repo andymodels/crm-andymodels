@@ -138,6 +138,14 @@ const CADASTROS_COM_MULTI_PAGAMENTO = ['modelos', 'bookers', 'parceiros'];
 const BRAND_ORANGE = '#F59E0B';
 const LOAD_ERROR_MESSAGE = 'Erro ao carregar dados. Verifique conexão com servidor.';
 
+const DESPESA_CATEGORIAS = [
+  { id: 'impostos', label: 'Impostos' },
+  { id: 'operacional', label: 'Operacional' },
+  { id: 'outros', label: 'Outros' },
+];
+
+const labelDespesaCategoria = (id) => DESPESA_CATEGORIAS.find((c) => c.id === id)?.label || id;
+
 const fieldLabels = {
   tipo_pessoa: 'Tipo de pessoa',
   documento: 'Documento',
@@ -388,6 +396,19 @@ function App() {
   });
   /** Contexto da O.S. selecionada no recebimento (espelha o job, sem redigitar total). */
   const [finOsContexto, setFinOsContexto] = useState(null);
+
+  const [finDespesas, setFinDespesas] = useState([]);
+  const [finDespesaFiltroDe, setFinDespesaFiltroDe] = useState('');
+  const [finDespesaFiltroAte, setFinDespesaFiltroAte] = useState('');
+  const [finDespesaFiltroCategoria, setFinDespesaFiltroCategoria] = useState('');
+  const [finDespesaFiltroOsId, setFinDespesaFiltroOsId] = useState('');
+  const [finDespesaForm, setFinDespesaForm] = useState({
+    data_despesa: '',
+    descricao: '',
+    valor: '',
+    categoria: 'operacional',
+    os_id: '',
+  });
 
   const [extratoRows, setExtratoRows] = useState([]);
   const [extratoLoading, setExtratoLoading] = useState(false);
@@ -683,15 +704,24 @@ function App() {
       setFinLoading(true);
       setFinError('');
       try {
-        const [r1, r2, r3] = await Promise.all([
+        const despParams = new URLSearchParams();
+        if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
+        if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
+        if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
+        if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
+        const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
+
+        const [r1, r2, r3, r4] = await Promise.all([
           fetch(`${API_BASE}/financeiro/resumo`),
           fetch(`${API_BASE}/financeiro/recebimentos`),
           fetch(`${API_BASE}/ordens-servico`),
+          fetch(`${API_BASE}/financeiro/despesas${despQ}`),
         ]);
-        if (!r1.ok || !r2.ok || !r3.ok) throw new Error();
+        if (!r1.ok || !r2.ok || !r3.ok || !r4.ok) throw new Error();
         setFinResumo(await r1.json());
         setFinRecebimentos(await r2.json());
         setFinOsOptions(await r3.json());
+        setFinDespesas(await r4.json());
       } catch {
         setFinError(LOAD_ERROR_MESSAGE);
       } finally {
@@ -699,7 +729,13 @@ function App() {
       }
     };
     load();
-  }, [module]);
+  }, [
+    module,
+    finDespesaFiltroDe,
+    finDespesaFiltroAte,
+    finDespesaFiltroCategoria,
+    finDespesaFiltroOsId,
+  ]);
 
   useEffect(() => {
     if (module !== 'extrato') return;
@@ -1032,6 +1068,72 @@ function App() {
       if (r2.ok) setFinRecebimentos(await r2.json());
       if (r3.ok) setFinOsOptions(await r3.json());
       await refreshAlertasOperacionais();
+    } catch (e) {
+      setFinError(e.message || LOAD_ERROR_MESSAGE);
+    }
+  };
+
+  const saveDespesa = async (event) => {
+    event.preventDefault();
+    setFinError('');
+    try {
+      const res = await fetch(`${API_BASE}/financeiro/despesas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data_despesa: finDespesaForm.data_despesa,
+          descricao: finDespesaForm.descricao,
+          valor: Number(finDespesaForm.valor),
+          categoria: finDespesaForm.categoria,
+          os_id: finDespesaForm.os_id || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Erro ao salvar despesa.');
+      setFinDespesaForm({
+        data_despesa: '',
+        descricao: '',
+        valor: '',
+        categoria: 'operacional',
+        os_id: '',
+      });
+      const despParams = new URLSearchParams();
+      if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
+      if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
+      if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
+      if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
+      const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
+      const [r1, r4] = await Promise.all([
+        fetch(`${API_BASE}/financeiro/resumo`),
+        fetch(`${API_BASE}/financeiro/despesas${despQ}`),
+      ]);
+      if (r1.ok) setFinResumo(await r1.json());
+      if (r4.ok) setFinDespesas(await r4.json());
+      await refreshAlertasOperacionais();
+    } catch (e) {
+      setFinError(e.message || LOAD_ERROR_MESSAGE);
+    }
+  };
+
+  const deleteDespesa = async (id) => {
+    if (!window.confirm('Excluir esta despesa?')) return;
+    setFinError('');
+    try {
+      const res = await fetch(`${API_BASE}/financeiro/despesas/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Erro ao excluir.');
+      const despParams = new URLSearchParams();
+      if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
+      if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
+      if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
+      if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
+      const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
+      const [r1, r4] = await Promise.all([
+        fetch(`${API_BASE}/financeiro/resumo`),
+        fetch(`${API_BASE}/financeiro/despesas${despQ}`),
+      ]);
+      if (r1.ok) setFinResumo(await r1.json());
+      if (r4.ok) setFinDespesas(await r4.json());
     } catch (e) {
       setFinError(e.message || LOAD_ERROR_MESSAGE);
     }
@@ -1959,7 +2061,7 @@ function App() {
                         : `${orcamentosTotal} registro(s)`
                     : module === 'inicio'
                       ? dashboardResumo
-                        ? `${formatBRL(dashboardResumo.saldo_aproximado)} caixa`
+                        ? `${formatBRL(dashboardResumo.resultado_final ?? 0)} resultado`
                         : '—'
                       : module === 'financeiro'
                         ? finResumo
@@ -2001,7 +2103,7 @@ function App() {
                       : module === 'inicio'
                         ? 'Operação'
                         : module === 'financeiro'
-                          ? 'Recebimentos'
+                          ? 'Financeiro'
                           : module === 'extrato'
                             ? 'Por O.S. / modelo'
                             : 'Operacional'}
@@ -2062,7 +2164,7 @@ function App() {
                   <p className="mt-4 text-sm text-slate-500">Carregando resumo...</p>
                 ) : dashboardResumo ? (
                   <>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <p className="text-xs text-slate-500">Total recebido (cliente)</p>
                         <p className="text-lg font-semibold text-slate-900">
@@ -2074,21 +2176,36 @@ function App() {
                         <p className="text-lg font-semibold text-slate-900">
                           {formatBRL(dashboardResumo.total_pago_modelos)}
                         </p>
+                        <p className="mt-1 text-[11px] text-slate-500">Soma dos pagamentos na O.S. / extrato</p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Faturado em O.S. não recebidas</p>
+                        <p className="text-xs text-slate-500">Total comissões (O.S.)</p>
                         <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.total_faturado_os_abertas)}
+                          {formatBRL(dashboardResumo.total_comissoes_os ?? 0)}
                         </p>
+                        <p className="mt-1 text-[11px] text-slate-500">Σ parceiro + booker (valores do job)</p>
                       </div>
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-xs text-amber-800">Saldo aprox. de caixa</p>
-                        <p className="text-lg font-semibold text-amber-950">
-                          {formatBRL(dashboardResumo.saldo_aproximado)}
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs text-slate-500">Total despesas (agência)</p>
+                        <p className="text-lg font-semibold text-slate-900">
+                          {formatBRL(dashboardResumo.total_despesas ?? 0)}
                         </p>
-                        <p className="mt-1 text-[11px] text-amber-900/80">Recebimentos − pagamentos a modelos</p>
+                        <p className="mt-1 text-[11px] text-slate-500">Manual: impostos, operacional, outros</p>
+                      </div>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                        <p className="text-xs text-emerald-900">Resultado final</p>
+                        <p className="text-lg font-semibold text-emerald-950">
+                          {formatBRL(dashboardResumo.resultado_final ?? 0)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-emerald-900/90">
+                          Receb. − modelos − comissões − despesas
+                        </p>
                       </div>
                     </div>
+                    <p className="mt-3 text-xs text-slate-600">
+                      Faturado em O.S. ainda não recebidas:{' '}
+                      <strong>{formatBRL(dashboardResumo.total_faturado_os_abertas)}</strong>
+                    </p>
                     <p className="mt-4 text-xs font-medium text-slate-600">
                       Indicadores derivados das O.S. (somas das colunas gravadas em cada job).
                     </p>
@@ -2293,14 +2410,16 @@ function App() {
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800">Resumo financeiro</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Caixa: recebimentos e pagamentos a modelos. Abaixo, somas das colunas já gravadas em cada O.S. (mesmos
-                  números do job — sem recálculo).
+                  <strong>Recebimentos</strong> só por aqui. <strong>Pagamentos a modelos</strong> e{' '}
+                  <strong>comissões</strong> vêm apenas dos dados gravados na O.S. (soma, sem recálculo).{' '}
+                  <strong>Despesas</strong> são só operacionais (impostos, operacional, outros), módulo separado — nunca
+                  cachê ou comissão manual.
                 </p>
                 {finLoading ? (
                   <p className="mt-3 text-sm text-slate-500">Carregando...</p>
                 ) : finResumo ? (
                   <>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <p className="text-xs text-slate-500">Total recebido (cliente)</p>
                         <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.total_recebido_cliente)}</p>
@@ -2310,14 +2429,32 @@ function App() {
                         <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.total_pago_modelos)}</p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Soma total cliente (O.S. abertas)</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.total_faturado_os_abertas)}</p>
+                        <p className="text-xs text-slate-500">Total comissões (O.S.)</p>
+                        <p className="text-lg font-semibold text-slate-900">
+                          {formatBRL(finResumo.total_comissoes_os ?? 0)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-slate-500">Σ parceiro + booker nos jobs</p>
                       </div>
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-xs text-amber-800">Saldo aprox. (rec. − pag. modelos)</p>
-                        <p className="text-lg font-semibold text-amber-950">{formatBRL(finResumo.saldo_aproximado)}</p>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs text-slate-500">Total despesas (agência)</p>
+                        <p className="text-lg font-semibold text-slate-900">
+                          {formatBRL(finResumo.total_despesas ?? 0)}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                        <p className="text-xs text-emerald-900">Resultado final</p>
+                        <p className="text-lg font-semibold text-emerald-950">
+                          {formatBRL(finResumo.resultado_final ?? 0)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-emerald-900/90">
+                          Rec. − modelos − comissões − despesas
+                        </p>
                       </div>
                     </div>
+                    <p className="mt-3 text-xs text-slate-600">
+                      Faturado em O.S. ainda não recebidas:{' '}
+                      <strong>{formatBRL(finResumo.total_faturado_os_abertas)}</strong>
+                    </p>
                     <p className="mt-4 text-xs font-medium text-slate-600">Totais das O.S. (todas — colunas do job)</p>
                     <div className="mt-2 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
                       <div className="rounded-xl border border-slate-200 bg-white p-3">
@@ -2461,6 +2598,201 @@ function App() {
                             <td className="px-2 py-2">{r.observacao}</td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Despesas da agência</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Apenas <strong>impostos</strong>, <strong>operacional</strong> e <strong>outros</strong> — não use para
+                  cachê de modelo nem comissões (isso só na O.S.). Vínculo opcional a um job é só referência. Filtros:
+                  período, categoria, O.S.
+                </p>
+
+                <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">De (data)</span>
+                    <input
+                      type="date"
+                      value={finDespesaFiltroDe}
+                      onChange={(e) => setFinDespesaFiltroDe(e.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Até (data)</span>
+                    <input
+                      type="date"
+                      value={finDespesaFiltroAte}
+                      onChange={(e) => setFinDespesaFiltroAte(e.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Categoria</span>
+                    <select
+                      value={finDespesaFiltroCategoria}
+                      onChange={(e) => setFinDespesaFiltroCategoria(e.target.value)}
+                      className="min-w-[10rem] rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="">Todas</option>
+                      {DESPESA_CATEGORIAS.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">O.S.</span>
+                    <select
+                      value={finDespesaFiltroOsId}
+                      onChange={(e) => setFinDespesaFiltroOsId(e.target.value)}
+                      className="min-w-[12rem] rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="">Todas</option>
+                      {finOsOptions.map((os) => (
+                        <option key={os.id} value={String(os.id)}>
+                          #{os.id}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                    onClick={() => {
+                      setFinDespesaFiltroDe('');
+                      setFinDespesaFiltroAte('');
+                      setFinDespesaFiltroCategoria('');
+                      setFinDespesaFiltroOsId('');
+                    }}
+                  >
+                    Limpar filtros
+                  </button>
+                </div>
+
+                <form className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6" onSubmit={saveDespesa}>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Data</span>
+                    <input
+                      type="date"
+                      value={finDespesaForm.data_despesa}
+                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, data_despesa: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600 md:col-span-2">
+                    <span className="mb-1 block">Descrição</span>
+                    <input
+                      value={finDespesaForm.descricao}
+                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, descricao: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Valor (R$)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={finDespesaForm.valor}
+                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, valor: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Categoria</span>
+                    <select
+                      value={finDespesaForm.categoria}
+                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, categoria: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    >
+                      {DESPESA_CATEGORIAS.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">O.S. (opcional)</span>
+                    <select
+                      value={finDespesaForm.os_id}
+                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, os_id: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="">Nenhuma</option>
+                      {finOsOptions.map((os) => (
+                        <option key={os.id} value={String(os.id)}>
+                          #{os.id} — {os.nome_empresa || os.nome_fantasia}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="flex items-end lg:col-span-6">
+                    <button
+                      type="submit"
+                      className="rounded-xl px-4 py-2 text-sm font-medium text-white"
+                      style={{ backgroundColor: BRAND_ORANGE }}
+                    >
+                      Registrar despesa
+                    </button>
+                  </div>
+                </form>
+
+                <h4 className="mt-8 text-sm font-semibold text-slate-800">Lista (filtrada)</h4>
+                {finLoading ? (
+                  <p className="mt-2 text-sm text-slate-500">Carregando...</p>
+                ) : (
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-2 py-2">Data</th>
+                          <th className="px-2 py-2">Descrição</th>
+                          <th className="px-2 py-2">Categoria</th>
+                          <th className="px-2 py-2">Valor</th>
+                          <th className="px-2 py-2">O.S.</th>
+                          <th className="px-2 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {finDespesas.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="px-2 py-6 text-center text-slate-500">
+                              Nenhuma despesa neste filtro.
+                            </td>
+                          </tr>
+                        ) : (
+                          finDespesas.map((d) => (
+                            <tr key={d.id} className="border-b border-slate-100">
+                              <td className="px-2 py-2 whitespace-nowrap">
+                                {String(d.data_despesa).slice(0, 10)}
+                              </td>
+                              <td className="px-2 py-2">{d.descricao}</td>
+                              <td className="px-2 py-2">{labelDespesaCategoria(d.categoria)}</td>
+                              <td className="px-2 py-2">{formatBRL(d.valor)}</td>
+                              <td className="px-2 py-2">{d.os_id != null ? `#${d.os_id}` : '—'}</td>
+                              <td className="px-2 py-2">
+                                <button
+                                  type="button"
+                                  className="text-xs text-red-700 underline"
+                                  onClick={() => deleteDespesa(d.id)}
+                                >
+                                  Excluir
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>

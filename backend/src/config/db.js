@@ -402,6 +402,46 @@ const initDb = async () => {
     );
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS despesas (
+      id SERIAL PRIMARY KEY,
+      data_despesa DATE NOT NULL,
+      descricao TEXT NOT NULL,
+      valor NUMERIC(12, 2) NOT NULL,
+      categoria TEXT NOT NULL,
+      os_id INTEGER REFERENCES ordens_servico(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT despesas_categoria_chk CHECK (
+        categoria IN ('impostos', 'operacional', 'outros')
+      ),
+      CONSTRAINT despesas_valor_chk CHECK (valor > 0)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_despesas_data ON despesas (data_despesa DESC);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_despesas_os ON despesas (os_id);
+  `);
+
+  try {
+    await pool.query(`
+      UPDATE despesas SET categoria = 'outros'
+      WHERE categoria IN ('caches', 'comissoes');
+    `);
+    await pool.query(`ALTER TABLE despesas DROP CONSTRAINT IF EXISTS despesas_categoria_chk`);
+    await pool.query(`
+      ALTER TABLE despesas ADD CONSTRAINT despesas_categoria_chk CHECK (
+        categoria IN ('impostos', 'operacional', 'outros')
+      );
+    `);
+  } catch (e) {
+    if (!String(e.message || '').includes('already exists')) {
+      console.warn('[initDb] despesas categoria constraint:', e.message);
+    }
+  }
+
   try {
     await pool.query(`
       ALTER TABLE orcamentos

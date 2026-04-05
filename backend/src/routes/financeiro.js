@@ -4,9 +4,12 @@ const router = express.Router();
 
 const n = (v) => Number(v || 0);
 
+/** Manual: só operacional da agência — nunca cachê/comissão (isso vem só da O.S.). */
+const CATEGORIAS_DESPESA = ['impostos', 'operacional', 'outros'];
+
 router.get('/financeiro/resumo', async (_req, res, next) => {
   try {
-    const [rec, pag, osAbertas, osTotais] = await Promise.all([
+    const [rec, pag, osAbertas, osTotais, despesasT] = await Promise.all([
       pool.query('SELECT COALESCE(SUM(valor), 0) AS t FROM recebimentos'),
       pool.query('SELECT COALESCE(SUM(valor), 0) AS t FROM pagamentos_modelo'),
       pool.query(`
@@ -23,22 +26,31 @@ router.get('/financeiro/resumo', async (_req, res, next) => {
           COALESCE(SUM(resultado_agencia), 0) AS soma_resultado_agencia
         FROM ordens_servico
       `),
+      pool.query('SELECT COALESCE(SUM(valor), 0) AS t FROM despesas'),
     ]);
 
     const totalRecebido = Number(rec.rows[0].t);
     const totalPagoModelos = Number(pag.rows[0].t);
     const totalAReceberOs = Number(osAbertas.rows[0].t);
     const rowOs = osTotais.rows[0];
+    const totalDespesas = Number(despesasT.rows[0].t);
+    const somaParceiroOs = Number(rowOs.soma_parceiro_valor);
+    const somaBookerOs = Number(rowOs.soma_booker_valor);
+    /** Comissões = soma dos valores já gravados na O.S. (sem recálculo no financeiro). */
+    const totalComissoesOs = somaParceiroOs + somaBookerOs;
+    const resultadoFinal = totalRecebido - totalPagoModelos - totalComissoesOs - totalDespesas;
 
     res.json({
       total_recebido_cliente: totalRecebido,
       total_pago_modelos: totalPagoModelos,
+      total_comissoes_os: totalComissoesOs,
+      total_despesas: totalDespesas,
+      resultado_final: resultadoFinal,
       total_faturado_os_abertas: totalAReceberOs,
-      saldo_aproximado: totalRecebido - totalPagoModelos,
       soma_total_cliente_os: Number(rowOs.soma_total_cliente),
       soma_modelo_liquido_os: Number(rowOs.soma_modelo_liquido),
-      soma_parceiro_valor_os: Number(rowOs.soma_parceiro_valor),
-      soma_booker_valor_os: Number(rowOs.soma_booker_valor),
+      soma_parceiro_valor_os: somaParceiroOs,
+      soma_booker_valor_os: somaBookerOs,
       soma_resultado_agencia_os: Number(rowOs.soma_resultado_agencia),
     });
   } catch (e) {
@@ -208,6 +220,101 @@ router.post('/financeiro/pagamentos-modelo', async (req, res, next) => {
       [os_modelo_id, valor, data_pagamento, observacao || ''],
     );
     res.status(201).json(ins.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/financeiro/despesas', async (req, res, next) => {
+  try {
+    const dataDe = req.query.data_de ? String(req.query.data_de).slice(0, 10) : '';
+    const dataAte = req.query.data_ate ? String(req.query.data_ate).slice(0, 10) : '';
+    const catIn = req.query.categoria ? String(req.query.categoria).trim() : '';
+    const osId = req.query.os_id ? Number(req.query.os_id) : null;
+
+    let sql = `SELECT d.* FROM despesas d`;
+    const cond = [];
+    const params = [];
+    let i = 1;
+    if (dataDe) {
+      cond.push(`d.data_despesa >= $${i}`);
+      params.push(dataDe);
+      i += 1;
+    }
+    if (dataAte) {
+      cond.push(`d.data_despesa <= $${i}`);
+      params.push(dataAte);
+      i += 1;
+    }
+    if (catIn && CATEGORIAS_DESPESA.includes(catIn)) {
+      cond.push(`d.categoria = $${i}`);
+      params.push(catIn);
+      i += 1;
+    }
+    if (osId != null && !Number.isNaN(osId)) {
+      cond.push(`d.os_id = $${i}`);
+      params.push(osId);
+      i += 1;
+    }
+    if (cond.length > 0) {
+      sql += ` WHERE ${cond.join(' AND ')}`;
+    }
+    sql += ' ORDER BY d.data_despesa DESC, d.id DESC LIMIT 500';
+    const r = await pool.query(sql, params);
+    res.json(r.rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/financeiro/despesas', async (req, res, next) => {
+  try {
+    const { data_despesa, descricao, valor, categoria, os_id } = req.body;
+    if (!data_despesa || descricao == null || String(descricao).trim() === '' || valor == null || !categoria) {
+      return res.status(400).json({ message: 'data_despesa, descricao, valor e categoria sao obrigatorios.' });
+    }
+    const cat = String(categoria).trim();
+    if (!CATEGORIAS_DESPESA.includes(cat)) {
+      return res.status(400).json({
+        message: `Categoria invalida. Use: ${CATEGORIAS_DESPESA.join(', ')}.`,
+      });
+    }
+    const valorNum = n(valor);
+    if (valorNum <= 0) {
+      return res.status(400).json({ message: 'Valor deve ser maior que zero.' });
+    }
+    let osIdVal = null;
+    if (os_id != null && os_id !== '') {
+      const oid = Number(os_id);
+      if (Number.isNaN(oid)) {
+        return res.status(400).json({ message: 'os_id invalido.' });
+      }
+      const osCheck = await pool.query('SELECT id FROM ordens_servico WHERE id = $1', [oid]);
+      if (osCheck.rows.length === 0) return res.status(404).json({ message: 'O.S. nao encontrada.' });
+      osIdVal = oid;
+    }
+
+    const ins = await pool.query(
+      `
+      INSERT INTO despesas (data_despesa, descricao, valor, categoria, os_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+      `,
+      [String(data_despesa).slice(0, 10), String(descricao).trim(), valorNum, cat, osIdVal],
+    );
+    res.status(201).json(ins.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.delete('/financeiro/despesas/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ message: 'ID invalido.' });
+    const r = await pool.query('DELETE FROM despesas WHERE id = $1 RETURNING id', [id]);
+    if (r.rows.length === 0) return res.status(404).json({ message: 'Despesa nao encontrada.' });
+    res.json({ ok: true, id: r.rows[0].id });
   } catch (e) {
     next(e);
   }
