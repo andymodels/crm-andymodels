@@ -182,9 +182,16 @@ export default function PublicCadastroModelo() {
 
   if (done) {
     return (
-      <div className="min-h-screen bg-slate-50 px-4 py-16 text-slate-800">
+      <div className="min-h-screen bg-[#F7F7F7] px-4 py-16 text-slate-800">
         <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-          <p className="text-lg font-semibold text-slate-900">Cadastro enviado com sucesso</p>
+          <img
+            src="/logo-andy.png"
+            alt="Andy Management"
+            className="mx-auto h-12 w-auto max-w-full object-contain"
+            width={393}
+            height={157}
+          />
+          <p className="mt-6 text-lg font-semibold text-slate-900">Cadastro enviado com sucesso</p>
           <p className="mt-3 text-sm text-slate-600">
             Sua solicitação foi recebida. A equipe entrará em contato quando o cadastro for analisado.
           </p>
@@ -194,10 +201,17 @@ export default function PublicCadastroModelo() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-10 text-slate-800">
+    <div className="min-h-screen bg-[#F7F7F7] px-4 py-10 text-slate-800">
       <div className="mx-auto max-w-2xl">
         <header className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold text-slate-900">Cadastro de modelo</h1>
+          <img
+            src="/logo-andy.png"
+            alt="Andy Management"
+            className="mx-auto h-14 w-auto max-w-[min(100%,280px)] object-contain"
+            width={393}
+            height={157}
+          />
+          <h1 className="mt-6 text-2xl font-semibold text-slate-900">Cadastro de modelo</h1>
           <p className="mt-2 text-sm text-slate-600">
             Preencha os dados abaixo. O recebimento via Pix será cadastrado com a chave CPF informada.
           </p>
