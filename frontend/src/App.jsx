@@ -1973,6 +1973,42 @@ function App({ authUser, onLogout = () => {} }) {
     }
   };
 
+  /** Só administradores (API); remove orçamento + O.S. + financeiro/contratos da O.S. Irreversível. */
+  const excluirOrcamentoDefinitivo = async (item) => {
+    const id = item.id;
+    const osId = item.os_id_gerada != null ? Number(item.os_id_gerada) : null;
+    if (
+      !window.confirm(
+        `EXCLUIR DEFINITIVAMENTE o orçamento #${id}?\n\n` +
+          'Serão removidos: o orçamento, a ordem de serviço (job) se existir, documentos/contrato dessa O.S., recebimentos e pagamentos a modelos vinculados a essa O.S. Isto não pode ser desfeito.',
+      )
+    ) {
+      return;
+    }
+    setOrcamentoError('');
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/orcamentos/${id}/definitivo`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Erro ao excluir orçamento.');
+      if (orcamentoEditingId === id) {
+        clearOrcamentoEdicao();
+        setOrcamentosSubView('gestao');
+      }
+      if (osDraft?.id && osId != null && Number(osDraft.id) === osId) {
+        setOsDraft(null);
+      }
+      setOrcamentosRefreshTick((x) => x + 1);
+      if (module === 'jobs') {
+        const listRes = await fetchWithTimeout(`${API_BASE}/ordens-servico`);
+        if (listRes.ok) setOsList(await listRes.json());
+      }
+      await refreshAlertasOperacionais();
+      alert(data.message || 'Orçamento removido.');
+    } catch (requestError) {
+      setOrcamentoError(requestError.message);
+    }
+  };
+
   const abrirOsGerada = (osId) => {
     const oid = Number(osId);
     if (!Number.isFinite(oid) || oid <= 0) return;
@@ -2090,6 +2126,14 @@ function App({ authUser, onLogout = () => {} }) {
           >
             PDF
           </a>
+          <button
+            type="button"
+            className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-800"
+            title="Administrador: apaga orçamento e O.S. (testes)"
+            onClick={() => excluirOrcamentoDefinitivo(item)}
+          >
+            Excluir definitivo
+          </button>
         </div>
       );
     }
@@ -2122,6 +2166,14 @@ function App({ authUser, onLogout = () => {} }) {
           >
             PDF
           </a>
+          <button
+            type="button"
+            className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-800"
+            title="Administrador: apaga orçamento e O.S. (testes)"
+            onClick={() => excluirOrcamentoDefinitivo(item)}
+          >
+            Excluir definitivo
+          </button>
         </div>
       );
     }
@@ -2143,6 +2195,14 @@ function App({ authUser, onLogout = () => {} }) {
           >
             PDF
           </a>
+          <button
+            type="button"
+            className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-800"
+            title="Administrador: apaga orçamento e O.S. (testes)"
+            onClick={() => excluirOrcamentoDefinitivo(item)}
+          >
+            Excluir definitivo
+          </button>
         </div>
       );
     }
@@ -4460,6 +4520,20 @@ function App({ authUser, onLogout = () => {} }) {
                         onClick={voltarParaGestaoOrcamentos}
                       >
                         {orcamentoFormLocked ? 'Fechar' : 'Cancelar edição'}
+                      </button>
+                    )}
+                    {orcamentoEditingId && (
+                      <button
+                        type="button"
+                        className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-800"
+                        title="Remove este orçamento e a O.S. gerada (irreversível)"
+                        onClick={() =>
+                          excluirOrcamentoDefinitivo({
+                            id: orcamentoEditingId,
+                            os_id_gerada: orcamentoEditingOsId,
+                          })}
+                      >
+                        Excluir definitivo (admin)
                       </button>
                     )}
                   </div>

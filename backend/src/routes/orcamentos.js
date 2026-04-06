@@ -3,6 +3,7 @@ const { pool } = require('../config/db');
 const { computeOsFinancials } = require('../services/osFinanceiro');
 const { buildOrcamentoDocumentHtml } = require('../services/documentoOrcamentoOsHtml');
 const { generateContratoForOs, sendContratoAssinaturaEmail } = require('../services/contratoWorkflow');
+const { excluirOrcamentoDefinitivo } = require('../services/excluirOrcamentoDefinitivo');
 
 const router = express.Router();
 
@@ -688,6 +689,25 @@ router.post('/orcamentos/:id/cancelar', async (req, res, next) => {
     return res.json({
       message: 'Orcamento cancelado.',
       orcamento: full.rows[0],
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Administrador: remove o orçamento e a O.S. gerada (job), documentos/contrato e financeiro da O.S.
+ * Irreversível — para limpar testes ou erros.
+ */
+router.delete('/orcamentos/:id/definitivo', async (req, res, next) => {
+  try {
+    const result = await excluirOrcamentoDefinitivo(pool, req.params.id);
+    if (!result.ok) {
+      return res.status(result.status).json({ message: result.message });
+    }
+    return res.json({
+      message: result.message,
+      os_ids_removidos: result.os_ids_removidos,
     });
   } catch (e) {
     next(e);
