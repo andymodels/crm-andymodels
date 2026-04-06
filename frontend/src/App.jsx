@@ -74,6 +74,13 @@ const labelOrcamentoStatus = (s) => {
   return s ? String(s) : '—';
 };
 
+const labelContratoStatus = (s) => {
+  if (s === 'aguardando_assinatura') return 'Aguardando assinatura';
+  if (s === 'assinado') return 'Assinado';
+  if (s === 'cancelado') return 'Cancelado';
+  return s ? String(s) : '—';
+};
+
 const nPrev = (v) => Number(v || 0);
 
 function createEmptyOrcamentoForm() {
@@ -424,6 +431,9 @@ function App({ authUser, onLogout = () => {} }) {
   const [orcamentoEditingOsId, setOrcamentoEditingOsId] = useState(null);
   const [orcamentoError, setOrcamentoError] = useState('');
   const [orcamentoLoading, setOrcamentoLoading] = useState(false);
+  const [contratosList, setContratosList] = useState([]);
+  const [contratosLoading, setContratosLoading] = useState(false);
+  const [contratosError, setContratosError] = useState('');
 
   const [osList, setOsList] = useState([]);
   const [osLoading, setOsLoading] = useState(false);
@@ -768,6 +778,30 @@ function App({ authUser, onLogout = () => {} }) {
 
   useEffect(() => {
     if (module === 'jobs') refreshAlertasOperacionais();
+  }, [module]);
+
+  useEffect(() => {
+    if (module !== 'contratos') return;
+    const load = async () => {
+      setContratosLoading(true);
+      setContratosError('');
+      try {
+        const response = await fetchWithTimeout(`${API_BASE}/contratos`);
+        const raw = await response.text();
+        throwIfHtmlOrCannotPost(raw, response.status);
+        if (!response.ok) {
+          const data = raw ? JSON.parse(raw) : {};
+          throw new Error(data.message || LOAD_ERROR_MESSAGE);
+        }
+        const data = raw ? JSON.parse(raw) : [];
+        setContratosList(Array.isArray(data) ? data : []);
+      } catch (e) {
+        setContratosError(e?.message || LOAD_ERROR_MESSAGE);
+      } finally {
+        setContratosLoading(false);
+      }
+    };
+    load();
   }, [module]);
 
   useEffect(() => {
@@ -1904,9 +1938,42 @@ function App({ authUser, onLogout = () => {} }) {
         setOrcamentoEditingOsId(Number.isFinite(Number(oid)) ? Number(oid) : null);
       }
       setOrcamentosRefreshTick((x) => x + 1);
-      alert(data.message);
+      const assinaturaLink = data?.contrato?.assinatura_link;
+      const envioErro = data?.contrato?.envio_erro;
+      const detalhes = [
+        data.message || 'Orçamento aprovado.',
+        assinaturaLink ? `Link de assinatura: ${assinaturaLink}` : null,
+        envioErro ? `Aviso de envio: ${envioErro}` : null,
+      ].filter(Boolean);
+      alert(detalhes.join('\n\n'));
     } catch (requestError) {
       setOrcamentoError(requestError.message);
+    }
+  };
+
+  const reenviarContrato = async (item) => {
+    const destinoPadrao = item?.cliente_email ? String(item.cliente_email) : '';
+    const destinatario = window.prompt('E-mail para reenviar contrato:', destinoPadrao);
+    if (destinatario == null) return;
+    setContratosError('');
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/contratos/${item.os_id}/reenviar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destinatario }),
+      });
+      const raw = await response.text();
+      throwIfHtmlOrCannotPost(raw, response.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (!response.ok) throw new Error(data.message || 'Falha ao reenviar contrato.');
+      alert(data.message || 'Contrato reenviado.');
+      const refreshRes = await fetchWithTimeout(`${API_BASE}/contratos`);
+      if (refreshRes.ok) {
+        const refreshed = await refreshRes.json();
+        setContratosList(Array.isArray(refreshed) ? refreshed : []);
+      }
+    } catch (e) {
+      setContratosError(e?.message || 'Falha ao reenviar contrato.');
     }
   };
 
@@ -2058,6 +2125,13 @@ function App({ authUser, onLogout = () => {} }) {
             </button>
             <button
               type="button"
+              onClick={() => setModule('contratos')}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'contratos')}`}
+            >
+              Contratos
+            </button>
+            <button
+              type="button"
               onClick={() => setModule('financeiro')}
               className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'financeiro')}`}
             >
@@ -2145,6 +2219,8 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Gestão de orçamentos'
                       : module === 'inicio'
                         ? 'Dashboard'
+                        : module === 'contratos'
+                          ? 'Contratos'
                         : module === 'seguranca'
                           ? 'Minha conta e segurança'
                         : module === 'financeiro'
@@ -2164,6 +2240,8 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Busque orçamentos, abra para revisar ou aprovar, ou crie um novo.'
                       : module === 'inicio'
                         ? 'Caixa, resultado da agência e pendências (contrato, receber, pagar modelos).'
+                        : module === 'contratos'
+                          ? 'Central de contratos por O.S.: status, visualização e reenvio para assinatura.'
                         : module === 'seguranca'
                           ? 'Altere sua senha de administrador em uma tela dedicada.'
                         : module === 'financeiro'
@@ -2193,6 +2271,8 @@ function App({ authUser, onLogout = () => {} }) {
                       ? dashboardResumo
                         ? `${formatBRL(dashboardResumo.resultado_final ?? 0)} resultado`
                         : '—'
+                      : module === 'contratos'
+                        ? `${contratosList.length} contrato(s)`
                       : module === 'seguranca'
                         ? 'Administrador'
                       : module === 'financeiro'
@@ -2214,6 +2294,8 @@ function App({ authUser, onLogout = () => {} }) {
                       ? 'Orçamentos'
                       : module === 'inicio'
                         ? 'Visão geral'
+                      : module === 'contratos'
+                        ? 'Contratos'
                       : module === 'seguranca'
                         ? 'Conta'
                         : module === 'financeiro'
@@ -2236,6 +2318,8 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Painel'
                       : module === 'inicio'
                         ? 'Operação'
+                        : module === 'contratos'
+                          ? 'Assinaturas'
                         : module === 'seguranca'
                           ? 'Acesso'
                         : module === 'financeiro'
@@ -3144,6 +3228,70 @@ function App({ authUser, onLogout = () => {} }) {
             </section>
           )}
 
+          {module === 'contratos' && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-3">
+                <h3 className="text-base font-semibold text-slate-800">Lista de contratos</h3>
+                <p className="text-xs text-slate-500">
+                  Um contrato por O.S., com status automático de assinatura.
+                </p>
+              </div>
+              {contratosError ? (
+                <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {contratosError}
+                </p>
+              ) : null}
+              {contratosLoading ? (
+                <p className="text-sm text-slate-500">Carregando contratos...</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        <th className="px-2 py-2 font-medium">Cliente</th>
+                        <th className="px-2 py-2 font-medium">Modelo(s)</th>
+                        <th className="px-2 py-2 font-medium">O.S.</th>
+                        <th className="px-2 py-2 font-medium">Data criação</th>
+                        <th className="px-2 py-2 font-medium">Status</th>
+                        <th className="px-2 py-2 font-medium">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contratosList.map((item) => (
+                        <tr key={item.os_id} className="border-b border-slate-100">
+                          <td className="px-2 py-2">{item.cliente || '—'}</td>
+                          <td className="px-2 py-2">{item.modelos || '—'}</td>
+                          <td className="px-2 py-2">#{item.os_id}</td>
+                          <td className="px-2 py-2 whitespace-nowrap text-slate-600">
+                            {formatOrcamentoCriadoEm(item.created_at)}
+                          </td>
+                          <td className="px-2 py-2">{labelContratoStatus(item.status)}</td>
+                          <td className="px-2 py-2 space-x-2">
+                            <a
+                              href={`${API_BASE}/contratos/${item.os_id}/preview`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                            >
+                              Visualizar
+                            </a>
+                            <button
+                              type="button"
+                              className="rounded-md border border-amber-300 px-2 py-1 text-xs text-amber-900"
+                              onClick={() => reenviarContrato(item)}
+                            >
+                              Reenviar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
           {module === 'cadastros' && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <form
               className="grid grid-cols-1 gap-3 md:grid-cols-2"
@@ -3460,8 +3608,6 @@ function App({ authUser, onLogout = () => {} }) {
                   && [
                     'documento',
                     'contato_principal',
-                    'documento_representante',
-                    'inscricao_estadual',
                     'cep',
                     'logradouro',
                     'numero',

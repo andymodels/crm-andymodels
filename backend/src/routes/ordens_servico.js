@@ -3,9 +3,9 @@ const { pool } = require('../config/db');
 const { computeOsFinancials, lineLiquido } = require('../services/osFinanceiro');
 const { buildContratoDocumentHtml } = require('../services/contratoHtml');
 const { loadContratoContext } = require('../services/contratoContext');
-const { sendContratoEmail } = require('../services/contratoEmail');
 const { validarContratoPronto } = require('../services/contratoReadiness');
 const { buildOsDocumentHtml } = require('../services/documentoOrcamentoOsHtml');
+const { generateContratoForOs, sendContratoAssinaturaEmail } = require('../services/contratoWorkflow');
 
 const router = express.Router();
 
@@ -168,26 +168,145 @@ router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) 
     if (!destinatario || String(destinatario).trim() === '') {
       return res.status(400).json({ message: 'Informe destinatario ou cadastre e-mail do cliente.' });
     }
-    const html = buildContratoDocumentHtml(ctx);
-    const subject =
-      process.env.CONTRATO_EMAIL_ASSUNTO ||
-      `Contrato — O.S. nº ${id} — ${ctx.cliente.nome_fantasia || ctx.cliente.nome_empresa || 'Cliente'}`;
-    await sendContratoEmail({ to: String(destinatario).trim(), subject, html });
-    await pool.query(
-      `
-      UPDATE ordens_servico
-      SET contrato_enviado_em = NOW(), updated_at = NOW()
-      WHERE id = $1
-      `,
-      [id],
-    );
-    res.json({ message: 'Contrato enviado por e-mail.', contrato_enviado: true });
+    const generated = await generateContratoForOs(pool, id);
+    if (!generated.ok) {
+      return res.status(400).json({ message: generated.message || 'Nao foi possivel gerar contrato.' });
+    }
+    const sent = await sendContratoAssinaturaEmail(pool, id, destinatario);
+    res.json({
+      message: 'Contrato enviado por e-mail.',
+      contrato_enviado: true,
+      assinatura_link: sent.assinatura_link || generated.assinatura_link,
+    });
   } catch (e) {
     if (e.code === 'SMTP_DISABLED') {
       return res.status(503).json({
         message: e.message,
       });
     }
+    next(e);
+  }
+});
+
+router.get('/contratos', async (_req, res, next) => {
+  try {
+    const r = await pool.query(
+      `
+      SELECT
+        os.id AS os_id,
+        os.created_at,
+        os.emitir_contrato,
+        os.contrato_status,
+        os.contrato_enviado_em,
+        os.contrato_assinado_em,
+        c.nome_empresa,
+        c.nome_fantasia,
+        c.email AS cliente_email,
+        COALESCE(
+          STRING_AGG(
+            COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'Modelo')
+            , ', ' ORDER BY om.id
+          ) FILTER (WHERE om.id IS NOT NULL),
+          ''
+        ) AS modelos
+      FROM ordens_servico os
+      JOIN clientes c ON c.id = os.cliente_id
+      LEFT JOIN os_modelos om ON om.os_id = os.id
+      LEFT JOIN modelos m ON m.id = om.modelo_id
+      WHERE os.emitir_contrato = TRUE OR os.contrato_status IS NOT NULL
+      GROUP BY os.id, c.nome_empresa, c.nome_fantasia, c.email
+      ORDER BY os.id DESC
+      `
+    );
+
+    const rows = r.rows.map((row) => {
+      const baseStatus = String(row.contrato_status || '').trim();
+      const status =
+        !row.emitir_contrato
+          ? 'cancelado'
+          : baseStatus === 'assinado' || baseStatus === 'recebido'
+            ? 'assinado'
+            : baseStatus === 'aguardando_assinatura'
+              ? 'aguardando_assinatura'
+              : 'aguardando_assinatura';
+      return {
+        os_id: row.os_id,
+        cliente: row.nome_fantasia || row.nome_empresa || '',
+        modelos: row.modelos || '',
+        created_at: row.created_at,
+        status,
+        cliente_email: row.cliente_email || '',
+        contrato_enviado_em: row.contrato_enviado_em,
+        contrato_assinado_em: row.contrato_assinado_em,
+      };
+    });
+    res.json(rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.get('/contratos/:osId/preview', async (req, res, next) => {
+  try {
+    const osId = Number(req.params.osId);
+    if (Number.isNaN(osId)) return res.status(400).send('ID invalido.');
+    const ctx = await loadContratoContext(pool, osId);
+    if (!ctx) return res.status(404).send('Contrato nao encontrado.');
+    if (!ctx.os.emitir_contrato) return res.status(400).send('Contrato cancelado para esta O.S.');
+    const html = buildContratoDocumentHtml(ctx);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/contratos/:osId/reenviar', async (req, res, next) => {
+  try {
+    const osId = Number(req.params.osId);
+    if (Number.isNaN(osId)) return res.status(400).json({ message: 'ID invalido.' });
+    const dbRow = await pool.query(
+      `
+      SELECT os.emitir_contrato, c.email AS cliente_email
+      FROM ordens_servico os
+      JOIN clientes c ON c.id = os.cliente_id
+      WHERE os.id = $1
+      `,
+      [osId]
+    );
+    if (dbRow.rows.length === 0) return res.status(404).json({ message: 'Contrato nao encontrado.' });
+    if (!dbRow.rows[0].emitir_contrato) {
+      return res.status(400).json({ message: 'Contrato cancelado para esta O.S.' });
+    }
+    const destino = String(req.body?.destinatario || dbRow.rows[0].cliente_email || '').trim();
+    if (!destino) return res.status(400).json({ message: 'Cliente sem e-mail cadastrado.' });
+
+    const generated = await generateContratoForOs(pool, osId);
+    if (!generated.ok) return res.status(400).json({ message: generated.message || 'Falha ao gerar contrato.' });
+    const sent = await sendContratoAssinaturaEmail(pool, osId, destino);
+    res.json({
+      message: 'Contrato reenviado com sucesso.',
+      assinatura_link: sent.assinatura_link || generated.assinatura_link,
+    });
+  } catch (e) {
+    if (e.code === 'SMTP_DISABLED') {
+      return res.status(503).json({ message: e.message });
+    }
+    next(e);
+  }
+});
+
+router.post('/ordens-servico/:id/contrato-regenerar', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).json({ message: 'ID invalido.' });
+    const generated = await generateContratoForOs(pool, id);
+    if (!generated.ok) return res.status(400).json({ message: generated.message || 'Falha ao regenerar contrato.' });
+    res.json({
+      message: 'Contrato regenerado com sucesso.',
+      assinatura_link: generated.assinatura_link,
+    });
+  } catch (e) {
     next(e);
   }
 });

@@ -19,8 +19,6 @@ function errosClienteContrato(c) {
   if (!t(c.cnpj)) erros.push('CNPJ do cliente');
   if (!t(c.documento)) erros.push('documento da empresa (CPF ou CNPJ conforme tipo)');
   if (!t(c.contato_principal)) erros.push('nome do representante legal (contato principal)');
-  if (!t(c.documento_representante)) erros.push('CPF do representante legal (campo próprio no cadastro)');
-  if (!t(c.inscricao_estadual)) erros.push('inscrição estadual');
   if (!t(c.endereco_completo)) erros.push('endereço completo');
   return erros;
 }

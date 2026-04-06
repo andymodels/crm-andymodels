@@ -15,6 +15,7 @@ const cadastroLinksRouter = require('./routes/cadastroLinks');
 const authRouter = require('./routes/auth');
 const { requireAdminAuth } = require('./middleware/requireAdminAuth');
 const modeloPortalRouter = require('./routes/modeloPortal');
+const publicContratoAssinaturaRouter = require('./routes/publicContratoAssinatura');
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.get('/api', (_req, res) => {
 app.use('/api', publicCadastroModeloRouter);
 app.use('/api', authRouter);
 app.use('/api', modeloPortalRouter);
+app.use('/api', publicContratoAssinaturaRouter);
 
 // Restante da API exige sessão admin
 app.use('/api', requireAdminAuth);

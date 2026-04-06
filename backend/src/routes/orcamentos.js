@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../config/db');
 const { computeOsFinancials } = require('../services/osFinanceiro');
 const { buildOrcamentoDocumentHtml } = require('../services/documentoOrcamentoOsHtml');
+const { generateContratoForOs, sendContratoAssinaturaEmail } = require('../services/contratoWorkflow');
 
 const router = express.Router();
 
@@ -542,13 +543,14 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         booker_percent,
         booker_valor,
         agencia_final,
-        resultado_agencia
+        resultado_agencia,
+        emitir_contrato
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, 'aberta',
         $8, $9, $10, $11,
         $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-        NULL, NULL, $23, $24, NULL, NULL, $25, $26, $27
+        NULL, NULL, $23, $24, NULL, NULL, $25, $26, $27, TRUE
       )
       RETURNING *
       `,
@@ -608,9 +610,35 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
     );
 
     await pool.query('COMMIT');
+
+    const contrato = await generateContratoForOs(pool, osId);
+    let envio = { contrato_enviado: false, motivo: '' };
+    if (contrato.ok) {
+      const clienteR = await pool.query(`SELECT email FROM clientes WHERE id = $1`, [budget.cliente_id]);
+      const clienteEmail = clienteR.rows[0]?.email || null;
+      if (clienteEmail) {
+        try {
+          await sendContratoAssinaturaEmail(pool, osId, clienteEmail);
+          envio = { contrato_enviado: true, motivo: '' };
+        } catch (mailErr) {
+          envio = { contrato_enviado: false, motivo: mailErr?.message || 'Falha ao enviar e-mail.' };
+        }
+      } else {
+        envio = { contrato_enviado: false, motivo: 'Cliente sem e-mail cadastrado. Use o link de assinatura.' };
+      }
+    } else {
+      envio = { contrato_enviado: false, motivo: contrato.message || 'Falha ao gerar contrato automático.' };
+    }
+
     return res.json({
       message: 'Orcamento aprovado e O.S. criada com sucesso.',
       os: osResult.rows[0],
+      contrato: {
+        gerado: Boolean(contrato.ok),
+        assinatura_link: contrato.assinatura_link || null,
+        contrato_enviado: envio.contrato_enviado,
+        envio_erro: envio.motivo || null,
+      },
     });
   } catch (error) {
     await pool.query('ROLLBACK');

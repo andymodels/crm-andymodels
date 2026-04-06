@@ -30,10 +30,7 @@ const SQL_CONTRATOS_PENDENTES = `
   FROM ordens_servico os
   JOIN clientes c ON c.id = os.cliente_id
   WHERE os.emitir_contrato = TRUE
-    AND NOT EXISTS (
-      SELECT 1 FROM os_documentos d
-      WHERE d.os_id = os.id AND d.tipo = 'contrato_assinado_scan'
-    )
+    AND COALESCE(os.contrato_status, '') = 'aguardando_assinatura'
   ORDER BY os.id DESC
   LIMIT 100
 `;

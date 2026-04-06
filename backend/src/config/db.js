@@ -482,6 +482,12 @@ const initDb = async () => {
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinado_em TIMESTAMP;`);
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_status TEXT;`);
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_observacao TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinatura_token TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinado_nome TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinado_documento TEXT;`);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_ordens_servico_contrato_assinatura_token ON ordens_servico(contrato_assinatura_token) WHERE contrato_assinatura_token IS NOT NULL`,
+  );
   await pool.query(`
     ALTER TABLE ordens_servico
     ADD COLUMN IF NOT EXISTS data_vencimento_cliente DATE;
@@ -537,6 +543,11 @@ const initDb = async () => {
       sha256 TEXT,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_os_documentos_contrato_pdf_unico
+    ON os_documentos (os_id, tipo)
+    WHERE tipo = 'contrato_pdf_gerado';
   `);
 
   await pool.query(`
