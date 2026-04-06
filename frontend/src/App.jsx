@@ -399,6 +399,7 @@ const cadastroConfig = {
 
 function App({ authUser, onLogout = () => {} }) {
   const [module, setModule] = useState('inicio');
+  const [cadastrosMenuOpen, setCadastrosMenuOpen] = useState(false);
   /** Bookers tem menos campos obrigatórios que Clientes — melhor para primeiro teste. */
   const [tab, setTab] = useState('bookers');
   const [items, setItems] = useState([]);
@@ -514,6 +515,10 @@ function App({ authUser, onLogout = () => {} }) {
   const isMinor = idadeModelo !== null && idadeModelo < 18;
 
   const contratosPendentes = alertasOperacionais?.contratos_pendentes ?? { count: 0, items: [] };
+
+  useEffect(() => {
+    if (module === 'cadastros') setCadastrosMenuOpen(true);
+  }, [module]);
   const saldoAbertoClienteDashboard = useMemo(
     () =>
       (alertasOperacionais?.contas_receber ?? []).reduce(
@@ -2096,13 +2101,45 @@ function App({ authUser, onLogout = () => {} }) {
             >
               Dashboard
             </button>
-            <button
-              type="button"
-              onClick={() => setModule('cadastros')}
-              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'cadastros')}`}
+            <div
+              onMouseEnter={() => setCadastrosMenuOpen(true)}
+              className="rounded-xl"
             >
-              Cadastros
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCadastrosMenuOpen((prev) => !prev);
+                  setModule('cadastros');
+                }}
+                className={`w-full rounded-xl border px-3 py-2 text-left text-sm font-medium transition ${
+                  module === 'cadastros'
+                    ? 'border-amber-300 bg-amber-50 text-amber-950'
+                    : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="flex items-center justify-between">
+                  <span>Cadastros</span>
+                  <span className="text-xs">{cadastrosMenuOpen ? '▾' : '▸'}</span>
+                </span>
+              </button>
+              {cadastrosMenuOpen && (
+                <nav className="mt-2 space-y-1.5 pl-2" aria-label="Tipos de cadastro">
+                  {tabEntries.map(([key, value]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setModule('cadastros');
+                        setTab(key);
+                      }}
+                      className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(tab === key && module === 'cadastros')}`}
+                    >
+                      {value.label}
+                    </button>
+                  ))}
+                </nav>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -2155,22 +2192,6 @@ function App({ authUser, onLogout = () => {} }) {
               Segurança
             </button>
           </div>
-          {module === 'cadastros' && (
-            <nav className="mt-5 border-t border-slate-200 pt-4" aria-label="Tipos de cadastro">
-              <div className="space-y-1.5">
-                {tabEntries.map(([key, value]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setTab(key)}
-                    className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(tab === key)}`}
-                  >
-                    {value.label}
-                  </button>
-                ))}
-              </div>
-            </nav>
-          )}
           <div className="mt-8 rounded-2xl bg-slate-100 p-3 text-xs text-slate-600">
             Resumo de caixa e alertas na <strong>Dashboard</strong>; detalhes em Financeiro e Jobs.
           </div>
