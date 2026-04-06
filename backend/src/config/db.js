@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -211,16 +212,15 @@ const initDb = async () => {
 
   const adminEmail = String(process.env.ADMIN_EMAIL || 'admin@andymodels.com').trim().toLowerCase();
   const adminNome = String(process.env.ADMIN_NOME || 'Administrador').trim() || 'Administrador';
-  const adminSenha = String(process.env.ADMIN_PASSWORD || '').trim();
+  let adminSenha = String(process.env.ADMIN_PASSWORD || '').trim();
   const usersCount = await pool.query('SELECT COUNT(*)::int AS c FROM usuarios');
   if ((usersCount.rows[0]?.c || 0) === 0) {
-    if (!adminSenha || adminSenha.length < 12) {
-      throw new Error(
-        '[initDb] ADMIN_PASSWORD obrigatoria para criar o primeiro admin (minimo 12 caracteres).',
+    if (!adminSenha || adminSenha.length < 12 || adminSenha === 'Admin@123') {
+      adminSenha = crypto.randomBytes(24).toString('base64url');
+      console.warn(
+        `[initDb] ADMIN_PASSWORD ausente/fraca. Senha inicial aleatoria gerada para ${adminEmail}: ${adminSenha}`,
       );
-    }
-    if (adminSenha === 'Admin@123') {
-      throw new Error('[initDb] ADMIN_PASSWORD insegura e bloqueada. Defina uma senha forte.');
+      console.warn('[initDb] Altere a senha imediatamente apos o primeiro login.');
     }
     const senhaHash = await bcrypt.hash(adminSenha, 12);
     await pool.query(
