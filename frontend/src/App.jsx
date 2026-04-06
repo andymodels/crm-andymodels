@@ -1978,32 +1978,6 @@ function App({ authUser, onLogout = () => {} }) {
             <p className="text-xs text-slate-500">Logado como</p>
             <p className="text-sm font-medium text-slate-800">{authUser?.nome || authUser?.email || 'Admin'}</p>
             <p className="text-xs text-slate-500">{authUser?.email || ''}</p>
-            <form className="mt-3 space-y-2" onSubmit={handleChangePassword}>
-              <input
-                type="password"
-                placeholder="Senha atual"
-                value={senhaAtual}
-                onChange={(e) => setSenhaAtual(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
-                required
-              />
-              <input
-                type="password"
-                placeholder="Nova senha (mín. 8)"
-                value={senhaNova}
-                onChange={(e) => setSenhaNova(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
-                required
-              />
-              <button
-                type="submit"
-                disabled={senhaLoading}
-                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-60"
-              >
-                {senhaLoading ? 'Alterando...' : 'Alterar senha'}
-              </button>
-            </form>
-            {senhaMsg ? <p className="mt-2 text-xs text-slate-600">{senhaMsg}</p> : null}
             <button
               type="button"
               onClick={onLogout}
@@ -2060,6 +2034,16 @@ function App({ authUser, onLogout = () => {} }) {
               className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'extrato')}`}
             >
               Extrato modelo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setModule('seguranca');
+                setSenhaMsg('');
+              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'seguranca')}`}
+            >
+              Segurança
             </button>
           </div>
           {module === 'cadastros' && (
@@ -2126,6 +2110,8 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Gestão de orçamentos'
                       : module === 'inicio'
                         ? 'Dashboard'
+                        : module === 'seguranca'
+                          ? 'Minha conta e segurança'
                         : module === 'financeiro'
                           ? 'Financeiro'
                           : module === 'extrato'
@@ -2143,6 +2129,8 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Busque orçamentos, abra para revisar ou aprovar, ou crie um novo.'
                       : module === 'inicio'
                         ? 'Caixa, resultado da agência e pendências (contrato, receber, pagar modelos).'
+                        : module === 'seguranca'
+                          ? 'Altere sua senha de administrador em uma tela dedicada.'
                         : module === 'financeiro'
                           ? 'Recebimentos do cliente por O.S. e resumo (vínculo ao número da O.S.).'
                           : module === 'extrato'
@@ -2170,6 +2158,8 @@ function App({ authUser, onLogout = () => {} }) {
                       ? dashboardResumo
                         ? `${formatBRL(dashboardResumo.resultado_final ?? 0)} resultado`
                         : '—'
+                      : module === 'seguranca'
+                        ? 'Administrador'
                       : module === 'financeiro'
                         ? finResumo
                           ? `${formatBRL(finResumo.total_recebido_cliente)} rec.`
@@ -2189,6 +2179,8 @@ function App({ authUser, onLogout = () => {} }) {
                       ? 'Orçamentos'
                       : module === 'inicio'
                         ? 'Visão geral'
+                      : module === 'seguranca'
+                        ? 'Conta'
                         : module === 'financeiro'
                           ? 'Caixa'
                           : module === 'extrato'
@@ -2209,6 +2201,8 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Painel'
                       : module === 'inicio'
                         ? 'Operação'
+                        : module === 'seguranca'
+                          ? 'Acesso'
                         : module === 'financeiro'
                           ? 'Financeiro'
                           : module === 'extrato'
@@ -3031,6 +3025,47 @@ function App({ authUser, onLogout = () => {} }) {
                 </form>
               </section>
             </>
+          )}
+
+          {module === 'seguranca' && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-base font-semibold text-slate-800">Alterar senha</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Por segurança, a troca de senha fica numa tela dedicada. Use sua senha atual e defina uma nova senha forte.
+              </p>
+              <form className="mt-4 grid gap-3 md:max-w-md" onSubmit={handleChangePassword}>
+                <label className="text-sm text-slate-600">
+                  <span className="mb-1 block">Senha atual</span>
+                  <input
+                    type="password"
+                    value={senhaAtual}
+                    onChange={(e) => setSenhaAtual(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    required
+                  />
+                </label>
+                <label className="text-sm text-slate-600">
+                  <span className="mb-1 block">Nova senha (mín. 8 caracteres)</span>
+                  <input
+                    type="password"
+                    value={senhaNova}
+                    onChange={(e) => setSenhaNova(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    required
+                  />
+                </label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={senhaLoading}
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-60"
+                  >
+                    {senhaLoading ? 'Alterando...' : 'Alterar senha'}
+                  </button>
+                  {senhaMsg ? <p className="text-sm text-slate-600">{senhaMsg}</p> : null}
+                </div>
+              </form>
+            </section>
           )}
 
           {module === 'cadastros' && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
