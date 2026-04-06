@@ -117,9 +117,10 @@ function previewOrcamentoFinanceiro(form) {
 
   if (tipo === 'sem_modelo') {
     const vs = nPrev(form.valor_servico_sem_modelo);
-    const totalCliente = vs + extrasAg;
-    const impostoValor = totalCliente * (impPct / 100);
-    return { totalCliente, taxa_agencia_valor: 0, impostoValor };
+    const subtotal = vs + extrasAg;
+    const impostoValor = subtotal * (impPct / 100);
+    const totalCliente = subtotal + impostoValor;
+    return { totalCliente, subtotal, taxa_agencia_valor: 0, impostoValor };
   }
 
   let cacheTotal;
@@ -129,9 +130,10 @@ function previewOrcamentoFinanceiro(form) {
     cacheTotal = nPrev(form.cache_base_estimado_total);
   }
   const taxaAgenciaValor = cacheTotal * (feePct / 100);
-  const totalCliente = cacheTotal + taxaAgenciaValor + extrasAg;
-  const impostoValor = totalCliente * (impPct / 100);
-  return { totalCliente, taxa_agencia_valor: taxaAgenciaValor, impostoValor };
+  const subtotal = cacheTotal + taxaAgenciaValor + extrasAg;
+  const impostoValor = subtotal * (impPct / 100);
+  const totalCliente = subtotal + impostoValor;
+  return { totalCliente, subtotal, taxa_agencia_valor: taxaAgenciaValor, impostoValor };
 }
 
 const CADASTROS_COM_MULTI_PAGAMENTO = ['modelos', 'bookers', 'parceiros'];
@@ -2190,15 +2192,17 @@ function App() {
                         <p className="text-lg font-semibold text-slate-900">
                           {formatBRL(dashboardResumo.total_despesas ?? 0)}
                         </p>
-                        <p className="mt-1 text-[11px] text-slate-500">Manual: impostos, operacional, outros</p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Impostos, operacional, outros — lançamentos manuais
+                        </p>
                       </div>
                       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                        <p className="text-xs text-emerald-900">Resultado final</p>
+                        <p className="text-xs text-emerald-900">Resultado final (caixa)</p>
                         <p className="text-lg font-semibold text-emerald-950">
                           {formatBRL(dashboardResumo.resultado_final ?? 0)}
                         </p>
                         <p className="mt-1 text-[11px] text-emerald-900/90">
-                          Receb. − modelos − comissões − despesas
+                          Único saldo: recebido − modelos − comissões − despesas
                         </p>
                       </div>
                     </div>
@@ -2207,7 +2211,8 @@ function App() {
                       <strong>{formatBRL(dashboardResumo.total_faturado_os_abertas)}</strong>
                     </p>
                     <p className="mt-4 text-xs font-medium text-slate-600">
-                      Indicadores derivados das O.S. (somas das colunas gravadas em cada job).
+                      Referência — somas de colunas nas O.S. (não substituem o <strong>Resultado final</strong> de caixa
+                      acima).
                     </p>
                     <div className="mt-2 grid gap-3 grid-cols-2 md:grid-cols-4">
                       <div className="rounded-xl border border-slate-200 bg-white p-3">
@@ -2220,12 +2225,6 @@ function App() {
                         <p className="text-xs text-slate-500">Σ Líquido modelos</p>
                         <p className="text-lg font-semibold text-slate-900">
                           {formatBRL(dashboardResumo.soma_modelo_liquido_os)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Resultado agência</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.soma_resultado_agencia_os)}
                         </p>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white p-3">
@@ -2440,14 +2439,17 @@ function App() {
                         <p className="text-lg font-semibold text-slate-900">
                           {formatBRL(finResumo.total_despesas ?? 0)}
                         </p>
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Impostos, operacional, outros — lançamentos manuais
+                        </p>
                       </div>
                       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                        <p className="text-xs text-emerald-900">Resultado final</p>
+                        <p className="text-xs text-emerald-900">Resultado final (caixa)</p>
                         <p className="text-lg font-semibold text-emerald-950">
                           {formatBRL(finResumo.resultado_final ?? 0)}
                         </p>
                         <p className="mt-1 text-[11px] text-emerald-900/90">
-                          Rec. − modelos − comissões − despesas
+                          Único saldo: recebido − modelos − comissões − despesas
                         </p>
                       </div>
                     </div>
@@ -2455,153 +2457,9 @@ function App() {
                       Faturado em O.S. ainda não recebidas:{' '}
                       <strong>{formatBRL(finResumo.total_faturado_os_abertas)}</strong>
                     </p>
-                    <p className="mt-4 text-xs font-medium text-slate-600">Totais das O.S. (todas — colunas do job)</p>
-                    <div className="mt-2 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Total cliente</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.soma_total_cliente_os)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Líquido modelos</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.soma_modelo_liquido_os)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Parceiros</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.soma_parceiro_valor_os)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Booker</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.soma_booker_valor_os)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-amber-50 p-3">
-                        <p className="text-xs text-amber-900">Σ Resultado agência</p>
-                        <p className="text-lg font-semibold text-amber-950">{formatBRL(finResumo.soma_resultado_agencia_os)}</p>
-                      </div>
-                    </div>
                   </>
                 ) : null}
                 {finError && <p className="mt-3 text-sm text-red-600">{finError}</p>}
-              </section>
-
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Novo recebimento (cliente)</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Ao registrar um recebimento, a O.S. passa para <strong>recebida</strong> e os valores do job deixam de
-                  poder ser alterados. O valor vem do <strong>total_cliente</strong> da O.S.; você só confirma o montante
-                  (saldo em aberto é preenchido automaticamente).
-                </p>
-                {finOsContexto && (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    <span className="font-medium">O.S. #{finOsContexto.os_id}</span> — Total cliente{' '}
-                    <strong>{formatBRL(finOsContexto.total_cliente)}</strong>, já recebido{' '}
-                    <strong>{formatBRL(finOsContexto.recebido)}</strong>, saldo{' '}
-                    <strong className="text-amber-900">{formatBRL(finOsContexto.saldo_receber)}</strong>.
-                    <button
-                      type="button"
-                      className="ml-2 text-xs font-medium text-amber-800 underline"
-                      onClick={() =>
-                        setFinForm((p) => ({
-                          ...p,
-                          valor:
-                            finOsContexto.saldo_receber > 0
-                              ? String(Number(finOsContexto.saldo_receber).toFixed(2))
-                              : p.valor,
-                        }))
-                      }
-                    >
-                      Repor saldo no campo
-                    </button>
-                  </div>
-                )}
-                <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4" onSubmit={saveRecebimento}>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">O.S.</span>
-                    <select
-                      value={finForm.os_id}
-                      onChange={(e) => setFinForm((p) => ({ ...p, os_id: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    >
-                      <option value="">Selecione</option>
-                      {finOsOptions.map((os) => (
-                        <option key={os.id} value={os.id}>
-                          #{os.id} — {os.nome_empresa || os.nome_fantasia}
-                          {os.status === 'recebida' ? ' (recebida)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Valor (máx. = saldo em aberto)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={finForm.valor}
-                      onChange={(e) => setFinForm((p) => ({ ...p, valor: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Data</span>
-                    <input
-                      type="date"
-                      value={finForm.data_recebimento}
-                      onChange={(e) => setFinForm((p) => ({ ...p, data_recebimento: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2 lg:col-span-1">
-                    <span className="mb-1 block">Obs.</span>
-                    <input
-                      value={finForm.observacao}
-                      onChange={(e) => setFinForm((p) => ({ ...p, observacao: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <div className="flex items-end">
-                    <button
-                      type="submit"
-                      className="rounded-xl px-4 py-2 text-sm font-medium text-white"
-                      style={{ backgroundColor: BRAND_ORANGE }}
-                    >
-                      Registrar recebimento
-                    </button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Últimos recebimentos</h3>
-                {finLoading ? (
-                  <p className="mt-2 text-sm text-slate-500">Carregando...</p>
-                ) : (
-                  <div className="mt-3 overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2">O.S.</th>
-                          <th className="px-2 py-2">Cliente</th>
-                          <th className="px-2 py-2">Valor</th>
-                          <th className="px-2 py-2">Data</th>
-                          <th className="px-2 py-2">Obs.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {finRecebimentos.map((r) => (
-                          <tr key={r.id} className="border-b border-slate-100">
-                            <td className="px-2 py-2">#{r.os_id}</td>
-                            <td className="px-2 py-2">{r.nome_empresa || r.nome_fantasia}</td>
-                            <td className="px-2 py-2">{formatBRL(r.valor)}</td>
-                            <td className="px-2 py-2">{String(r.data_recebimento).slice(0, 10)}</td>
-                            <td className="px-2 py-2">{r.observacao}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -2798,6 +2656,128 @@ function App() {
                   </div>
                 )}
               </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Recebimentos (cliente)</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Ao registrar um recebimento, a O.S. passa para <strong>recebida</strong> e os valores do job deixam de
+                  poder ser alterados. O valor vem do <strong>total_cliente</strong> da O.S.; você só confirma o montante
+                  (saldo em aberto é preenchido automaticamente).
+                </p>
+                {finOsContexto && (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    <span className="font-medium">O.S. #{finOsContexto.os_id}</span> — Total cliente{' '}
+                    <strong>{formatBRL(finOsContexto.total_cliente)}</strong>, já recebido{' '}
+                    <strong>{formatBRL(finOsContexto.recebido)}</strong>, saldo{' '}
+                    <strong className="text-amber-900">{formatBRL(finOsContexto.saldo_receber)}</strong>.
+                    <button
+                      type="button"
+                      className="ml-2 text-xs font-medium text-amber-800 underline"
+                      onClick={() =>
+                        setFinForm((p) => ({
+                          ...p,
+                          valor:
+                            finOsContexto.saldo_receber > 0
+                              ? String(Number(finOsContexto.saldo_receber).toFixed(2))
+                              : p.valor,
+                        }))
+                      }
+                    >
+                      Repor saldo no campo
+                    </button>
+                  </div>
+                )}
+                <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4" onSubmit={saveRecebimento}>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">O.S.</span>
+                    <select
+                      value={finForm.os_id}
+                      onChange={(e) => setFinForm((p) => ({ ...p, os_id: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    >
+                      <option value="">Selecione</option>
+                      {finOsOptions.map((os) => (
+                        <option key={os.id} value={os.id}>
+                          #{os.id} — {os.nome_empresa || os.nome_fantasia}
+                          {os.status === 'recebida' ? ' (recebida)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Valor (máx. = saldo em aberto)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={finForm.valor}
+                      onChange={(e) => setFinForm((p) => ({ ...p, valor: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Data</span>
+                    <input
+                      type="date"
+                      value={finForm.data_recebimento}
+                      onChange={(e) => setFinForm((p) => ({ ...p, data_recebimento: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600 md:col-span-2 lg:col-span-1">
+                    <span className="mb-1 block">Obs.</span>
+                    <input
+                      value={finForm.observacao}
+                      onChange={(e) => setFinForm((p) => ({ ...p, observacao: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <div className="flex items-end">
+                    <button
+                      type="submit"
+                      className="rounded-xl px-4 py-2 text-sm font-medium text-white"
+                      style={{ backgroundColor: BRAND_ORANGE }}
+                    >
+                      Registrar recebimento
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Últimos recebimentos</h3>
+                {finLoading ? (
+                  <p className="mt-2 text-sm text-slate-500">Carregando...</p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-2 py-2">O.S.</th>
+                          <th className="px-2 py-2">Cliente</th>
+                          <th className="px-2 py-2">Valor</th>
+                          <th className="px-2 py-2">Data</th>
+                          <th className="px-2 py-2">Obs.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {finRecebimentos.map((r) => (
+                          <tr key={r.id} className="border-b border-slate-100">
+                            <td className="px-2 py-2">#{r.os_id}</td>
+                            <td className="px-2 py-2">{r.nome_empresa || r.nome_fantasia}</td>
+                            <td className="px-2 py-2">{formatBRL(r.valor)}</td>
+                            <td className="px-2 py-2">{String(r.data_recebimento).slice(0, 10)}</td>
+                            <td className="px-2 py-2">{r.observacao}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
             </>
           )}
 
@@ -3782,11 +3762,18 @@ function App() {
                       placeholder="10"
                     />
                     <span className="mt-1 block text-xs text-slate-500">
-                      Padrão 10%. O valor em reais é sempre sobre o <strong>total ao cliente</strong> (serviço + taxa +
-                      extras): {formatBRL(orcamentoFinanceiroPreview.impostoValor)}. Não aparece discriminado no PDF ao
-                      cliente — só o total.
+                      Sobre o <strong>subtotal</strong> (cachê + taxa da agência + extras):{' '}
+                      {formatBRL(orcamentoFinanceiroPreview.impostoValor)}. O{' '}
+                      <strong>total ao cliente</strong> = subtotal + nota (
+                      {formatBRL(orcamentoFinanceiroPreview.totalCliente)}). No PDF ao cliente vai só o total final.
                     </span>
                   </label>
+                  <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                    <p className="text-xs text-slate-500">Subtotal (base + taxa + extras)</p>
+                    <p className="font-medium text-slate-800">{formatBRL(orcamentoFinanceiroPreview.subtotal)}</p>
+                    <p className="mt-2 text-xs text-slate-500">Total ao cliente (subtotal + nota)</p>
+                    <p className="text-lg font-semibold text-slate-900">{formatBRL(orcamentoFinanceiroPreview.totalCliente)}</p>
+                  </div>
                   <label className="text-sm text-slate-600">
                     <span className="mb-1 block">Condições de pagamento</span>
                     <input value={orcamentoForm.condicoes_pagamento} onChange={(event) => onChangeOrcamento('condicoes_pagamento', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
@@ -3833,8 +3820,8 @@ function App() {
                   </div>
                   {orcamentoEditingId && (
                     <p className="md:col-span-2 text-xs text-slate-500">
-                      No PDF ao cliente: lista de modelos (apenas nomes), valor total e a frase sobre serviços da agência e
-                      cachê dos modelos — o detalhamento financeiro fica só no sistema.
+                      No PDF ao cliente: lista de modelos (apenas nomes), texto fixo sobre prestação de serviços e valor
+                      total — o detalhamento financeiro fica só no sistema.
                     </p>
                   )}
                 </form>

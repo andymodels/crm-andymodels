@@ -225,7 +225,7 @@ async function loadOrcamentoDoc(pool, id) {
 
 /**
  * PDF para o cliente: dados do cliente, descrição, trabalho, condições, lista de modelos (só nomes), valor total.
- * Não discrimina: valor de extras agência, valor de nota fiscal nem taxa % — só o total ao cliente.
+ * Bloco final: texto fixo sobre prestação de serviços + valor total (sem discriminar linhas internas).
  */
 function buildOrcamentoHtml(data) {
   const { orc, nums, linhasModelos = [] } = data;
@@ -355,12 +355,11 @@ function buildOrcamentoHtml(data) {
   </div>
 
   <div class="bloco">
-    <h2>Valor total da proposta</h2>
+    <h2>Valor total</h2>
     <p style="margin:0 0 0.75rem; font-size:0.95rem;">
-      Valor total incluindo serviços da agência e cachê dos modelos.
+      Valor total da prestação de serviços de casting, produção e contratação de modelos, incluindo custos operacionais e encargos
     </p>
     <div class="valor-bruto-box">
-      <p class="rotulo">Total ao cliente</p>
       <p class="valor-bruto-num">${fmtMoneyBR(nums.total_cliente)}</p>
     </div>
   </div>

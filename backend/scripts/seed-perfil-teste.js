@@ -5,11 +5,13 @@
  * - Extras agência: R$ 300,00
  * - Total ao cliente: R$ 1.500,00 (= 1000 + 200 + 300)
  *
- * Uso: na pasta backend, com DATABASE_URL no .env:
- *   npm run seed:perfil
+ * Uso (na pasta backend, com DATABASE_URL no .env):
+ *   npm run seed:perfil   — remove só o que foi criado pelo seed ([SEED-PERFIL-TESTE]) e recria o cenário.
+ *   npm run reset:teste   — zera tudo e recria UM cenário fixo (cliente + orçamento + O.S.).
+ *   npm run reset:limpo   — zera tudo e NÃO cria nada (orçamentos / clientes vazios).
  *
- * O script remove dados anteriores com o marcador [SEED-PERFIL-TESTE], recria cliente/modelo
- * fictícios, orçamento, aprova a O.S. e insere uma linha de modelo (R$ 1.000) recalculando valores.
+ * O cliente criado pelo seed chama-se "Cliente Teste CRM" (não é lixo antigo — é o cenário controlado).
+ * Use reset:limpo se quiser lista vazia sem dados de teste.
  */
 
 const path = require('path');
@@ -23,6 +25,7 @@ if (!process.env.DATABASE_URL) {
 
 const { pool, initDb } = require('../src/config/db');
 const { computeOsFinancials } = require('../src/services/osFinanceiro');
+const { truncateNegocio } = require('./truncateNegocio');
 
 const SEED_TAG = '[SEED-PERFIL-TESTE]';
 const DOC_CLIENTE = '12.345.678/0001-99';
@@ -92,8 +95,8 @@ async function garantirCliente(client) {
     )
     VALUES (
       'PJ', $1,
-      'Cliente Fictício Perfil Teste',
-      'Marca Teste',
+      'Cliente Teste CRM',
+      'Marca Seed',
       $1,
       'ISENTO',
       'Contato Seed',
@@ -204,12 +207,25 @@ async function recalcularFinanceiroOs(client, osId) {
 }
 
 async function main() {
+  const resetCompleto =
+    process.argv.includes('--reset-completo') ||
+    process.argv.includes('--zerar-tudo') ||
+    process.env.RESET_TESTE === '1';
+
   await initDb();
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await limparSeedAnterior(client);
+    if (resetCompleto) {
+      console.log('');
+      console.log('>>> RESET COMPLETO — todas as tabelas de negócio foram esvaziadas.');
+      console.log('    Em seguida será criado apenas o cenário de teste com valores controlados.');
+      console.log('');
+      await truncateNegocio(client);
+    } else {
+      await limparSeedAnterior(client);
+    }
 
     const clienteId = await garantirCliente(client);
     const modeloId = await garantirModelo(client);

@@ -7,8 +7,10 @@
  * 5) agencia_final = agencia_apos_parceiro - booker_valor
  * 6) resultado_agencia = agencia_final - extras_despesa_valor
  *
- * Modelo: sempre sobre cachê (lineLiquido). Imposto: sempre sobre total_cliente.
- * Extras agência: já em total_cliente; não entram na cadeia de %.
+ * Modelo: sempre sobre cachê (lineLiquido).
+ * Subtotal = cachê + taxa agência + extras (ou valor serviço + extras sem modelo).
+ * Imposto/nota (%): sobre o subtotal. total_cliente = subtotal + imposto_valor.
+ * Extras agência: entram no subtotal.
  */
 
 const n = (v) => Number(v || 0);
@@ -42,14 +44,14 @@ function computeOsFinancials({
   const pp = parceiro_percent != null && parceiro_percent !== '' ? n(parceiro_percent) / 100 : 0;
   const bp = booker_percent != null && booker_percent !== '' ? n(booker_percent) / 100 : 0;
 
-  let totalCliente;
+  let subtotalCliente;
   let taxaAgenciaValor;
   let modeloLiquidoTotal;
   let cacheTotal;
 
   if (tipo_os === 'sem_modelo') {
     const vs = n(valor_servico);
-    totalCliente = vs + extrasAg;
+    subtotalCliente = vs + extrasAg;
     taxaAgenciaValor = 0;
     cacheTotal = 0;
     modeloLiquidoTotal = 0;
@@ -68,10 +70,11 @@ function computeOsFinancials({
       modeloLiquidoTotal = lineLiquido(cacheTotal, impPct, feePct, false);
     }
     taxaAgenciaValor = cacheTotal * (feePct / 100);
-    totalCliente = cacheTotal + taxaAgenciaValor + extrasAg;
+    subtotalCliente = cacheTotal + taxaAgenciaValor + extrasAg;
   }
 
-  const impostoValor = totalCliente * (impPct / 100);
+  const impostoValor = subtotalCliente * (impPct / 100);
+  const totalCliente = subtotalCliente + impostoValor;
   const agenciaParcial = totalCliente - impostoValor - modeloLiquidoTotal;
   const parceiroValor = agenciaParcial * pp;
   const agenciaAposParceiro = agenciaParcial - parceiroValor;
