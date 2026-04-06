@@ -3,6 +3,7 @@ const { pool } = require('../config/db');
 const { sanitizeAndValidateModelo, onlyDigits } = require('../utils/brValidators');
 const { insertModeloRow } = require('../utils/modeloInsert');
 const { validateTokenReadOnly, validateAndLockLink } = require('../utils/cadastroLinkHelpers');
+const { hashPassword } = require('../utils/auth');
 
 const router = express.Router();
 
@@ -122,6 +123,12 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
 
     let obs = String(raw.observacoes ?? '').trim();
     if (obs.length > PUBLIC_MAX_OBS) obs = obs.slice(0, PUBLIC_MAX_OBS);
+    const passaporte = trimStr(raw.passaporte);
+    const fotoPerfilBase64 = trimStr(raw.foto_perfil_base64);
+    const senhaAcesso = String(raw.senha_acesso || '').trim();
+    if (!senhaAcesso || senhaAcesso.length < 8) {
+      return res.status(400).json({ message: 'Defina uma senha de acesso com no minimo 8 caracteres.' });
+    }
 
     const sexoParsed = parseSexo(raw.sexo);
     if (!sexoParsed.ok) {
@@ -148,6 +155,8 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
       banco_dados: '',
       ativo: false,
       sexo: sexoParsed.label,
+      passaporte,
+      foto_perfil_base64: fotoPerfilBase64,
       ...med.values,
     };
 
@@ -188,6 +197,23 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
           });
         }
         throw insertErr;
+      }
+
+      const senhaHash = await hashPassword(senhaAcesso);
+      try {
+        await client.query(
+          `INSERT INTO modelo_acessos (modelo_id, email, senha_hash)
+           VALUES ($1, $2, $3)`,
+          [modeloRow.id, String(modeloRow.email || '').toLowerCase(), senhaHash],
+        );
+      } catch (acessoErr) {
+        await client.query('ROLLBACK');
+        if (acessoErr.code === '23505') {
+          return res.status(400).json({
+            message: 'Ja existe acesso de modelo com este email. Use outro email no cadastro.',
+          });
+        }
+        throw acessoErr;
       }
 
       await client.query(

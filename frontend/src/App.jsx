@@ -3065,6 +3065,47 @@ function App({ authUser, onLogout = () => {} }) {
                   {senhaMsg ? <p className="text-sm text-slate-600">{senhaMsg}</p> : null}
                 </div>
               </form>
+              <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50/90 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-950">Links de modelo</p>
+                    <p className="mt-1 max-w-xl text-xs text-amber-950/90">
+                      Gere links únicos de cadastro. Cada link é de uso único e expira automaticamente.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={linkCadastroLoading || !apiOnline}
+                    onClick={gerarLinkCadastroModelo}
+                    className="shrink-0 rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-medium text-amber-950 shadow-sm disabled:opacity-50"
+                  >
+                    {linkCadastroLoading ? 'A gerar…' : 'Gerar link'}
+                  </button>
+                </div>
+                {linkCadastroMsg ? (
+                  <p className={`mt-3 text-xs ${linkCadastroUrl ? 'text-green-800' : 'text-red-700'}`}>
+                    {linkCadastroMsg}
+                  </p>
+                ) : null}
+                {linkCadastroUrl ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <input
+                      readOnly
+                      value={linkCadastroUrl}
+                      className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-800"
+                    />
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                      onClick={() => {
+                        navigator.clipboard.writeText(linkCadastroUrl).catch(() => {});
+                      }}
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </section>
           )}
 
@@ -3074,51 +3115,6 @@ function App({ authUser, onLogout = () => {} }) {
               onSubmit={onSubmit}
               noValidate
             >
-              {isModeloTab && (
-                <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50/90 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-amber-950">Link único para cadastro público</p>
-                      <p className="mt-1 max-w-xl text-xs text-amber-950/90">
-                        Cada link só pode ser usado uma vez. Depois do envio pelo modelo, o link deixa de funcionar.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={linkCadastroLoading || !apiOnline}
-                      onClick={gerarLinkCadastroModelo}
-                      className="shrink-0 rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-medium text-amber-950 shadow-sm disabled:opacity-50"
-                    >
-                      {linkCadastroLoading ? 'A gerar…' : 'Gerar link de cadastro'}
-                    </button>
-                  </div>
-                  {linkCadastroMsg ? (
-                    <p
-                      className={`mt-3 text-xs ${linkCadastroUrl ? 'text-green-800' : 'text-red-700'}`}
-                    >
-                      {linkCadastroMsg}
-                    </p>
-                  ) : null}
-                  {linkCadastroUrl ? (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <input
-                        readOnly
-                        value={linkCadastroUrl}
-                        className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-800"
-                      />
-                      <button
-                        type="button"
-                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700"
-                        onClick={() => {
-                          navigator.clipboard.writeText(linkCadastroUrl).catch(() => {});
-                        }}
-                      >
-                        Copiar
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              )}
               {isBookerTab && (
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
                   <strong>Teste rápido:</strong> preencha <strong>nome</strong> e <strong>CPF</strong>, depois nas listas

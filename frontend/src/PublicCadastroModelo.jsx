@@ -39,6 +39,9 @@ const emptyForm = () => ({
   responsavel_cpf: '',
   responsavel_telefone: '',
   observacoes: '',
+  passaporte: '',
+  senha_acesso: '',
+  foto_perfil_base64: '',
   medida_altura: '',
   medida_busto: '',
   medida_torax: '',
@@ -117,6 +120,7 @@ export default function PublicCadastroModelo() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [fotoPreview, setFotoPreview] = useState('');
 
   const validarUrl = useMemo(
     () => `${API_BASE.replace(/\/$/, '')}/public/cadastro-modelo/validar`,
@@ -215,6 +219,21 @@ export default function PublicCadastroModelo() {
     onChange(field, value);
   };
 
+  const handleFotoFile = (file) => {
+    if (!file) {
+      onChange('foto_perfil_base64', '');
+      setFotoPreview('');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = String(reader.result || '');
+      onChange('foto_perfil_base64', base64);
+      setFotoPreview(base64);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const submitUrl = useMemo(() => `${API_BASE.replace(/\/$/, '')}/public/cadastro-modelo`, []);
 
   const onSubmit = async (e) => {
@@ -293,6 +312,9 @@ export default function PublicCadastroModelo() {
         medida_sapato: trimStr(form.medida_sapato),
         medida_cabelo: trimStr(form.medida_cabelo),
         medida_olhos: trimStr(form.medida_olhos),
+        passaporte: trimStr(form.passaporte),
+        senha_acesso: form.senha_acesso,
+        foto_perfil_base64: trimStr(form.foto_perfil_base64),
       };
       if (isMinor) {
         body.responsavel_nome = sv.body.responsavel_nome;
@@ -488,6 +510,39 @@ export default function PublicCadastroModelo() {
               className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
               maxLength={2000}
             />
+          </label>
+          <TextField
+            label="Passaporte"
+            value={form.passaporte}
+            onChange={(v) => onChange('passaporte', v)}
+          />
+          <label className="text-sm text-slate-600">
+            <span className="mb-1 block font-medium text-slate-800">
+              Senha de acesso ao extrato <span className="text-red-600"> *</span>
+            </span>
+            <input
+              type="password"
+              value={form.senha_acesso}
+              onChange={(e) => onChange('senha_acesso', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+              required
+            />
+          </label>
+          <label className="text-sm text-slate-600 md:col-span-2">
+            <span className="mb-1 block font-medium text-slate-800">Foto de perfil</span>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => handleFotoFile(e.target.files?.[0])}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+            {fotoPreview ? (
+              <img
+                src={fotoPreview}
+                alt="Prévia da foto"
+                className="mt-2 h-24 w-24 rounded-lg border border-slate-200 object-cover"
+              />
+            ) : null}
           </label>
 
           <BlockTitle>Contato</BlockTitle>

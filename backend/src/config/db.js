@@ -183,6 +183,14 @@ const initDb = async () => {
     ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS medida_olhos TEXT NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS passaporte TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS foto_perfil_base64 TEXT NOT NULL DEFAULT '';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cadastro_links (
@@ -205,6 +213,16 @@ const initDb = async () => {
       email TEXT NOT NULL UNIQUE,
       senha_hash TEXT NOT NULL,
       tipo TEXT NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS modelo_acessos (
+      id SERIAL PRIMARY KEY,
+      modelo_id INTEGER NOT NULL UNIQUE REFERENCES modelos(id) ON DELETE CASCADE,
+      email TEXT NOT NULL UNIQUE,
+      senha_hash TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );

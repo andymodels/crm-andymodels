@@ -14,6 +14,7 @@ const publicCadastroModeloRouter = require('./routes/publicCadastroModelo');
 const cadastroLinksRouter = require('./routes/cadastroLinks');
 const authRouter = require('./routes/auth');
 const { requireAdminAuth } = require('./middleware/requireAdminAuth');
+const modeloPortalRouter = require('./routes/modeloPortal');
 
 const app = express();
 
@@ -65,6 +66,7 @@ app.get('/api', (_req, res) => {
 // Rotas públicas
 app.use('/api', publicCadastroModeloRouter);
 app.use('/api', authRouter);
+app.use('/api', modeloPortalRouter);
 
 // Restante da API exige sessão admin
 app.use('/api', requireAdminAuth);

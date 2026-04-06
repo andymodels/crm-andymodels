@@ -333,6 +333,8 @@ makeCrudRoutes({
     'origem_cadastro',
     'status_cadastro',
     'sexo',
+    'passaporte',
+    'foto_perfil_base64',
     'medida_altura',
     'medida_busto',
     'medida_torax',
