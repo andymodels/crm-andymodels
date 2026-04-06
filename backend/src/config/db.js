@@ -231,20 +231,20 @@ const initDb = async () => {
     console.warn('[initDb] usuario admin inicial criado. Altere a senha apos o primeiro login.');
   } else if (resetOnStart && adminSenha && adminSenha.length >= 8) {
     const senhaHash = await bcrypt.hash(adminSenha, 12);
-    const upd = await pool.query(
-      `UPDATE usuarios
-       SET senha_hash = $1, tipo = 'admin', updated_at = NOW()
-       WHERE lower(email) = $2
-       RETURNING id`,
-      [senhaHash, adminEmail],
+    await pool.query(
+      `INSERT INTO usuarios (nome, email, senha_hash, tipo)
+       VALUES ($1, $2, $3, 'admin')
+       ON CONFLICT (email)
+       DO UPDATE SET
+         nome = EXCLUDED.nome,
+         senha_hash = EXCLUDED.senha_hash,
+         tipo = 'admin',
+         updated_at = NOW()`,
+      [adminNome, adminEmail, senhaHash],
     );
-    if (upd.rows.length > 0) {
-      console.warn(`[initDb] senha do admin ${adminEmail} foi sincronizada por ADMIN_RESET_ON_START=true.`);
-    } else {
-      console.warn(
-        `[initDb] ADMIN_RESET_ON_START=true, mas o email ${adminEmail} nao foi encontrado em usuarios.`,
-      );
-    }
+    console.warn(
+      `[initDb] admin ${adminEmail} sincronizado por ADMIN_RESET_ON_START=true (usuario criado/atualizado).`,
+    );
   }
 
   await pool.query(`
