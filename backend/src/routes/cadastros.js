@@ -31,20 +31,123 @@ function escHtml(v) {
     .replace(/'/g, '&#39;');
 }
 
+function tryParseJsonString(value) {
+  if (typeof value !== 'string') return value;
+  const s = value.trim();
+  if (!s) return value;
+  if (!(s.startsWith('{') || s.startsWith('['))) return value;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return value;
+  }
+}
+
+function labelForField(field) {
+  const map = {
+    id: 'ID',
+    nome: 'Nome',
+    nome_empresa: 'Nome da empresa',
+    nome_fantasia: 'Nome fantasia',
+    cpf: 'CPF',
+    cnpj: 'CNPJ',
+    cnpj_ou_cpf: 'CNPJ ou CPF',
+    rg: 'RG',
+    passaporte: 'Passaporte',
+    data_nascimento: 'Data de nascimento',
+    sexo: 'Sexo',
+    telefones: 'Telefones',
+    emails: 'Emails',
+    telefone: 'Telefone',
+    email: 'Email',
+    logradouro: 'Logradouro',
+    numero: 'Numero',
+    complemento: 'Complemento',
+    bairro: 'Bairro',
+    cidade: 'Cidade',
+    uf: 'UF',
+    cep: 'CEP',
+    observacoes: 'Observacoes',
+    origem_cadastro: 'Origem do cadastro',
+    status_cadastro: 'Status do cadastro',
+    ativo: 'Ativo',
+    created_at: 'Criado em',
+    updated_at: 'Atualizado em',
+    medida_altura: 'Altura',
+    medida_busto: 'Busto',
+    medida_torax: 'Torax',
+    medida_cintura: 'Cintura',
+    medida_quadril: 'Quadril',
+    medida_sapato: 'Sapato',
+    medida_cabelo: 'Cabelo',
+    medida_olhos: 'Olhos',
+    formas_pagamento: 'Formas de pagamento',
+    emite_nf_propria: 'Emite NF propria',
+  };
+  return map[field] || field.replace(/_/g, ' ');
+}
+
 function fmtValue(v) {
-  if (v == null) return '—';
-  if (Array.isArray(v)) return escHtml(v.map((x) => String(x ?? '')).join(', '));
-  if (typeof v === 'object') return escHtml(JSON.stringify(v));
-  if (typeof v === 'boolean') return v ? 'Sim' : 'Nao';
-  return escHtml(String(v));
+  if (v == null || v === '') return '—';
+  const parsed = tryParseJsonString(v);
+  if (Array.isArray(parsed)) {
+    if (parsed.length === 0) return '—';
+    const first = parsed[0];
+    if (first && typeof first === 'object') {
+      return parsed
+        .map((item, i) => `${i + 1}) ${JSON.stringify(item)}`)
+        .map(escHtml)
+        .join('<br/>');
+    }
+    return escHtml(parsed.map((x) => String(x ?? '')).join(', '));
+  }
+  if (parsed && typeof parsed === 'object') {
+    return `<pre>${escHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+  }
+  if (typeof parsed === 'boolean') return parsed ? 'Sim' : 'Nao';
+  return escHtml(String(parsed));
 }
 
 function cadastroPdfHtml({ title, row }) {
+  const foto = row?.foto_perfil_base64 ? String(row.foto_perfil_base64) : '';
   const entries = Object.entries(row || {}).filter(([k]) => k !== 'foto_perfil_base64');
   const rows = entries
-    .map(([k, v]) => `<tr><th>${escHtml(k)}</th><td>${fmtValue(v)}</td></tr>`)
+    .map(([k, v]) => `<tr><th>${escHtml(labelForField(k))}</th><td>${fmtValue(v)}</td></tr>`)
     .join('');
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${escHtml(title)}</title><style>body{font-family:Arial,sans-serif;margin:24px;color:#0f172a}h1{margin:0 0 8px;font-size:22px}p{margin:0 0 16px;color:#475569}table{width:100%;border-collapse:collapse}th,td{border:1px solid #e2e8f0;padding:8px;vertical-align:top;font-size:13px}th{width:220px;text-align:left;background:#f8fafc}</style></head><body><h1>${escHtml(title)}</h1><p>Documento de cadastro</p><table>${rows}</table></body></html>`;
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${escHtml(title)}</title>
+  <style>
+    body{font-family:Inter,Arial,sans-serif;margin:28px;color:#0f172a;background:#f8fafc}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px}
+    .head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}
+    .title{margin:0;font-size:24px;line-height:1.2}
+    .sub{margin:6px 0 0;color:#64748b;font-size:13px}
+    .photo{width:108px;height:108px;border-radius:12px;object-fit:cover;border:1px solid #cbd5e1;background:#fff}
+    table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border:1px solid #e2e8f0;border-radius:10px}
+    th,td{padding:9px 10px;vertical-align:top;font-size:13px;border-bottom:1px solid #eef2f7}
+    tr:last-child th,tr:last-child td{border-bottom:none}
+    th{width:230px;text-align:left;background:#f8fafc;color:#334155;font-weight:600}
+    td{background:#fff}
+    pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#1e293b}
+  </style>
+</head>
+<body>
+  <section class="card">
+    <div class="head">
+      <div>
+        <h1 class="title">${escHtml(title)}</h1>
+        <p class="sub">Documento de cadastro</p>
+      </div>
+      ${foto ? `<img src="${escHtml(foto)}" alt="Foto de perfil" class="photo" />` : ''}
+    </div>
+    <table>${rows}</table>
+  </section>
+</body>
+</html>`;
 }
 
 const makeCrudRoutes = ({
@@ -137,7 +240,7 @@ const makeCrudRoutes = ({
       if (Number.isNaN(id)) return res.status(400).send('ID invalido.');
       const result = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
       if (result.rows.length === 0) return res.status(404).send('Registro nao encontrado.');
-      const label = path === 'clients' ? 'clientes' : path;
+      const label = path === 'clientes' ? 'clientes' : path;
       const html = cadastroPdfHtml({ title: `Cadastro - ${label} #${id}`, row: result.rows[0] });
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(html);
