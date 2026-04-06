@@ -35,6 +35,10 @@ services:
         value: "admin@andymodels.com"
       - key: ADMIN_PASSWORD
         generateValue: true
+      # Temporário para destravar login: ao iniciar, sincroniza senha do ADMIN_EMAIL com ADMIN_PASSWORD.
+      # Depois que entrar, volte para "false" por segurança.
+      - key: ADMIN_RESET_ON_START
+        value: "false"
 
 databases:
   - name: andy-models-db

@@ -213,6 +213,7 @@ const initDb = async () => {
   const adminEmail = String(process.env.ADMIN_EMAIL || 'admin@andymodels.com').trim().toLowerCase();
   const adminNome = String(process.env.ADMIN_NOME || 'Administrador').trim() || 'Administrador';
   let adminSenha = String(process.env.ADMIN_PASSWORD || '').trim();
+  const resetOnStart = String(process.env.ADMIN_RESET_ON_START || '').trim().toLowerCase() === 'true';
   const usersCount = await pool.query('SELECT COUNT(*)::int AS c FROM usuarios');
   if ((usersCount.rows[0]?.c || 0) === 0) {
     if (!adminSenha || adminSenha.length < 12 || adminSenha === 'Admin@123') {
@@ -228,6 +229,22 @@ const initDb = async () => {
       [adminNome, adminEmail, senhaHash],
     );
     console.warn('[initDb] usuario admin inicial criado. Altere a senha apos o primeiro login.');
+  } else if (resetOnStart && adminSenha && adminSenha.length >= 8) {
+    const senhaHash = await bcrypt.hash(adminSenha, 12);
+    const upd = await pool.query(
+      `UPDATE usuarios
+       SET senha_hash = $1, tipo = 'admin', updated_at = NOW()
+       WHERE lower(email) = $2
+       RETURNING id`,
+      [senhaHash, adminEmail],
+    );
+    if (upd.rows.length > 0) {
+      console.warn(`[initDb] senha do admin ${adminEmail} foi sincronizada por ADMIN_RESET_ON_START=true.`);
+    } else {
+      console.warn(
+        `[initDb] ADMIN_RESET_ON_START=true, mas o email ${adminEmail} nao foi encontrado em usuarios.`,
+      );
+    }
   }
 
   await pool.query(`

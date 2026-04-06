@@ -12,6 +12,8 @@
     "start": "node src/server.js",
     "start:render": "node scripts/ensure-frontend-built.js && node scripts/setup-db.js && node src/server.js",
     "setup:db": "node scripts/setup-db.js",
+    "auth:reset-admin": "node scripts/reset-admin-password.js",
+    "auth:list-users": "node scripts/auth-list-users.js",
     "seed:perfil": "node scripts/seed-perfil-teste.js",
     "reset:teste": "node scripts/seed-perfil-teste.js --reset-completo",
     "reset:limpo": "node scripts/reset-limpo.js",
