@@ -183,6 +183,20 @@ const initDb = async () => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS cadastro_links (
+      id SERIAL PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      usado_em TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_cadastro_links_token ON cadastro_links (token);
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS bookers (
       id SERIAL PRIMARY KEY,
       nome TEXT NOT NULL,

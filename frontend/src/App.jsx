@@ -412,6 +412,10 @@ function App() {
   const [contratoEmailMsg, setContratoEmailMsg] = useState('');
   const [contratoEmailLoading, setContratoEmailLoading] = useState(false);
 
+  const [linkCadastroUrl, setLinkCadastroUrl] = useState('');
+  const [linkCadastroMsg, setLinkCadastroMsg] = useState('');
+  const [linkCadastroLoading, setLinkCadastroLoading] = useState(false);
+
   const [finResumo, setFinResumo] = useState(null);
   const [finRecebimentos, setFinRecebimentos] = useState([]);
   const [finOsOptions, setFinOsOptions] = useState([]);
@@ -1435,6 +1439,36 @@ function App() {
           ? 'Servidor não respondeu. Inicie o backend (npm run dev na pasta backend).'
           : e?.message || 'Erro ao deletar cadastro. Verifique conexão com servidor.',
       );
+    }
+  };
+
+  const gerarLinkCadastroModelo = async () => {
+    setLinkCadastroMsg('');
+    setLinkCadastroLoading(true);
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/cadastro-links/gerar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const raw = await response.text();
+      throwIfHtmlOrCannotPost(raw, response.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (!response.ok) throw new Error(data.message || 'Não foi possível gerar o link.');
+      setLinkCadastroUrl(data.url);
+      const ate =
+        data.valido_ate && data.horas_validade
+          ? ` Válido até ${new Date(data.valido_ate).toLocaleString('pt-BR')} (${data.horas_validade} h).`
+          : '';
+      setLinkCadastroMsg(`Link de uso único gerado.${ate} Envie à modelo.`);
+    } catch (e) {
+      setLinkCadastroUrl('');
+      setLinkCadastroMsg(
+        e?.name === 'AbortError'
+          ? 'Servidor não respondeu.'
+          : e?.message || 'Erro ao gerar link.',
+      );
+    } finally {
+      setLinkCadastroLoading(false);
     }
   };
 
@@ -2939,6 +2973,51 @@ function App() {
               onSubmit={onSubmit}
               noValidate
             >
+              {isModeloTab && (
+                <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50/90 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-amber-950">Link único para cadastro público</p>
+                      <p className="mt-1 max-w-xl text-xs text-amber-950/90">
+                        Cada link só pode ser usado uma vez. Depois do envio pelo modelo, o link deixa de funcionar.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={linkCadastroLoading || !apiOnline}
+                      onClick={gerarLinkCadastroModelo}
+                      className="shrink-0 rounded-lg border border-amber-400 bg-white px-3 py-2 text-sm font-medium text-amber-950 shadow-sm disabled:opacity-50"
+                    >
+                      {linkCadastroLoading ? 'A gerar…' : 'Gerar link de cadastro'}
+                    </button>
+                  </div>
+                  {linkCadastroMsg ? (
+                    <p
+                      className={`mt-3 text-xs ${linkCadastroUrl ? 'text-green-800' : 'text-red-700'}`}
+                    >
+                      {linkCadastroMsg}
+                    </p>
+                  ) : null}
+                  {linkCadastroUrl ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <input
+                        readOnly
+                        value={linkCadastroUrl}
+                        className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-800"
+                      />
+                      <button
+                        type="button"
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700"
+                        onClick={() => {
+                          navigator.clipboard.writeText(linkCadastroUrl).catch(() => {});
+                        }}
+                      >
+                        Copiar
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
               {isBookerTab && (
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
                   <strong>Teste rápido:</strong> preencha <strong>nome</strong> e <strong>CPF</strong>, depois nas listas

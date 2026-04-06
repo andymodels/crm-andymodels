@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import DynamicTextListField from './components/DynamicTextListField';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from './apiConfig';
 import { sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
@@ -106,10 +107,60 @@ function TextField({ label, value, onChange, required, placeholder }) {
 }
 
 export default function PublicCadastroModelo() {
+  const [searchParams] = useSearchParams();
+  const tokenParam = trimStr(searchParams.get('token') || '');
+
+  const [tokenGate, setTokenGate] = useState(() => (tokenParam ? 'loading' : 'missing'));
+  const [tokenCheckMessage, setTokenCheckMessage] = useState('');
+
   const [form, setForm] = useState(emptyForm);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+
+  const validarUrl = useMemo(
+    () => `${API_BASE.replace(/\/$/, '')}/public/cadastro-modelo/validar`,
+    [],
+  );
+
+  useEffect(() => {
+    const t = trimStr(searchParams.get('token') || '');
+    if (!t) {
+      setTokenGate('missing');
+      setTokenCheckMessage('Este cadastro só pode ser acedido através do link enviado pela agência.');
+      return;
+    }
+    setTokenGate('loading');
+    setTokenCheckMessage('');
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetchWithTimeout(`${validarUrl}?token=${encodeURIComponent(t)}`, { method: 'GET' });
+        const raw = await response.text();
+        let data = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          data = {};
+        }
+        if (cancelled) return;
+        if (response.ok && data.ok) {
+          setTokenGate('ok');
+        } else {
+          setTokenGate('invalid');
+          setTokenCheckMessage(data.message || 'Link inválido, expirado ou já utilizado.');
+        }
+      } catch {
+        if (!cancelled) {
+          setTokenGate('invalid');
+          setTokenCheckMessage('Não foi possível validar o link. Verifique a ligação e tente novamente.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, validarUrl]);
 
   const idadeModelo = calculateAge(form.data_nascimento);
   const isMinor = idadeModelo !== null && idadeModelo < 18;
@@ -248,6 +299,7 @@ export default function PublicCadastroModelo() {
         body.responsavel_cpf = sv.body.responsavel_cpf;
         body.responsavel_telefone = sv.body.responsavel_telefone;
       }
+      body.token = tokenParam;
 
       const response = await fetchWithTimeout(submitUrl, {
         method: 'POST',
@@ -290,6 +342,32 @@ export default function PublicCadastroModelo() {
             height={157}
           />
           <p className="mt-6 text-lg font-semibold text-slate-900">{SUCCESS_TEXT}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (tokenGate === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F7F7F7] px-4 text-slate-700">
+        <p className="text-sm">A verificar o link…</p>
+      </div>
+    );
+  }
+
+  if (tokenGate === 'missing' || tokenGate === 'invalid') {
+    return (
+      <div className="min-h-screen bg-[#F7F7F7] px-4 py-16 text-slate-800">
+        <div className="mx-auto max-w-lg rounded-2xl border border-red-200 bg-white p-8 text-center shadow-sm">
+          <img
+            src="/logo-andy.png"
+            alt="Andy Management"
+            className="mx-auto h-12 w-auto max-w-full object-contain opacity-90"
+            width={393}
+            height={157}
+          />
+          <h1 className="mt-6 text-lg font-semibold text-slate-900">Link não disponível</h1>
+          <p className="mt-3 text-sm text-slate-600">{tokenCheckMessage}</p>
         </div>
       </div>
     );

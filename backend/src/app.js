@@ -11,6 +11,7 @@ const dashboardRouter = require('./routes/dashboard');
 const extratoModeloRouter = require('./routes/extrato_modelo');
 const financeiroRouter = require('./routes/financeiro');
 const publicCadastroModeloRouter = require('./routes/publicCadastroModelo');
+const cadastroLinksRouter = require('./routes/cadastroLinks');
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use('/api', osDocumentosRouter);
 app.use('/api', dashboardRouter);
 app.use('/api', extratoModeloRouter);
 app.use('/api', financeiroRouter);
+app.use('/api', cadastroLinksRouter);
 app.use('/api', publicCadastroModeloRouter);
 
 const publicDir = path.join(__dirname, '..', 'public');

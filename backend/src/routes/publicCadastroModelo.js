@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../config/db');
 const { sanitizeAndValidateModelo, onlyDigits } = require('../utils/brValidators');
 const { insertModeloRow } = require('../utils/modeloInsert');
+const { validateTokenReadOnly, validateAndLockLink } = require('../utils/cadastroLinkHelpers');
 
 const router = express.Router();
 
@@ -92,12 +93,33 @@ function validateMedidas(sexoParsed, raw) {
 }
 
 /**
- * Cadastro público de modelo (sem login). Criação apenas; mesma validação do CRUD interno.
+ * GET /api/public/cadastro-modelo/validar?token=
+ */
+router.get('/public/cadastro-modelo/validar', async (req, res, next) => {
+  try {
+    const token = trimStr(req.query.token);
+    const v = await validateTokenReadOnly(pool, token);
+    if (!v.ok) {
+      return res.status(400).json({ ok: false, message: v.message });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * POST /api/public/cadastro-modelo
+ * body.token obrigatorio (link de uso unico).
  */
 router.post('/public/cadastro-modelo', async (req, res, next) => {
   try {
     const raw = req.body && typeof req.body === 'object' ? req.body : {};
+    const token = trimStr(raw.token);
+    if (!token) {
+      return res.status(400).json({ message: 'Acesso apenas por link com token valido.' });
+    }
+
     let obs = String(raw.observacoes ?? '').trim();
     if (obs.length > PUBLIC_MAX_OBS) obs = obs.slice(0, PUBLIC_MAX_OBS);
 
@@ -145,18 +167,50 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
     body.sexo = sexoParsed.label;
     Object.assign(body, med.values);
 
-    const row = await insertModeloRow(pool, body);
-    return res.status(201).json({
-      message: SUCCESS_MESSAGE,
-      id: row.id,
-    });
-  } catch (error) {
-    if (error.code === '23505') {
-      return res.status(400).json({
-        message:
-          'Este CPF ja esta cadastrado. Se voce ja enviou antes, aguarde a analise da equipe.',
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const linkV = await validateAndLockLink(client, token);
+      if (!linkV.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: linkV.message });
+      }
+
+      let modeloRow;
+      try {
+        modeloRow = await insertModeloRow(client, body);
+      } catch (insertErr) {
+        await client.query('ROLLBACK');
+        if (insertErr.code === '23505') {
+          return res.status(400).json({
+            message:
+              'Este CPF ja esta cadastrado. Se voce ja enviou antes, aguarde a analise da equipe.',
+          });
+        }
+        throw insertErr;
+      }
+
+      await client.query(
+        `UPDATE cadastro_links SET status = 'usado', usado_em = NOW(), modelo_id = $1 WHERE id = $2`,
+        [modeloRow.id, linkV.row.id],
+      );
+      await client.query('COMMIT');
+
+      return res.status(201).json({
+        message: SUCCESS_MESSAGE,
+        id: modeloRow.id,
       });
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    } finally {
+      client.release();
     }
+  } catch (error) {
     next(error);
   }
 });

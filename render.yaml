@@ -22,6 +22,12 @@ services:
           property: connectionString
       - key: RENDER
         value: "true"
+      # URL pública do SPA (links gerados em Cadastros → Gerar link de cadastro)
+      - key: PUBLIC_APP_URL
+        value: "https://crm-andymodels.onrender.com"
+      # Opcional: horas de validade de cada link (predefinição no código: 72)
+      - key: CADASTRO_LINK_HORAS_VALIDADE
+        value: "72"
 
 databases:
   - name: andy-models-db
