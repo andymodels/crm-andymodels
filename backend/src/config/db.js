@@ -145,6 +145,42 @@ const initDb = async () => {
     ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS status_cadastro TEXT NOT NULL DEFAULT 'aprovado';
   `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS sexo TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_altura TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_busto TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_torax TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_cintura TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_quadril TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_sapato TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_cabelo TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS medida_olhos TEXT NOT NULL DEFAULT '';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bookers (

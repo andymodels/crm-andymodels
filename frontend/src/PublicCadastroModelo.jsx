@@ -6,10 +6,14 @@ import { formatCpfDisplay, formatPhoneDisplay } from './utils/brMasks';
 
 const BRAND_ORANGE = '#F59E0B';
 
+const SUCCESS_TEXT = 'Cadastro recebido com sucesso. Obrigado pela atualização.';
+
 const normalizeDynamicTextList = (items) => {
   if (!Array.isArray(items) || items.length === 0) return [''];
   return items.map((item) => String(item || ''));
 };
+
+const trimStr = (v) => String(v ?? '').trim();
 
 const calculateAge = (birthDate) => {
   if (!birthDate) return null;
@@ -26,6 +30,7 @@ const emptyForm = () => ({
   nome: '',
   cpf: '',
   data_nascimento: '',
+  sexo: '',
   telefones: [''],
   emails: [''],
   emite_nf_propria: false,
@@ -33,7 +38,72 @@ const emptyForm = () => ({
   responsavel_cpf: '',
   responsavel_telefone: '',
   observacoes: '',
+  medida_altura: '',
+  medida_busto: '',
+  medida_torax: '',
+  medida_cintura: '',
+  medida_quadril: '',
+  medida_sapato: '',
+  medida_cabelo: '',
+  medida_olhos: '',
 });
+
+function validateMedidasLocal(form) {
+  const sl = trimStr(form.sexo).toLowerCase();
+  if (sl !== 'masculino' && sl !== 'feminino') {
+    return 'Informe o sexo como Masculino ou Feminino.';
+  }
+  const isFem = sl === 'feminino';
+  const need = isFem
+    ? [
+        ['medida_altura', 'Altura'],
+        ['medida_busto', 'Busto'],
+        ['medida_cintura', 'Cintura'],
+        ['medida_quadril', 'Quadril'],
+        ['medida_sapato', 'Sapato'],
+        ['medida_cabelo', 'Cabelo'],
+        ['medida_olhos', 'Olhos'],
+      ]
+    : [
+        ['medida_altura', 'Altura'],
+        ['medida_torax', 'Tórax'],
+        ['medida_cintura', 'Cintura'],
+        ['medida_sapato', 'Sapato'],
+        ['medida_cabelo', 'Cabelo'],
+        ['medida_olhos', 'Olhos'],
+      ];
+  for (const [key, lab] of need) {
+    if (!trimStr(form[key])) return `${lab} é obrigatório.`;
+  }
+  return null;
+}
+
+function BlockTitle({ children }) {
+  return (
+    <div className="md:col-span-2 border-t border-slate-200 pt-5 first:border-t-0 first:pt-0">
+      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-700">{children}</h2>
+    </div>
+  );
+}
+
+function TextField({ label, value, onChange, required, placeholder }) {
+  return (
+    <label className="text-sm text-slate-600">
+      <span className="mb-1 block font-medium text-slate-800">
+        {label}
+        {required ? <span className="text-red-600"> *</span> : null}
+      </span>
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+        autoComplete="off"
+        required={Boolean(required)}
+      />
+    </label>
+  );
+}
 
 export default function PublicCadastroModelo() {
   const [form, setForm] = useState(emptyForm);
@@ -43,6 +113,10 @@ export default function PublicCadastroModelo() {
 
   const idadeModelo = calculateAge(form.data_nascimento);
   const isMinor = idadeModelo !== null && idadeModelo < 18;
+
+  const sexoLower = trimStr(form.sexo).toLowerCase();
+  const showMedidasFem = sexoLower === 'feminino';
+  const showMedidasMasc = sexoLower === 'masculino';
 
   const onChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -112,6 +186,12 @@ export default function PublicCadastroModelo() {
         return;
       }
 
+      const medErr = validateMedidasLocal(form);
+      if (medErr) {
+        setError(medErr);
+        return;
+      }
+
       const cpfDigits = onlyDigits(form.cpf);
       const payload = {
         nome: form.nome,
@@ -126,6 +206,15 @@ export default function PublicCadastroModelo() {
         responsavel_cpf: form.responsavel_cpf,
         responsavel_telefone: form.responsavel_telefone,
         observacoes: form.observacoes,
+        sexo: form.sexo,
+        medida_altura: form.medida_altura,
+        medida_busto: form.medida_busto,
+        medida_torax: form.medida_torax,
+        medida_cintura: form.medida_cintura,
+        medida_quadril: form.medida_quadril,
+        medida_sapato: form.medida_sapato,
+        medida_cabelo: form.medida_cabelo,
+        medida_olhos: form.medida_olhos,
         formas_pagamento: [{ tipo: 'PIX', tipo_chave_pix: 'CPF', chave_pix: cpfDigits }],
         ativo: false,
       };
@@ -144,6 +233,15 @@ export default function PublicCadastroModelo() {
         emails: sv.body.emails,
         emite_nf_propria: sv.body.emite_nf_propria,
         observacoes: sv.body.observacoes,
+        sexo: trimStr(form.sexo),
+        medida_altura: trimStr(form.medida_altura),
+        medida_busto: trimStr(form.medida_busto),
+        medida_torax: trimStr(form.medida_torax),
+        medida_cintura: trimStr(form.medida_cintura),
+        medida_quadril: trimStr(form.medida_quadril),
+        medida_sapato: trimStr(form.medida_sapato),
+        medida_cabelo: trimStr(form.medida_cabelo),
+        medida_olhos: trimStr(form.medida_olhos),
       };
       if (isMinor) {
         body.responsavel_nome = sv.body.responsavel_nome;
@@ -191,10 +289,7 @@ export default function PublicCadastroModelo() {
             width={393}
             height={157}
           />
-          <p className="mt-6 text-lg font-semibold text-slate-900">Cadastro enviado com sucesso</p>
-          <p className="mt-3 text-sm text-slate-600">
-            Sua solicitação foi recebida. A equipe entrará em contato quando o cadastro for analisado.
-          </p>
+          <p className="mt-6 text-lg font-semibold text-slate-900">{SUCCESS_TEXT}</p>
         </div>
       </div>
     );
@@ -222,6 +317,8 @@ export default function PublicCadastroModelo() {
           className="grid grid-cols-1 gap-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:grid-cols-2"
           noValidate
         >
+          <BlockTitle>Dados pessoais</BlockTitle>
+
           <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             {idadeModelo === null
               ? 'Informe a data de nascimento para validação de maioridade.'
@@ -230,19 +327,7 @@ export default function PublicCadastroModelo() {
                 : `Idade: ${idadeModelo} anos.`}
           </div>
 
-          <label className="text-sm text-slate-600">
-            <span className="mb-1 block font-medium text-slate-800">
-              Nome completo <span className="text-red-600">*</span>
-            </span>
-            <input
-              value={form.nome}
-              onChange={(e) => onChange('nome', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
-              autoComplete="name"
-              required
-            />
-          </label>
-
+          <TextField label="Nome completo" value={form.nome} onChange={(v) => onChange('nome', v)} required />
           <label className="text-sm text-slate-600">
             <span className="mb-1 block font-medium text-slate-800">
               CPF <span className="text-red-600">*</span>
@@ -270,28 +355,13 @@ export default function PublicCadastroModelo() {
             />
           </label>
 
-          <div className="md:col-span-2">
-            <DynamicTextListField
-              label="Telefones"
-              items={normalizeDynamicTextList(form.telefones)}
-              placeholder="Ex: (11) 99999-9999"
-              onAdd={() => addDynamicItem('telefones')}
-              onUpdate={(index, value) =>
-                updateDynamicItem('telefones', index, formatPhoneDisplay(onlyDigits(value)))
-              }
-              onRemove={(index) => removeDynamicItem('telefones', index)}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <DynamicTextListField
-              label="E-mails"
-              items={normalizeDynamicTextList(form.emails)}
-              placeholder="Ex: contato@email.com"
-              onAdd={() => addDynamicItem('emails')}
-              onUpdate={(index, value) => updateDynamicItem('emails', index, value)}
-              onRemove={(index) => removeDynamicItem('emails', index)}
-            />
-          </div>
+          <TextField
+            label="Sexo"
+            value={form.sexo}
+            onChange={(v) => onChange('sexo', v)}
+            placeholder="Masculino ou Feminino"
+            required
+          />
 
           <label className="flex items-center gap-2 rounded-md border border-slate-200 p-3 text-sm md:col-span-2">
             <input
@@ -350,13 +420,114 @@ export default function PublicCadastroModelo() {
             />
           </label>
 
+          <BlockTitle>Contato</BlockTitle>
+
+          <div className="md:col-span-2">
+            <DynamicTextListField
+              label="Telefones"
+              items={normalizeDynamicTextList(form.telefones)}
+              placeholder="Ex: (11) 99999-9999"
+              onAdd={() => addDynamicItem('telefones')}
+              onUpdate={(index, value) =>
+                updateDynamicItem('telefones', index, formatPhoneDisplay(onlyDigits(value)))
+              }
+              onRemove={(index) => removeDynamicItem('telefones', index)}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <DynamicTextListField
+              label="E-mails"
+              items={normalizeDynamicTextList(form.emails)}
+              placeholder="Ex: contato@email.com"
+              onAdd={() => addDynamicItem('emails')}
+              onUpdate={(index, value) => updateDynamicItem('emails', index, value)}
+              onRemove={(index) => removeDynamicItem('emails', index)}
+            />
+          </div>
+
+          <BlockTitle>Medidas</BlockTitle>
+
+          {!showMedidasFem && !showMedidasMasc ? (
+            <p className="md:col-span-2 text-sm text-slate-600">
+              Informe o sexo (Masculino ou Feminino) acima para preencher as medidas.
+            </p>
+          ) : null}
+
+          {showMedidasFem ? (
+            <>
+              <TextField
+                label="Altura"
+                value={form.medida_altura}
+                onChange={(v) => onChange('medida_altura', v)}
+                required
+              />
+              <TextField label="Busto" value={form.medida_busto} onChange={(v) => onChange('medida_busto', v)} required />
+              <TextField
+                label="Cintura"
+                value={form.medida_cintura}
+                onChange={(v) => onChange('medida_cintura', v)}
+                required
+              />
+              <TextField
+                label="Quadril"
+                value={form.medida_quadril}
+                onChange={(v) => onChange('medida_quadril', v)}
+                required
+              />
+              <TextField
+                label="Sapato"
+                value={form.medida_sapato}
+                onChange={(v) => onChange('medida_sapato', v)}
+                required
+              />
+              <TextField
+                label="Cabelo"
+                value={form.medida_cabelo}
+                onChange={(v) => onChange('medida_cabelo', v)}
+                required
+              />
+              <TextField label="Olhos" value={form.medida_olhos} onChange={(v) => onChange('medida_olhos', v)} required />
+            </>
+          ) : null}
+
+          {showMedidasMasc ? (
+            <>
+              <TextField
+                label="Altura"
+                value={form.medida_altura}
+                onChange={(v) => onChange('medida_altura', v)}
+                required
+              />
+              <TextField label="Tórax" value={form.medida_torax} onChange={(v) => onChange('medida_torax', v)} required />
+              <TextField
+                label="Cintura"
+                value={form.medida_cintura}
+                onChange={(v) => onChange('medida_cintura', v)}
+                required
+              />
+              <TextField
+                label="Sapato"
+                value={form.medida_sapato}
+                onChange={(v) => onChange('medida_sapato', v)}
+                required
+              />
+              <TextField
+                label="Cabelo"
+                value={form.medida_cabelo}
+                onChange={(v) => onChange('medida_cabelo', v)}
+                required
+              />
+              <TextField label="Olhos" value={form.medida_olhos} onChange={(v) => onChange('medida_olhos', v)} required />
+            </>
+          ) : null}
+
           {error ? (
             <div className="md:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
               {error}
             </div>
           ) : null}
 
-          <div className="md:col-span-2 pt-2">
+          <div className="md:col-span-2 border-t border-slate-200 pt-4">
             <button
               type="submit"
               disabled={sending}

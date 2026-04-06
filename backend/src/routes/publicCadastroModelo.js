@@ -6,6 +6,90 @@ const { insertModeloRow } = require('../utils/modeloInsert');
 const router = express.Router();
 
 const PUBLIC_MAX_OBS = 2000;
+const MEDIDA_MAX_LEN = 120;
+
+const SUCCESS_MESSAGE = 'Cadastro recebido com sucesso. Obrigado pela atualização.';
+
+function trimStr(v) {
+  return String(v ?? '').trim();
+}
+
+function parseSexo(raw) {
+  const t = trimStr(raw).toLowerCase();
+  if (t === 'masculino') return { ok: true, label: 'Masculino', feminino: false };
+  if (t === 'feminino') return { ok: true, label: 'Feminino', feminino: true };
+  return { ok: false, message: 'Informe o sexo como Masculino ou Feminino.' };
+}
+
+const MEDIDA_LABEL = {
+  medida_altura: 'Altura',
+  medida_busto: 'Busto',
+  medida_torax: 'Torax',
+  medida_cintura: 'Cintura',
+  medida_quadril: 'Quadril',
+  medida_sapato: 'Sapato',
+  medida_cabelo: 'Cabelo',
+  medida_olhos: 'Olhos',
+};
+
+function validateMedidas(sexoParsed, raw) {
+  const req = (key) => {
+    const s = trimStr(raw[key]);
+    const lab = MEDIDA_LABEL[key] || key;
+    if (!s) return { ok: false, message: `${lab} e obrigatorio.` };
+    if (s.length > MEDIDA_MAX_LEN) {
+      return { ok: false, message: `${lab}: maximo ${MEDIDA_MAX_LEN} caracteres.` };
+    }
+    return { ok: true, value: s };
+  };
+
+  const altura = req('medida_altura');
+  if (!altura.ok) return { ...altura, field: 'medida_altura' };
+  const cintura = req('medida_cintura');
+  if (!cintura.ok) return { ...cintura, field: 'medida_cintura' };
+  const sapato = req('medida_sapato');
+  if (!sapato.ok) return { ...sapato, field: 'medida_sapato' };
+  const cabelo = req('medida_cabelo');
+  if (!cabelo.ok) return { ...cabelo, field: 'medida_cabelo' };
+  const olhos = req('medida_olhos');
+  if (!olhos.ok) return { ...olhos, field: 'medida_olhos' };
+
+  if (sexoParsed.feminino) {
+    const busto = req('medida_busto');
+    if (!busto.ok) return { ...busto, field: 'medida_busto' };
+    const quadril = req('medida_quadril');
+    if (!quadril.ok) return { ...quadril, field: 'medida_quadril' };
+    return {
+      ok: true,
+      values: {
+        medida_altura: altura.value,
+        medida_busto: busto.value,
+        medida_torax: '',
+        medida_cintura: cintura.value,
+        medida_quadril: quadril.value,
+        medida_sapato: sapato.value,
+        medida_cabelo: cabelo.value,
+        medida_olhos: olhos.value,
+      },
+    };
+  }
+
+  const torax = req('medida_torax');
+  if (!torax.ok) return { ...torax, field: 'medida_torax' };
+  return {
+    ok: true,
+    values: {
+      medida_altura: altura.value,
+      medida_busto: '',
+      medida_torax: torax.value,
+      medida_cintura: cintura.value,
+      medida_quadril: '',
+      medida_sapato: sapato.value,
+      medida_cabelo: cabelo.value,
+      medida_olhos: olhos.value,
+    },
+  };
+}
 
 /**
  * Cadastro público de modelo (sem login). Criação apenas; mesma validação do CRUD interno.
@@ -16,6 +100,16 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
     const raw = req.body && typeof req.body === 'object' ? req.body : {};
     let obs = String(raw.observacoes ?? '').trim();
     if (obs.length > PUBLIC_MAX_OBS) obs = obs.slice(0, PUBLIC_MAX_OBS);
+
+    const sexoParsed = parseSexo(raw.sexo);
+    if (!sexoParsed.ok) {
+      return res.status(400).json({ message: sexoParsed.message });
+    }
+
+    const med = validateMedidas(sexoParsed, raw);
+    if (!med.ok) {
+      return res.status(400).json({ message: med.message });
+    }
 
     const body = {
       nome: raw.nome,
@@ -31,6 +125,8 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
       chave_pix: '',
       banco_dados: '',
       ativo: false,
+      sexo: sexoParsed.label,
+      ...med.values,
     };
 
     const cpfDigits = onlyDigits(String(body.cpf ?? ''));
@@ -46,10 +142,12 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
     body.ativo = false;
     body.origem_cadastro = 'cadastro_site';
     body.status_cadastro = 'pendente';
+    body.sexo = sexoParsed.label;
+    Object.assign(body, med.values);
 
     const row = await insertModeloRow(pool, body);
     return res.status(201).json({
-      message: 'Cadastro enviado com sucesso',
+      message: SUCCESS_MESSAGE,
       id: row.id,
     });
   } catch (error) {

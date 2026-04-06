@@ -332,6 +332,15 @@ makeCrudRoutes({
     'ativo',
     'origem_cadastro',
     'status_cadastro',
+    'sexo',
+    'medida_altura',
+    'medida_busto',
+    'medida_torax',
+    'medida_cintura',
+    'medida_quadril',
+    'medida_sapato',
+    'medida_cabelo',
+    'medida_olhos',
   ],
 });
 
