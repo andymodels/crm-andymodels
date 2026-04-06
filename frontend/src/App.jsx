@@ -128,7 +128,10 @@ function createEmptyOrcamentoForm() {
     uso_imagem: '',
     prazo: '',
     territorio: '',
-    quantidade_modelos_referencia: '',
+    parceiro_id: '',
+    parceiro_percent: '',
+    booker_id: '',
+    booker_percent: '',
     linhas: [],
   };
 }
@@ -142,6 +145,10 @@ function previewOrcamentoFinanceiro(form) {
   const impPct = nPrev(form.imposto_percent ?? 10);
   const feePct = nPrev(form.taxa_agencia_percent);
   const extrasAg = nPrev(form.extras_agencia_valor);
+  const pp =
+    form.parceiro_percent !== '' && form.parceiro_percent != null ? nPrev(form.parceiro_percent) / 100 : 0;
+  const bp =
+    form.booker_percent !== '' && form.booker_percent != null ? nPrev(form.booker_percent) / 100 : 0;
   const linhas = (form.linhas || [])
     .filter((l) => {
       const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
@@ -157,7 +164,22 @@ function previewOrcamentoFinanceiro(form) {
     const subtotal = vs + extrasAg;
     const impostoValor = subtotal * (impPct / 100);
     const totalCliente = subtotal + impostoValor;
-    return { totalCliente, subtotal, taxa_agencia_valor: 0, impostoValor };
+    const modeloLiquidoTotal = 0;
+    const agenciaParcial = totalCliente - impostoValor - modeloLiquidoTotal;
+    const parceiroValor = agenciaParcial * pp;
+    const agenciaAposParceiro = agenciaParcial - parceiroValor;
+    const bookerValor = agenciaAposParceiro * bp;
+    const agenciaFinal = agenciaAposParceiro - bookerValor;
+    return {
+      totalCliente,
+      subtotal,
+      taxa_agencia_valor: 0,
+      impostoValor,
+      parceiroValor,
+      bookerValor,
+      agenciaFinal,
+      resultadoAgencia: agenciaFinal,
+    };
   }
 
   let cacheTotal;
@@ -170,7 +192,22 @@ function previewOrcamentoFinanceiro(form) {
   const subtotal = cacheTotal + taxaAgenciaValor + extrasAg;
   const impostoValor = subtotal * (impPct / 100);
   const totalCliente = subtotal + impostoValor;
-  return { totalCliente, subtotal, taxa_agencia_valor: taxaAgenciaValor, impostoValor };
+  const modeloLiquidoTotal = cacheTotal;
+  const agenciaParcial = totalCliente - impostoValor - modeloLiquidoTotal;
+  const parceiroValor = agenciaParcial * pp;
+  const agenciaAposParceiro = agenciaParcial - parceiroValor;
+  const bookerValor = agenciaAposParceiro * bp;
+  const agenciaFinal = agenciaAposParceiro - bookerValor;
+  return {
+    totalCliente,
+    subtotal,
+    taxa_agencia_valor: taxaAgenciaValor,
+    impostoValor,
+    parceiroValor,
+    bookerValor,
+    agenciaFinal,
+    resultadoAgencia: agenciaFinal,
+  };
 }
 
 const CADASTROS_COM_MULTI_PAGAMENTO = ['modelos', 'bookers', 'parceiros'];
@@ -727,8 +764,14 @@ function App({ authUser, onLogout = () => {} }) {
     if (module !== 'orcamentos') return;
     (async () => {
       try {
-        const m = await fetch(`${API_BASE}/modelos`);
+        const [m, bookRes, parRes] = await Promise.all([
+          fetch(`${API_BASE}/modelos`),
+          fetch(`${API_BASE}/bookers`),
+          fetch(`${API_BASE}/parceiros`),
+        ]);
         if (m.ok) setModelosList(await m.json());
+        if (bookRes.ok) setBookersList(await bookRes.json());
+        if (parRes.ok) setParceirosList(await parRes.json());
       } catch {
         /* ignore */
       }
@@ -1740,17 +1783,6 @@ function App({ authUser, onLogout = () => {} }) {
     setOrcamentoForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleQuantidadeModelosRefChange = (e) => {
-    const raw = e.target.value;
-    if (raw === '') {
-      onChangeOrcamento('quantidade_modelos_referencia', '');
-      return;
-    }
-    const n = parseInt(raw, 10);
-    if (Number.isNaN(n)) return;
-    onChangeOrcamento('quantidade_modelos_referencia', String(Math.max(0, Math.min(999, n))));
-  };
-
   const addOrcamentoLinhaCadastro = () => {
     setOrcamentoForm((prev) => ({
       ...prev,
@@ -1837,14 +1869,17 @@ function App({ authUser, onLogout = () => {} }) {
         );
       }
 
-      const qtdRefPayload =
-        tipoProp === 'com_modelo' &&
-        orcamentoForm.quantidade_modelos_referencia !== '' &&
-        orcamentoForm.quantidade_modelos_referencia != null
-          ? Number(orcamentoForm.quantidade_modelos_referencia)
-          : null;
-
       const ip = Number(orcamentoForm.imposto_percent);
+      const parceiroId =
+        orcamentoForm.parceiro_id !== '' && orcamentoForm.parceiro_id != null
+          ? Number(orcamentoForm.parceiro_id)
+          : null;
+      const bookerId =
+        orcamentoForm.booker_id !== '' && orcamentoForm.booker_id != null
+          ? Number(orcamentoForm.booker_id)
+          : null;
+      const parceiroPctRaw = orcamentoForm.parceiro_percent;
+      const bookerPctRaw = orcamentoForm.booker_percent;
       const payload = {
         ...orcamentoForm,
         tipo_proposta_os: tipoProp,
@@ -1857,7 +1892,12 @@ function App({ authUser, onLogout = () => {} }) {
         data_trabalho: orcamentoForm.data_trabalho ? String(orcamentoForm.data_trabalho).trim() : '',
         horario_trabalho: String(orcamentoForm.horario_trabalho ?? '').trim(),
         local_trabalho: String(orcamentoForm.local_trabalho ?? '').trim(),
-        quantidade_modelos_referencia: Number.isFinite(qtdRefPayload) ? qtdRefPayload : null,
+        quantidade_modelos_referencia: null,
+        parceiro_id: Number.isFinite(parceiroId) && parceiroId > 0 ? parceiroId : null,
+        parceiro_percent:
+          parceiroPctRaw === '' || parceiroPctRaw == null ? null : Number(parceiroPctRaw),
+        booker_id: Number.isFinite(bookerId) && bookerId > 0 ? bookerId : null,
+        booker_percent: bookerPctRaw === '' || bookerPctRaw == null ? null : Number(bookerPctRaw),
         linhas: linhasPayload,
       };
 
@@ -1934,10 +1974,15 @@ function App({ authUser, onLogout = () => {} }) {
         uso_imagem: data.uso_imagem,
         prazo: data.prazo,
         territorio: data.territorio,
-        quantidade_modelos_referencia:
-          data.quantidade_modelos_referencia != null && data.quantidade_modelos_referencia !== ''
-            ? String(data.quantidade_modelos_referencia)
+        parceiro_id:
+          data.parceiro_id != null && data.parceiro_id !== '' ? String(data.parceiro_id) : '',
+        parceiro_percent:
+          data.parceiro_percent != null && data.parceiro_percent !== ''
+            ? String(data.parceiro_percent)
             : '',
+        booker_id: data.booker_id != null && data.booker_id !== '' ? String(data.booker_id) : '',
+        booker_percent:
+          data.booker_percent != null && data.booker_percent !== '' ? String(data.booker_percent) : '',
         linhas: mappedLinhas,
       });
       setOrcamentoEditingStatus(data.status ?? 'rascunho');
@@ -2037,7 +2082,7 @@ function App({ authUser, onLogout = () => {} }) {
         const reais = linhas.filter((l) => l.modelo_id != null && Number(l.modelo_id) > 0);
         if (reais.length === 0) {
           setOrcamentoError(
-            'Para aprovar com modelos, cadastre pelo menos um modelo do cadastro com cachê. A quantidade de referência não autoriza a O.S.',
+            'Para aprovar com modelos, inclua pelo menos uma linha com modelo do cadastro e cachê definidos.',
           );
           return;
         }
@@ -4189,7 +4234,6 @@ function App({ authUser, onLogout = () => {} }) {
                           ...prev,
                           tipo_proposta_os: v,
                           linhas: v === 'sem_modelo' ? [] : prev.linhas || [],
-                          quantidade_modelos_referencia: v === 'sem_modelo' ? '' : prev.quantidade_modelos_referencia ?? '',
                         }));
                         }}
                         className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
@@ -4225,25 +4269,6 @@ function App({ authUser, onLogout = () => {} }) {
                     <div
                       className={`md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
                     >
-                      <div className="mb-2 flex flex-wrap items-end gap-3">
-                        <label className="block w-full max-w-[140px] text-sm text-slate-700">
-                          <span className="mb-0.5 block text-[11px] font-medium text-slate-600">Qtd. referência</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={999}
-                            inputMode="numeric"
-                            placeholder="0"
-                            value={orcamentoForm.quantidade_modelos_referencia}
-                            onChange={handleQuantidadeModelosRefChange}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
-                          />
-                        </label>
-                        <p className="min-w-0 flex-1 text-[11px] leading-snug text-slate-600">
-                          Opcional. Linhas abaixo definem nomes e cachês (para aprovação).
-                        </p>
-                      </div>
-
                       <p className="mb-1.5 text-xs font-medium text-slate-800">Modelos do cadastro</p>
                       {(orcamentoForm.linhas || []).length === 0 ? (
                         <p className="text-xs text-slate-600">
@@ -4272,16 +4297,21 @@ function App({ authUser, onLogout = () => {} }) {
                                   </option>
                                 ))}
                               </select>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                placeholder="Cachê R$"
-                                value={line.cache_modelo ?? ''}
-                                onChange={(event) =>
-                                  updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
-                                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                              />
+                              <label className="min-w-0">
+                                <span className="mb-0.5 block text-[10px] font-medium text-slate-500">
+                                  Cachê R$ (líquido ao modelo)
+                                </span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="0,00"
+                                  value={line.cache_modelo ?? ''}
+                                  onChange={(event) =>
+                                    updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </label>
                               <label className="flex items-center gap-1.5 text-[11px] text-slate-700">
                                 <input
                                   type="checkbox"
@@ -4364,8 +4394,8 @@ function App({ authUser, onLogout = () => {} }) {
                       Valores — fechamento ao cliente
                     </p>
                     <p className="mb-2 text-[11px] text-slate-500">
-                      Ordem: cachê → taxa agência → extras → imposto → total final (interno: taxa/imposto calculados; PDF
-                      só o total).
+                      Ordem: cachê (líquido ao modelo, sem desconto) → taxa agência → extras → imposto → total ao
+                      cliente. PDF: total ao cliente.
                     </p>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                       <label className="text-sm text-slate-600">
@@ -4446,6 +4476,78 @@ function App({ authUser, onLogout = () => {} }) {
                       </p>
                     </div>
                   </div>
+
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Parceiro e booker
+                    </p>
+                    <p className="mb-2 text-[11px] leading-snug text-slate-500">
+                      Parceiros/fornecedores e booker entram como custo do projeto. Percentuais aplicam sobre a margem da
+                      agência (após modelo e imposto), como na O.S. Na aprovação, o booker segue vinculado à comissão e
+                      ao financeiro.
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Parceiro / fornecedor</span>
+                        <select
+                          value={orcamentoForm.parceiro_id !== '' && orcamentoForm.parceiro_id != null ? String(orcamentoForm.parceiro_id) : ''}
+                          onChange={(event) =>
+                            onChangeOrcamento('parceiro_id', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        >
+                          <option value="">Nenhum</option>
+                          {parceirosList.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.razao_social_ou_nome}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Parceiro (% sobre margem)</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={orcamentoForm.parceiro_percent ?? ''}
+                          onChange={(event) => onChangeOrcamento('parceiro_percent', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Booker</span>
+                        <select
+                          value={orcamentoForm.booker_id !== '' && orcamentoForm.booker_id != null ? String(orcamentoForm.booker_id) : ''}
+                          onChange={(event) => onChangeOrcamento('booker_id', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        >
+                          <option value="">Nenhum</option>
+                          {bookersList.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.nome}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">
+                          Booker (% sobre margem após parceiro)
+                        </span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={orcamentoForm.booker_percent ?? ''}
+                          onChange={(event) => onChangeOrcamento('booker_percent', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                    </div>
+                    <p className="mt-2 text-[11px] leading-snug text-slate-600">
+                      Estimativa interna: parceiro {formatBRL(orcamentoFinanceiroPreview.parceiroValor)} · booker{' '}
+                      {formatBRL(orcamentoFinanceiroPreview.bookerValor)} · resultado agência{' '}
+                      {formatBRL(orcamentoFinanceiroPreview.resultadoAgencia)}
+                    </p>
+                  </div>
+
                   <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                       Pagamento e uso de imagem

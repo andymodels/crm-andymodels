@@ -455,6 +455,22 @@ const initDb = async () => {
     ALTER TABLE orcamentos
     ADD COLUMN IF NOT EXISTS imposto_percent NUMERIC(5, 2) NOT NULL DEFAULT 10;
   `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS parceiro_id INTEGER REFERENCES parceiros(id);
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS parceiro_percent NUMERIC(5, 2);
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS booker_id INTEGER REFERENCES bookers(id);
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS booker_percent NUMERIC(5, 2);
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orcamento_modelos (

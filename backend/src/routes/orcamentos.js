@@ -9,13 +9,17 @@ const router = express.Router();
 
 const n = (v) => Number(v || 0);
 
-/** Referência inicial (rascunho); não substitui modelos do cadastro na aprovação. */
-function parseQuantidadeModelosRef(body) {
-  const raw = body?.quantidade_modelos_referencia;
+/** FK opcional (parceiro/booker no orçamento). */
+function parseOptionalFkId(raw) {
   if (raw === undefined || raw === null || raw === '') return null;
-  const q = parseInt(String(raw), 10);
-  if (!Number.isFinite(q) || q < 0 || q > 999) return null;
-  return q;
+  const x = Number(raw);
+  return Number.isFinite(x) && x > 0 ? x : null;
+}
+
+function parseOptionalPercent(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const x = Number(raw);
+  return Number.isFinite(x) && x >= 0 && x <= 100 ? x : null;
 }
 
 /** Percentual de imposto / nota fiscal sobre o total ao cliente; padrão 10%. */
@@ -246,8 +250,11 @@ router.post('/orcamentos', async (req, res, next) => {
     const tipoProp = parseTipoPropostaOs(req.body);
     const linhasBody = Array.isArray(req.body.linhas) ? req.body.linhas : [];
     const modDef = inferModelosDefinicao(linhasBody, tipoProp);
-    const qtdRef = parseQuantidadeModelosRef(req.body);
     const impostoPct = parseImpostoPercent(req.body);
+    const parceiroId = parseOptionalFkId(req.body.parceiro_id);
+    const parceiroPct = parseOptionalPercent(req.body.parceiro_percent);
+    const bookerId = parseOptionalFkId(req.body.booker_id);
+    const bookerPct = parseOptionalPercent(req.body.booker_percent);
     const valorSem = req.body.valor_servico_sem_modelo != null ? Number(req.body.valor_servico_sem_modelo) : 0;
     let cacheBase = req.body.cache_base_estimado_total != null ? Number(req.body.cache_base_estimado_total) : 0;
     if (tipoProp === 'com_modelo') {
@@ -283,9 +290,13 @@ router.post('/orcamentos', async (req, res, next) => {
         valor_servico_sem_modelo,
         modelos_definicao,
         quantidade_modelos_referencia,
-        imposto_percent
+        imposto_percent,
+        parceiro_id,
+        parceiro_percent,
+        booker_id,
+        booker_percent
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NULL,$18,$19,$20,$21,$22)
       RETURNING *
     `;
     const values = [
@@ -306,8 +317,11 @@ router.post('/orcamentos', async (req, res, next) => {
       tipoProp,
       Number.isFinite(valorSem) ? valorSem : 0,
       modDef,
-      qtdRef,
       impostoPct,
+      parceiroId,
+      parceiroPct,
+      bookerId,
+      bookerPct,
     ];
 
     await pool.query('BEGIN');
@@ -355,8 +369,11 @@ router.put('/orcamentos/:id', async (req, res, next) => {
     const tipoProp = parseTipoPropostaOs(req.body);
     const linhasBody = Array.isArray(req.body.linhas) ? req.body.linhas : [];
     const modDef = inferModelosDefinicao(linhasBody, tipoProp);
-    const qtdRef = parseQuantidadeModelosRef(req.body);
     const impostoPct = parseImpostoPercent(req.body);
+    const parceiroId = parseOptionalFkId(req.body.parceiro_id);
+    const parceiroPct = parseOptionalPercent(req.body.parceiro_percent);
+    const bookerId = parseOptionalFkId(req.body.booker_id);
+    const bookerPct = parseOptionalPercent(req.body.booker_percent);
     const valorSem = req.body.valor_servico_sem_modelo != null ? Number(req.body.valor_servico_sem_modelo) : 0;
     let cacheBase = req.body.cache_base_estimado_total != null ? Number(req.body.cache_base_estimado_total) : 0;
     if (tipoProp === 'com_modelo') {
@@ -392,10 +409,14 @@ router.put('/orcamentos/:id', async (req, res, next) => {
         tipo_proposta_os = $15,
         valor_servico_sem_modelo = $16,
         modelos_definicao = $17,
-        quantidade_modelos_referencia = $18,
-        imposto_percent = $19,
+        quantidade_modelos_referencia = NULL,
+        imposto_percent = $18,
+        parceiro_id = $19,
+        parceiro_percent = $20,
+        booker_id = $21,
+        booker_percent = $22,
         updated_at = NOW()
-      WHERE id = $20
+      WHERE id = $23
       RETURNING *
     `;
     const values = [
@@ -416,8 +437,11 @@ router.put('/orcamentos/:id', async (req, res, next) => {
       tipoProp,
       Number.isFinite(valorSem) ? valorSem : 0,
       modDef,
-      qtdRef,
       impostoPct,
+      parceiroId,
+      parceiroPct,
+      bookerId,
+      bookerPct,
       id,
     ];
 
@@ -481,7 +505,7 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         await pool.query('ROLLBACK');
         return res.status(400).json({
           message:
-            'Aprovação: inclua pelo menos um modelo do cadastro com cachê. A quantidade de referência não substitui modelos reais na O.S.',
+            'Aprovação: inclua pelo menos um modelo do cadastro com cachê definido.',
         });
       }
       for (const row of modRowsReais) {
@@ -508,6 +532,9 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
           }))
         : [];
 
+    const parceiroPctAprov = parseOptionalPercent(budget.parceiro_percent);
+    const bookerPctAprov = parseOptionalPercent(budget.booker_percent);
+
     const nums = computeOsFinancials({
       tipo_os: tipoProp,
       valor_servico: tipoProp === 'sem_modelo' ? n(budget.valor_servico_sem_modelo) : 0,
@@ -517,8 +544,8 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
       extras_agencia_valor: budget.extras_agencia_valor,
       extras_despesa_valor: 0,
       imposto_percent: impostoPct,
-      parceiro_percent: null,
-      booker_percent: null,
+      parceiro_percent: parceiroPctAprov,
+      booker_percent: bookerPctAprov,
       linhas: linhasFin,
     });
 
@@ -562,9 +589,8 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, 'aberta',
-        $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-        NULL, NULL, $24, $25, NULL, NULL, $26, $27, $28, TRUE
+        $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+        $24, $25, $26, $27, $28, $29, $30, $31, $32, TRUE
       )
       RETURNING *
       `,
@@ -592,8 +618,12 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         nums.imposto_valor,
         nums.modelo_liquido_total,
         nums.agencia_parcial,
+        parseOptionalFkId(budget.parceiro_id),
+        parceiroPctAprov,
         nums.parceiro_valor,
         nums.agencia_apos_parceiro,
+        parseOptionalFkId(budget.booker_id),
+        bookerPctAprov,
         nums.booker_valor,
         nums.agencia_final,
         nums.resultado_agencia,
