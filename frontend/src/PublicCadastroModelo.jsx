@@ -248,6 +248,26 @@ export default function PublicCadastroModelo() {
     reader.readAsDataURL(file);
   };
 
+  const buscarEnderecoPorCep = async () => {
+    const cepDigits = onlyDigits(form.cep);
+    if (cepDigits.length !== 8) return;
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cepDigits}/json/`);
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.erro) return;
+      setForm((prev) => ({
+        ...prev,
+        logradouro: data.logradouro || prev.logradouro,
+        bairro: data.bairro || prev.bairro,
+        cidade: data.localidade || prev.cidade,
+        uf: data.uf || prev.uf,
+      }));
+    } catch {
+      // Silent fail para não bloquear o preenchimento manual.
+    }
+  };
+
   const onSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -555,6 +575,7 @@ export default function PublicCadastroModelo() {
             <input
               value={form.cep}
               onChange={(e) => handleMaskedChange('cep', e.target.value)}
+              onBlur={buscarEnderecoPorCep}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
               inputMode="numeric"
               required
