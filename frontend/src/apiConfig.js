@@ -26,7 +26,7 @@ export const API_REQUEST_MS = 25_000;
 export function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), API_REQUEST_MS);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+  return fetch(url, { credentials: 'include', ...options, signal: controller.signal }).finally(() => {
     clearTimeout(id);
   });
 }

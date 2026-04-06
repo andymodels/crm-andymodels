@@ -35,7 +35,7 @@ const API_REQUEST_MS = 25_000;
 function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), API_REQUEST_MS);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+  return fetch(url, { credentials: 'include', ...options, signal: controller.signal }).finally(() => {
     clearTimeout(id);
   });
 }
@@ -355,7 +355,7 @@ const cadastroConfig = {
   },
 };
 
-function App() {
+function App({ authUser, onLogout = () => {} }) {
   const [module, setModule] = useState('inicio');
   /** Bookers tem menos campos obrigatórios que Clientes — melhor para primeiro teste. */
   const [tab, setTab] = useState('bookers');
@@ -411,6 +411,10 @@ function App() {
   const [contratoEmailDest, setContratoEmailDest] = useState('');
   const [contratoEmailMsg, setContratoEmailMsg] = useState('');
   const [contratoEmailLoading, setContratoEmailLoading] = useState(false);
+  const [senhaAtual, setSenhaAtual] = useState('');
+  const [senhaNova, setSenhaNova] = useState('');
+  const [senhaMsg, setSenhaMsg] = useState('');
+  const [senhaLoading, setSenhaLoading] = useState(false);
 
   const [linkCadastroUrl, setLinkCadastroUrl] = useState('');
   const [linkCadastroMsg, setLinkCadastroMsg] = useState('');
@@ -1472,6 +1476,30 @@ function App() {
     }
   };
 
+  const handleChangePassword = async (event) => {
+    event.preventDefault();
+    setSenhaMsg('');
+    setSenhaLoading(true);
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: senhaNova }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || 'Falha ao alterar senha.');
+      }
+      setSenhaAtual('');
+      setSenhaNova('');
+      setSenhaMsg('Senha alterada com sucesso.');
+    } catch (err) {
+      setSenhaMsg(err?.message || 'Falha ao alterar senha.');
+    } finally {
+      setSenhaLoading(false);
+    }
+  };
+
   const addFormaPagamento = () => {
     setForm((prev) => ({
       ...prev,
@@ -1946,6 +1974,44 @@ function App() {
         <aside className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <img src="/logo-andy.png" alt="Andy Management" className="h-14 w-auto" />
           <p className="mt-3 text-sm text-slate-500">CRM financeiro - Cadastros, orçamentos e O.S.</p>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Logado como</p>
+            <p className="text-sm font-medium text-slate-800">{authUser?.nome || authUser?.email || 'Admin'}</p>
+            <p className="text-xs text-slate-500">{authUser?.email || ''}</p>
+            <form className="mt-3 space-y-2" onSubmit={handleChangePassword}>
+              <input
+                type="password"
+                placeholder="Senha atual"
+                value={senhaAtual}
+                onChange={(e) => setSenhaAtual(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                required
+              />
+              <input
+                type="password"
+                placeholder="Nova senha (mín. 8)"
+                value={senhaNova}
+                onChange={(e) => setSenhaNova(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                required
+              />
+              <button
+                type="submit"
+                disabled={senhaLoading}
+                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-60"
+              >
+                {senhaLoading ? 'Alterando...' : 'Alterar senha'}
+              </button>
+            </form>
+            {senhaMsg ? <p className="mt-2 text-xs text-slate-600">{senhaMsg}</p> : null}
+            <button
+              type="button"
+              onClick={onLogout}
+              className="mt-3 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700"
+            >
+              Sair
+            </button>
+          </div>
           <div className="mt-4 space-y-2 border-t border-slate-200 pt-4">
             <button
               type="button"

@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -195,6 +196,39 @@ const initDb = async () => {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_cadastro_links_token ON cadastro_links (token);
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id SERIAL PRIMARY KEY,
+      nome TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      senha_hash TEXT NOT NULL,
+      tipo TEXT NOT NULL DEFAULT 'admin',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  const adminEmail = String(process.env.ADMIN_EMAIL || 'admin@andymodels.com').trim().toLowerCase();
+  const adminNome = String(process.env.ADMIN_NOME || 'Administrador').trim() || 'Administrador';
+  const adminSenha = String(process.env.ADMIN_PASSWORD || '').trim();
+  const usersCount = await pool.query('SELECT COUNT(*)::int AS c FROM usuarios');
+  if ((usersCount.rows[0]?.c || 0) === 0) {
+    if (!adminSenha || adminSenha.length < 12) {
+      throw new Error(
+        '[initDb] ADMIN_PASSWORD obrigatoria para criar o primeiro admin (minimo 12 caracteres).',
+      );
+    }
+    if (adminSenha === 'Admin@123') {
+      throw new Error('[initDb] ADMIN_PASSWORD insegura e bloqueada. Defina uma senha forte.');
+    }
+    const senhaHash = await bcrypt.hash(adminSenha, 12);
+    await pool.query(
+      "INSERT INTO usuarios (nome, email, senha_hash, tipo) VALUES ($1, $2, $3, 'admin')",
+      [adminNome, adminEmail, senhaHash],
+    );
+    console.warn('[initDb] usuario admin inicial criado. Altere a senha apos o primeiro login.');
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bookers (

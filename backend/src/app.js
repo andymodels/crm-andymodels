@@ -12,19 +12,34 @@ const extratoModeloRouter = require('./routes/extrato_modelo');
 const financeiroRouter = require('./routes/financeiro');
 const publicCadastroModeloRouter = require('./routes/publicCadastroModelo');
 const cadastroLinksRouter = require('./routes/cadastroLinks');
+const authRouter = require('./routes/auth');
+const { requireAdminAuth } = require('./middleware/requireAdminAuth');
 
 const app = express();
 
-const CRM = 'https://crm-andymodels.onrender.com';
-app.get(/^\/crm(\/.*)?$/, (req, res) => {
+/** Render / proxies: necessário para req.path e redirects corretos com HTTPS. */
+app.set('trust proxy', 1);
+
+/**
+ * /crm -> CRM público (mesmo stack). Destino base: PUBLIC_APP_URL (ex.: https://www.andymodels.com)
+ * ou, em falta, o host Render. Assim o redirect pode manter o domínio customizado.
+ */
+const crmPublicBase = String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(
+  /\/$/,
+  '',
+);
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   const pathname = req.path || '/';
+  if (!pathname.startsWith('/crm')) return next();
   const after = pathname.replace(/^\/crm\/?/, '').replace(/^\//, '') || '';
   const q = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  const target = after ? `${CRM}/${after}${q}` : `${CRM}${q}`;
-  res.redirect(302, target);
+  const target = after ? `${crmPublicBase}/${after}${q}` : `${crmPublicBase}${q}`;
+  return res.redirect(302, target);
 });
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 app.use((req, res, next) => {
@@ -47,7 +62,12 @@ app.get('/api', (_req, res) => {
   res.json({ ok: true, service: 'andy-models-crm' });
 });
 
-// Rotas da API só em /api — evita conflito com express.static (SPA) no /
+// Rotas públicas
+app.use('/api', publicCadastroModeloRouter);
+app.use('/api', authRouter);
+
+// Restante da API exige sessão admin
+app.use('/api', requireAdminAuth);
 app.use('/api', cadastrosRouter);
 app.use('/api', orcamentosRouter);
 app.use('/api', ordensServicoRouter);
@@ -56,7 +76,6 @@ app.use('/api', dashboardRouter);
 app.use('/api', extratoModeloRouter);
 app.use('/api', financeiroRouter);
 app.use('/api', cadastroLinksRouter);
-app.use('/api', publicCadastroModeloRouter);
 
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {

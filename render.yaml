@@ -28,6 +28,13 @@ services:
       # Opcional: horas de validade de cada link (predefinição no código: 72)
       - key: CADASTRO_LINK_HORAS_VALIDADE
         value: "72"
+      - key: JWT_SECRET
+        generateValue: true
+      # Credenciais iniciais (usadas apenas se tabela usuarios estiver vazia)
+      - key: ADMIN_EMAIL
+        value: "admin@andymodels.com"
+      - key: ADMIN_PASSWORD
+        generateValue: true
 
 databases:
   - name: andy-models-db

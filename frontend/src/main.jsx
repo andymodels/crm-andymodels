@@ -4,13 +4,14 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import './index.css'
 import App from './App.jsx'
 import PublicCadastroModelo from './PublicCadastroModelo.jsx'
+import AuthGate from './AuthGate.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
         <Route path="/cadastro-modelo" element={<PublicCadastroModelo />} />
-        <Route path="/*" element={<App />} />
+        <Route path="/*" element={<AuthGate>{({ user, onLogout }) => <App authUser={user} onLogout={onLogout} />}</AuthGate>} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,
