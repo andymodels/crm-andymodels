@@ -94,8 +94,7 @@ function sanitizeAndValidateCliente(body, partial = false) {
   if (!partial || b.documento_representante !== undefined) {
     const d = onlyDigits(b.documento_representante);
     b.documento_representante = d;
-    if (!d) return { ok: false, message: 'CPF do representante legal e obrigatorio.' };
-    if (!isValidCPF(d)) {
+    if (d && !isValidCPF(d)) {
       return { ok: false, message: 'CPF do representante invalido: digitos verificadores incorretos.' };
     }
   }
@@ -150,7 +149,6 @@ function sanitizeAndValidateCliente(body, partial = false) {
   const textRequired = [
     ['nome_empresa', 'Nome da empresa / razao social'],
     ['nome_fantasia', 'Nome fantasia'],
-    ['inscricao_estadual', 'Inscricao estadual'],
     ['contato_principal', 'Representante legal (nome)'],
     ['logradouro', 'Logradouro'],
     ['numero', 'Numero'],
