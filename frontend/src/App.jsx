@@ -138,6 +138,16 @@ function previewOrcamentoFinanceiro(form) {
 
 const CADASTROS_COM_MULTI_PAGAMENTO = ['modelos', 'bookers', 'parceiros'];
 const BRAND_ORANGE = '#F59E0B';
+/** Menu principal: ativo — laranja marca; inativo — neutro com bom contraste */
+const navMainBtn = (active) =>
+  active
+    ? 'bg-[#F59E0B] text-white shadow-sm ring-1 ring-amber-500/40'
+    : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-800';
+/** Submenu Cadastros: só o item ativo em destaque (âmbar suave); resto neutro */
+const navSubBtn = (active) =>
+  active
+    ? 'border border-amber-300 bg-amber-100 font-semibold text-amber-950 shadow-sm ring-1 ring-amber-400/30'
+    : 'border border-transparent bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800';
 const LOAD_ERROR_MESSAGE = 'Erro ao carregar dados. Verifique conexão com servidor.';
 
 const DESPESA_CATEGORIAS = [
@@ -1906,22 +1916,14 @@ function App() {
             <button
               type="button"
               onClick={() => setModule('inicio')}
-              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-              style={{
-                backgroundColor: module === 'inicio' ? BRAND_ORANGE : '#fff',
-                color: module === 'inicio' ? '#fff' : '#334155',
-              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'inicio')}`}
             >
               Dashboard
             </button>
             <button
               type="button"
               onClick={() => setModule('cadastros')}
-              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-              style={{
-                backgroundColor: module === 'cadastros' ? BRAND_ORANGE : '#fff',
-                color: module === 'cadastros' ? '#fff' : '#334155',
-              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'cadastros')}`}
             >
               Cadastros
             </button>
@@ -1931,11 +1933,7 @@ function App() {
                 setModule('orcamentos');
                 setOrcamentosSubView('gestao');
               }}
-              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-              style={{
-                backgroundColor: module === 'orcamentos' ? BRAND_ORANGE : '#fff',
-                color: module === 'orcamentos' ? '#fff' : '#334155',
-              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'orcamentos')}`}
             >
               Orçamentos
             </button>
@@ -1945,53 +1943,41 @@ function App() {
                 setModule('jobs');
                 setOsDraft(null);
               }}
-              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-              style={{
-                backgroundColor: module === 'jobs' ? BRAND_ORANGE : '#fff',
-                color: module === 'jobs' ? '#fff' : '#334155',
-              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'jobs')}`}
             >
               Jobs / O.S.
             </button>
             <button
               type="button"
               onClick={() => setModule('financeiro')}
-              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-              style={{
-                backgroundColor: module === 'financeiro' ? BRAND_ORANGE : '#fff',
-                color: module === 'financeiro' ? '#fff' : '#334155',
-              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'financeiro')}`}
             >
               Financeiro
             </button>
             <button
               type="button"
               onClick={() => setModule('extrato')}
-              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-              style={{
-                backgroundColor: module === 'extrato' ? BRAND_ORANGE : '#fff',
-                color: module === 'extrato' ? '#fff' : '#334155',
-              }}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'extrato')}`}
             >
               Extrato modelo
             </button>
           </div>
-          {module === 'cadastros' && <nav className="mt-6 space-y-2">
-            {tabEntries.map(([key, value]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setTab(key)}
-                className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition"
-                style={{
-                  backgroundColor: tab === key ? BRAND_ORANGE : '#fff',
-                  color: tab === key ? '#fff' : '#334155',
-                }}
-              >
-                {value.label}
-              </button>
-            ))}
-          </nav>}
+          {module === 'cadastros' && (
+            <nav className="mt-5 border-t border-slate-200 pt-4" aria-label="Tipos de cadastro">
+              <div className="space-y-1.5">
+                {tabEntries.map(([key, value]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setTab(key)}
+                    className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(tab === key)}`}
+                  >
+                    {value.label}
+                  </button>
+                ))}
+              </div>
+            </nav>
+          )}
           <div className="mt-8 rounded-2xl bg-slate-100 p-3 text-xs text-slate-600">
             Resumo de caixa e alertas na <strong>Dashboard</strong>; detalhes em Financeiro e Jobs.
           </div>
