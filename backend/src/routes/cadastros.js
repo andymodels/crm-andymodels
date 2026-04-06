@@ -22,6 +22,31 @@ function missingRequiredFields(body, requiredFields) {
   });
 }
 
+function escHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function fmtValue(v) {
+  if (v == null) return '—';
+  if (Array.isArray(v)) return escHtml(v.map((x) => String(x ?? '')).join(', '));
+  if (typeof v === 'object') return escHtml(JSON.stringify(v));
+  if (typeof v === 'boolean') return v ? 'Sim' : 'Nao';
+  return escHtml(String(v));
+}
+
+function cadastroPdfHtml({ title, row }) {
+  const entries = Object.entries(row || {}).filter(([k]) => k !== 'foto_perfil_base64');
+  const rows = entries
+    .map(([k, v]) => `<tr><th>${escHtml(k)}</th><td>${fmtValue(v)}</td></tr>`)
+    .join('');
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${escHtml(title)}</title><style>body{font-family:Arial,sans-serif;margin:24px;color:#0f172a}h1{margin:0 0 8px;font-size:22px}p{margin:0 0 16px;color:#475569}table{width:100%;border-collapse:collapse}th,td{border:1px solid #e2e8f0;padding:8px;vertical-align:top;font-size:13px}th{width:220px;text-align:left;background:#f8fafc}</style></head><body><h1>${escHtml(title)}</h1><p>Documento de cadastro</p><table>${rows}</table></body></html>`;
+}
+
 const makeCrudRoutes = ({
   path,
   table,
@@ -102,6 +127,21 @@ const makeCrudRoutes = ({
             'Este CPF ou CNPJ ja esta cadastrado. Nao e permitido duplicar documento na base.',
         });
       }
+      next(error);
+    }
+  });
+
+  router.get(`/${path}/:id/pdf`, async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id)) return res.status(400).send('ID invalido.');
+      const result = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
+      if (result.rows.length === 0) return res.status(404).send('Registro nao encontrado.');
+      const label = path === 'clients' ? 'clientes' : path;
+      const html = cadastroPdfHtml({ title: `Cadastro - ${label} #${id}`, row: result.rows[0] });
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (error) {
       next(error);
     }
   });

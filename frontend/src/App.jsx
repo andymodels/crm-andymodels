@@ -188,6 +188,18 @@ const fieldLabels = {
   ativo: 'Ativo',
   origem_cadastro: 'Origem do cadastro',
   status_cadastro: 'Status do cadastro',
+  passaporte: 'Passaporte',
+  rg: 'RG',
+  complemento: 'Complemento',
+  sexo: 'Sexo',
+  medida_altura: 'Altura',
+  medida_busto: 'Busto',
+  medida_torax: 'Torax',
+  medida_cintura: 'Cintura',
+  medida_quadril: 'Quadril',
+  medida_sapato: 'Sapato',
+  medida_cabelo: 'Cabelo',
+  medida_olhos: 'Olhos',
   formas_pagamento: 'Formas de pagamento',
   razao_social_ou_nome: 'Razão social ou nome',
   cnpj_ou_cpf: 'CNPJ ou CPF',
@@ -299,6 +311,9 @@ const cadastroConfig = {
     columns: [
       'nome',
       'cpf',
+      'rg',
+      'passaporte',
+      'sexo',
       'data_nascimento',
       'origem_cadastro',
       'status_cadastro',
@@ -309,7 +324,17 @@ const cadastroConfig = {
     form: {
       nome: '',
       cpf: '',
+      rg: '',
+      passaporte: '',
+      sexo: '',
       data_nascimento: '',
+      cep: '',
+      logradouro: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
+      cidade: '',
+      uf: '',
       telefones: [''],
       emails: [''],
       emite_nf_propria: false,
@@ -317,6 +342,14 @@ const cadastroConfig = {
       responsavel_nome: '',
       responsavel_cpf: '',
       responsavel_telefone: '',
+      medida_altura: '',
+      medida_busto: '',
+      medida_torax: '',
+      medida_cintura: '',
+      medida_quadril: '',
+      medida_sapato: '',
+      medida_cabelo: '',
+      medida_olhos: '',
       observacoes: '',
       origem_cadastro: 'interno',
       status_cadastro: 'aprovado',
@@ -3517,6 +3550,14 @@ function App({ authUser, onLogout = () => {} }) {
                           </td>
                         ))}
                         <td className="px-2 py-2 space-x-2">
+                          <a
+                            href={`${API_BASE}/${current.endpoint}/${item.id}/pdf`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                          >
+                            PDF
+                          </a>
                           <button
                             type="button"
                             className="rounded-md border border-slate-300 px-2 py-1 text-xs"
