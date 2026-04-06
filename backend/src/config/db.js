@@ -425,6 +425,10 @@ const initDb = async () => {
   `);
   await pool.query(`
     ALTER TABLE orcamentos
+    ADD COLUMN IF NOT EXISTS data_vencimento DATE;
+  `);
+  await pool.query(`
+    ALTER TABLE orcamentos
     ADD COLUMN IF NOT EXISTS tipo_proposta_os TEXT NOT NULL DEFAULT 'com_modelo';
   `);
   await pool.query(`

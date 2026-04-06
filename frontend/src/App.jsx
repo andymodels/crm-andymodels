@@ -123,6 +123,7 @@ function createEmptyOrcamentoForm() {
     extras_agencia_valor: '',
     imposto_percent: '10',
     condicoes_pagamento: '',
+    data_vencimento: '',
     uso_imagem: '',
     prazo: '',
     territorio: '',
@@ -548,7 +549,7 @@ function App({ authUser, onLogout = () => {} }) {
   const contratosPendentes = alertasOperacionais?.contratos_pendentes ?? { count: 0, items: [] };
 
   useEffect(() => {
-    if (module === 'cadastros') setCadastrosMenuOpen(true);
+    if (module !== 'cadastros') setCadastrosMenuOpen(false);
   }, [module]);
   const saldoAbertoClienteDashboard = useMemo(
     () =>
@@ -1925,6 +1926,7 @@ function App({ authUser, onLogout = () => {} }) {
             ? String(data.imposto_percent)
             : '10',
         condicoes_pagamento: data.condicoes_pagamento,
+        data_vencimento: data.data_vencimento || '',
         uso_imagem: data.uso_imagem,
         prazo: data.prazo,
         territorio: data.territorio,
@@ -2176,10 +2178,7 @@ function App({ authUser, onLogout = () => {} }) {
             >
               Dashboard
             </button>
-            <div
-              onMouseEnter={() => setCadastrosMenuOpen(true)}
-              className="rounded-xl"
-            >
+            <div className="rounded-xl">
               <button
                 type="button"
                 onClick={() => {
@@ -4346,11 +4345,20 @@ function App({ authUser, onLogout = () => {} }) {
                     <input value={orcamentoForm.condicoes_pagamento} onChange={(event) => onChangeOrcamento('condicoes_pagamento', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
                   </label>
                   <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Uso de imagem</span>
+                    <span className="mb-1 block">Data de vencimento</span>
+                    <input
+                      type="date"
+                      value={orcamentoForm.data_vencimento || ''}
+                      onChange={(event) => onChangeOrcamento('data_vencimento', event.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Mídias - Uso de imagem</span>
                     <input value={orcamentoForm.uso_imagem} onChange={(event) => onChangeOrcamento('uso_imagem', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
                   </label>
                   <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Prazo</span>
+                    <span className="mb-1 block">Tempo de uso de imagem</span>
                     <input value={orcamentoForm.prazo} onChange={(event) => onChangeOrcamento('prazo', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
                   </label>
                   <label className="text-sm text-slate-600 md:col-span-2">

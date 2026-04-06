@@ -35,6 +35,14 @@ function parseDataTrabalho(body) {
   return Number.isNaN(d.getTime()) ? null : s.slice(0, 10);
 }
 
+function parseDataSimples(rawValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+  const s = String(rawValue).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : s.slice(0, 10);
+}
+
 function parseTipoPropostaOs(body) {
   return body?.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
 }
@@ -263,6 +271,7 @@ router.post('/orcamentos', async (req, res, next) => {
         taxa_agencia_percent,
         extras_agencia_valor,
         condicoes_pagamento,
+        data_vencimento,
         uso_imagem,
         prazo,
         territorio,
@@ -275,7 +284,7 @@ router.post('/orcamentos', async (req, res, next) => {
         quantidade_modelos_referencia,
         imposto_percent
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
       RETURNING *
     `;
     const values = [
@@ -286,6 +295,7 @@ router.post('/orcamentos', async (req, res, next) => {
       req.body.taxa_agencia_percent,
       req.body.extras_agencia_valor,
       req.body.condicoes_pagamento,
+      parseDataSimples(req.body.data_vencimento),
       req.body.uso_imagem,
       req.body.prazo,
       req.body.territorio,
@@ -371,19 +381,20 @@ router.put('/orcamentos/:id', async (req, res, next) => {
         taxa_agencia_percent = $5,
         extras_agencia_valor = $6,
         condicoes_pagamento = $7,
-        uso_imagem = $8,
-        prazo = $9,
-        territorio = $10,
-        data_trabalho = $11,
-        horario_trabalho = $12,
-        local_trabalho = $13,
-        tipo_proposta_os = $14,
-        valor_servico_sem_modelo = $15,
-        modelos_definicao = $16,
-        quantidade_modelos_referencia = $17,
-        imposto_percent = $18,
+        data_vencimento = $8,
+        uso_imagem = $9,
+        prazo = $10,
+        territorio = $11,
+        data_trabalho = $12,
+        horario_trabalho = $13,
+        local_trabalho = $14,
+        tipo_proposta_os = $15,
+        valor_servico_sem_modelo = $16,
+        modelos_definicao = $17,
+        quantidade_modelos_referencia = $18,
+        imposto_percent = $19,
         updated_at = NOW()
-      WHERE id = $19
+      WHERE id = $20
       RETURNING *
     `;
     const values = [
@@ -394,6 +405,7 @@ router.put('/orcamentos/:id', async (req, res, next) => {
       req.body.taxa_agencia_percent,
       req.body.extras_agencia_valor,
       req.body.condicoes_pagamento,
+      parseDataSimples(req.body.data_vencimento),
       req.body.uso_imagem,
       req.body.prazo,
       req.body.territorio,
@@ -524,6 +536,7 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         prazo,
         territorio,
         condicoes_pagamento,
+        data_vencimento_cliente,
         valor_servico,
         cache_modelo_total,
         agencia_fee_percent,
@@ -549,8 +562,8 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, 'aberta',
         $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
-        NULL, NULL, $23, $24, NULL, NULL, $25, $26, $27, TRUE
+        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+        NULL, NULL, $24, $25, NULL, NULL, $26, $27, $28, TRUE
       )
       RETURNING *
       `,
@@ -566,6 +579,7 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         budget.prazo,
         budget.territorio,
         budget.condicoes_pagamento,
+        parseDataSimples(budget.data_vencimento),
         tipoProp === 'sem_modelo' ? n(budget.valor_servico_sem_modelo) : 0,
         nums.cache_modelo_total,
         budget.taxa_agencia_percent,
