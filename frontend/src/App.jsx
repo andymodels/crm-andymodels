@@ -82,6 +82,31 @@ const labelContratoStatus = (s) => {
 };
 
 const nPrev = (v) => Number(v || 0);
+const medidaCamposFeminino = [
+  'medida_altura',
+  'medida_busto',
+  'medida_cintura',
+  'medida_quadril',
+  'medida_sapato',
+  'medida_cabelo',
+  'medida_olhos',
+];
+const medidaCamposMasculino = [
+  'medida_altura',
+  'medida_torax',
+  'medida_cintura',
+  'medida_sapato',
+  'medida_cabelo',
+  'medida_olhos',
+];
+
+function sexoGrupo(valor) {
+  const v = String(valor || '').trim().toLowerCase();
+  if (!v) return '';
+  if (v.startsWith('f')) return 'feminino';
+  if (v.startsWith('m')) return 'masculino';
+  return '';
+}
 
 function createEmptyOrcamentoForm() {
   return {
@@ -372,6 +397,13 @@ const cadastroConfig = {
     form: {
       nome: '',
       cpf: '',
+      cep: '',
+      logradouro: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
+      cidade: '',
+      uf: '',
       telefones: [''],
       emails: [''],
       formas_pagamento: [{ ...emptyFormaRecebimento }],
@@ -1279,7 +1311,19 @@ function App({ authUser, onLogout = () => {} }) {
   };
 
   const onChange = (key, value) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      if (isModeloTab && key === 'sexo') {
+        const next = { ...prev, sexo: value };
+        const grupo = sexoGrupo(value);
+        if (grupo === 'feminino') next.medida_torax = '';
+        if (grupo === 'masculino') {
+          next.medida_busto = '';
+          next.medida_quadril = '';
+        }
+        return next;
+      }
+      return { ...prev, [key]: value };
+    });
   };
 
   const buscarEnderecoPorCep = async () => {
@@ -1340,6 +1384,10 @@ function App({ authUser, onLogout = () => {} }) {
       onChange(field, formatCepDisplay(onlyDigits(value)));
       return;
     }
+    if (isBookerTab && field === 'cep') {
+      onChange(field, formatCepDisplay(onlyDigits(value)));
+      return;
+    }
     if (isModeloTab && field === 'cpf') {
       onChange(field, formatCpfDisplay(onlyDigits(value)));
       return;
@@ -1350,6 +1398,10 @@ function App({ authUser, onLogout = () => {} }) {
     }
     if (isModeloTab && field === 'responsavel_telefone') {
       onChange(field, formatPhoneDisplay(onlyDigits(value)));
+      return;
+    }
+    if (isModeloTab && field === 'cep') {
+      onChange(field, formatCepDisplay(onlyDigits(value)));
       return;
     }
     onChange(field, value);
@@ -3536,6 +3588,24 @@ function App({ authUser, onLogout = () => {} }) {
                   return null;
                 }
 
+                if (
+                  isModeloTab
+                  && [
+                    'medida_altura',
+                    'medida_busto',
+                    'medida_torax',
+                    'medida_cintura',
+                    'medida_quadril',
+                    'medida_sapato',
+                    'medida_cabelo',
+                    'medida_olhos',
+                  ].includes(field)
+                ) {
+                  const grupo = sexoGrupo(form.sexo);
+                  if (grupo === 'feminino' && !medidaCamposFeminino.includes(field)) return null;
+                  if (grupo === 'masculino' && !medidaCamposMasculino.includes(field)) return null;
+                }
+
                 if (isModeloTab && field === 'origem_cadastro') {
                   return (
                     <label key={field} className="text-sm text-slate-600 md:col-span-2">
@@ -3663,8 +3733,9 @@ function App({ authUser, onLogout = () => {} }) {
                 const useMaskedCadastroInput =
                   (isClienteTab
                     && (field === 'documento' || field === 'documento_representante' || field === 'cep'))
+                  || (isBookerTab && field === 'cep')
                   || (isModeloTab
-                    && (field === 'cpf' || field === 'responsavel_cpf' || field === 'responsavel_telefone'));
+                    && (field === 'cpf' || field === 'responsavel_cpf' || field === 'responsavel_telefone' || field === 'cep'));
 
                 if (isClienteTab && field === 'website') {
                   return (
@@ -3707,7 +3778,7 @@ function App({ authUser, onLogout = () => {} }) {
                       onBlur={
                         isClienteTab && field === 'documento' && form.tipo_pessoa === 'PJ'
                           ? buscarDadosEmpresaPorCnpj
-                          : isClienteTab && field === 'cep'
+                          : (isClienteTab || isModeloTab || isBookerTab) && field === 'cep'
                             ? buscarEnderecoPorCep
                             : undefined
                       }

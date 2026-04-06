@@ -337,10 +337,37 @@ function sanitizeAndValidateBooker(body, partial = false) {
   const te = normalizeTelefonesEmailsLists(b, partial);
   if (!te.ok) return te;
 
+  if (!partial || b.cep !== undefined) {
+    const d = onlyDigits(b.cep);
+    b.cep = d;
+    if (!d) return { ok: false, message: 'CEP e obrigatorio.' };
+    if (!isValidCEP(d)) return { ok: false, message: 'CEP deve ter 8 digitos.' };
+  }
+
   if (!partial || b.nome !== undefined) {
     b.nome = String(b.nome ?? '').trim();
     if (!b.nome) return { ok: false, message: 'Nome e obrigatorio.' };
   }
+  const textRequired = [
+    ['logradouro', 'Logradouro'],
+    ['numero', 'Numero'],
+    ['bairro', 'Bairro'],
+    ['cidade', 'Cidade'],
+    ['uf', 'UF'],
+  ];
+  for (const [key, label] of textRequired) {
+    if (partial && b[key] === undefined) continue;
+    const v = String(b[key] ?? '').trim();
+    b[key] = v;
+    if (!v) return { ok: false, message: `${label} e obrigatorio.` };
+  }
+  if (!partial || b.complemento !== undefined) {
+    b.complemento = String(b.complemento ?? '').trim();
+  }
+  if (b.uf && b.uf.length !== 2) {
+    return { ok: false, message: 'UF deve ter 2 letras.' };
+  }
+  if (b.uf) b.uf = b.uf.toUpperCase();
   if (!partial || b.observacoes !== undefined) {
     b.observacoes = String(b.observacoes ?? '').trim();
   }

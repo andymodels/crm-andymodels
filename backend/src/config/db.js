@@ -223,6 +223,10 @@ const initDb = async () => {
     ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS uf TEXT NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS tipo_pessoa TEXT NOT NULL DEFAULT 'PF';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cadastro_links (
@@ -323,6 +327,38 @@ const initDb = async () => {
     ALTER TABLE bookers
     ADD COLUMN IF NOT EXISTS emails JSONB NOT NULL DEFAULT '[]'::jsonb;
   `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS tipo_pessoa TEXT NOT NULL DEFAULT 'PF';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS cep TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS logradouro TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS numero TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS complemento TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS bairro TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS cidade TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE bookers
+    ADD COLUMN IF NOT EXISTS uf TEXT NOT NULL DEFAULT '';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS parceiros (
@@ -351,6 +387,10 @@ const initDb = async () => {
   await pool.query(`
     ALTER TABLE parceiros
     ADD COLUMN IF NOT EXISTS emails JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
+  await pool.query(`
+    ALTER TABLE parceiros
+    ADD COLUMN IF NOT EXISTS tipo_pessoa TEXT NOT NULL DEFAULT 'PF';
   `);
 
   await pool.query(`
