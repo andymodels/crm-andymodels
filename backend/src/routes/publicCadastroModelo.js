@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('../config/db');
-const { sanitizeAndValidateModelo, onlyDigits } = require('../utils/brValidators');
+const { sanitizeAndValidateModelo } = require('../utils/brValidators');
 const { insertModeloRow } = require('../utils/modeloInsert');
 const { validateTokenReadOnly, validateAndLockLink } = require('../utils/cadastroLinkHelpers');
 const { hashPassword } = require('../utils/auth');
@@ -9,6 +9,7 @@ const router = express.Router();
 
 const PUBLIC_MAX_OBS = 2000;
 const MEDIDA_MAX_LEN = 120;
+const FOTO_MAX_CHARS = 3_000_000;
 
 const SUCCESS_MESSAGE = 'Cadastro recebido com sucesso. Obrigado pela atualização.';
 
@@ -124,10 +125,26 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
     let obs = String(raw.observacoes ?? '').trim();
     if (obs.length > PUBLIC_MAX_OBS) obs = obs.slice(0, PUBLIC_MAX_OBS);
     const passaporte = trimStr(raw.passaporte);
+    const rg = trimStr(raw.rg);
+    const cep = trimStr(raw.cep);
+    const logradouro = trimStr(raw.logradouro);
+    const numero = trimStr(raw.numero);
+    const complemento = trimStr(raw.complemento);
+    const bairro = trimStr(raw.bairro);
+    const cidade = trimStr(raw.cidade);
+    const uf = trimStr(raw.uf);
     const fotoPerfilBase64 = trimStr(raw.foto_perfil_base64);
     const senhaAcesso = String(raw.senha_acesso || '').trim();
     if (!senhaAcesso || senhaAcesso.length < 8) {
       return res.status(400).json({ message: 'Defina uma senha de acesso com no minimo 8 caracteres.' });
+    }
+    if (!cep || !logradouro || !numero || !bairro || !cidade || !uf) {
+      return res.status(400).json({
+        message: 'Endereco incompleto. Preencha CEP, logradouro, numero, bairro, cidade e UF.',
+      });
+    }
+    if (fotoPerfilBase64 && fotoPerfilBase64.length > FOTO_MAX_CHARS) {
+      return res.status(400).json({ message: 'Foto de perfil muito grande.' });
     }
 
     const sexoParsed = parseSexo(raw.sexo);
@@ -156,18 +173,24 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
       ativo: false,
       sexo: sexoParsed.label,
       passaporte,
+      rg,
+      cep,
+      logradouro,
+      numero,
+      complemento,
+      bairro,
+      cidade,
+      uf,
       foto_perfil_base64: fotoPerfilBase64,
+      formas_pagamento: raw.formas_pagamento,
       ...med.values,
     };
-
-    const cpfDigits = onlyDigits(String(body.cpf ?? ''));
-    body.formas_pagamento = [{ tipo: 'PIX', tipo_chave_pix: 'CPF', chave_pix: cpfDigits }];
 
     const sv = sanitizeAndValidateModelo(body, false);
     if (!sv.ok) return res.status(400).json({ message: sv.message });
     Object.assign(body, sv.body);
 
-    body.formas_pagamento = [{ tipo: 'PIX', tipo_chave_pix: 'CPF', chave_pix: body.cpf }];
+    body.formas_pagamento = sv.body.formas_pagamento;
     body.chave_pix = '';
     body.banco_dados = '';
     body.ativo = false;

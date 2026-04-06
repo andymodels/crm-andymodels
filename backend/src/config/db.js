@@ -191,6 +191,38 @@ const initDb = async () => {
     ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS foto_perfil_base64 TEXT NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS rg TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS cep TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS logradouro TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS numero TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS complemento TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS bairro TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS cidade TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS uf TEXT NOT NULL DEFAULT '';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cadastro_links (

@@ -140,27 +140,23 @@ export default function ModeloExtratoPortal() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-slate-500">
-                <th className="px-2 py-2">Job</th>
-                <th className="px-2 py-2">Cliente</th>
-                <th className="px-2 py-2">Líquido</th>
-                <th className="px-2 py-2">Pago</th>
-                <th className="px-2 py-2">Saldo</th>
+                <th className="px-2 py-2">Data</th>
+                <th className="px-2 py-2">Descrição</th>
+                <th className="px-2 py-2">Valor</th>
                 <th className="px-2 py-2">Status</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-2 py-6 text-center text-slate-500">Sem lançamentos.</td>
+                  <td colSpan={4} className="px-2 py-6 text-center text-slate-500">Sem lançamentos.</td>
                 </tr>
               ) : rows.map((r) => (
-                <tr key={r.os_modelo_id} className="border-b border-slate-100">
-                  <td className="px-2 py-2">#{r.job_id}</td>
-                  <td className="px-2 py-2">{r.cliente}</td>
-                  <td className="px-2 py-2">{formatBRL(r.liquido)}</td>
-                  <td className="px-2 py-2">{formatBRL(r.pago)}</td>
-                  <td className="px-2 py-2">{formatBRL(r.saldo)}</td>
-                  <td className="px-2 py-2">{r.status}</td>
+                <tr key={r.id} className="border-b border-slate-100">
+                  <td className="px-2 py-2">{r.data || '—'}</td>
+                  <td className="px-2 py-2">{r.descricao || 'Job publicidade'}</td>
+                  <td className="px-2 py-2">{formatBRL(r.valor)}</td>
+                  <td className="px-2 py-2">{r.status === 'pago' ? 'pago' : 'a receber'}</td>
                 </tr>
               ))}
             </tbody>

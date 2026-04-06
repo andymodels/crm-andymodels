@@ -98,22 +98,18 @@ router.get('/modelo/extrato', requireModeloAuth, async (req, res, next) => {
     const sql = `
       SELECT
         om.id AS os_modelo_id,
-        om.os_id,
-        om.modelo_id,
         om.cache_modelo,
         om.emite_nf_propria,
         os.imposto_percent,
         os.agencia_fee_percent,
-        c.nome_empresa,
-        c.nome_fantasia,
-        COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
-        os.status AS os_status
+        os.data_trabalho,
+        os.tipo_trabalho,
+        os.descricao,
+        os.created_at
       FROM os_modelos om
       JOIN ordens_servico os ON os.id = om.os_id
-      JOIN clientes c ON c.id = os.cliente_id
-      LEFT JOIN modelos m ON m.id = om.modelo_id
       WHERE om.modelo_id = $1
-      ORDER BY om.os_id DESC, om.id
+      ORDER BY os.data_trabalho DESC NULLS LAST, os.id DESC, om.id DESC
     `;
 
     const { rows } = await pool.query(sql, [modeloId]);
@@ -131,17 +127,18 @@ router.get('/modelo/extrato', requireModeloAuth, async (req, res, next) => {
       );
       const pago = Number(pay.rows[0].pago);
       const saldo = liquido - pago;
-      const status = Math.abs(saldo) < 0.01 ? 'quitado' : 'pendente';
+      const status = Math.abs(saldo) < 0.01 ? 'pago' : 'a receber';
+      const dataRef = row.data_trabalho || row.created_at;
+      const descricao =
+        String(row.tipo_trabalho || '').trim() ||
+        String(row.descricao || '').trim() ||
+        'Job publicidade';
       out.push({
-        os_modelo_id: row.os_modelo_id,
-        job_id: row.os_id,
-        cliente: row.nome_empresa || row.nome_fantasia || '',
-        modelo_nome: row.modelo_nome,
-        liquido,
-        pago,
-        saldo,
+        id: row.os_modelo_id,
+        data: dataRef ? String(dataRef).slice(0, 10) : '',
+        descricao,
+        valor: liquido,
         status,
-        os_status: row.os_status,
       });
     }
     return res.json(out);
