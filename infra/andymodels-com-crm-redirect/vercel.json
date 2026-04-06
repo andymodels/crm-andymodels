@@ -1,0 +1,14 @@
+{
+  "redirects": [
+    {
+      "source": "/crm",
+      "destination": "https://crm-andymodels.onrender.com",
+      "permanent": false
+    },
+    {
+      "source": "/crm/",
+      "destination": "https://crm-andymodels.onrender.com",
+      "permanent": false
+    }
+  ]
+}

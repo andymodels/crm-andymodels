@@ -1,0 +1,12 @@
+# Colar na raiz do site Netlify ou fundir [[redirects]] com o que ja existir.
+[[redirects]]
+  from = "/crm"
+  to = "https://crm-andymodels.onrender.com"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/crm/*"
+  to = "https://crm-andymodels.onrender.com/:splat"
+  status = 302
+  force = true

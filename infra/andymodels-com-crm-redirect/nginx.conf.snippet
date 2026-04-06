@@ -1,0 +1,7 @@
+# Dentro do server { } do andymodels.com (HTTPS)
+location = /crm {
+  return 302 https://crm-andymodels.onrender.com;
+}
+location = /crm/ {
+  return 302 https://crm-andymodels.onrender.com;
+}

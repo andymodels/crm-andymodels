@@ -1,0 +1,6 @@
+Cloudflare (dominio andymodels.com):
+Rules -> Redirect Rules -> Create rule
+  If: (URI Path) starts with /crm
+  Then: Dynamic redirect -> https://crm-andymodels.onrender.com
+  Status: 302
+(Alternativa: apenas "equals /crm" se nao quiser /crm/* )

@@ -1,0 +1,4 @@
+# Netlify: ficheiro public/_redirects (ou static/_redirects conforme o build)
+/crm https://crm-andymodels.onrender.com 302
+/crm/ https://crm-andymodels.onrender.com 302
+/crm/* https://crm-andymodels.onrender.com/:splat 302
