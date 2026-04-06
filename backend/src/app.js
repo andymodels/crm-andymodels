@@ -41,7 +41,7 @@ app.use((req, res, next) => {
 });
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
@@ -103,6 +103,11 @@ if (fs.existsSync(path.join(publicDir, 'index.html'))) {
 
 app.use((error, _req, res, _next) => {
   console.error(error);
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({
+      message: 'Arquivo muito grande. Reduza a foto de perfil e tente novamente.',
+    });
+  }
   if (error.code === '23502') {
     return res.status(400).json({
       message: `Campo obrigatorio no banco: ${error.column || 'desconhecido'}.`,
