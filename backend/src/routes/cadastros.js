@@ -6,6 +6,8 @@ const {
   sanitizeAndValidateBooker,
   sanitizeAndValidateParceiro,
 } = require('../utils/brValidators');
+const { stringifyJsonbColumns } = require('../utils/jsonbBody');
+const { insertModeloRow } = require('../utils/modeloInsert');
 
 const router = express.Router();
 
@@ -18,30 +20,6 @@ function missingRequiredFields(body, requiredFields) {
     if (Array.isArray(v) && v.length === 0) return true;
     return false;
   });
-}
-
-/**
- * Colunas JSONB (telefones, emails, formas_pagamento): o pg pode serializar arrays JS
- * como literal PostgreSQL `{...}` em vez de JSON — o Postgres espera `["a"]`, não `{"a"}`.
- * Isto evita: invalid input syntax for type json (22P02).
- */
-function stringifyJsonbColumns(body) {
-  const keys = ['telefones', 'emails', 'formas_pagamento'];
-  for (const key of keys) {
-    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
-    const v = body[key];
-    if (v === null || v === undefined) continue;
-    if (typeof v === 'string') {
-      try {
-        JSON.parse(v);
-        body[key] = v;
-      } catch {
-        body[key] = JSON.stringify(v);
-      }
-    } else {
-      body[key] = JSON.stringify(v);
-    }
-  }
 }
 
 const makeCrudRoutes = ({
@@ -97,6 +75,11 @@ const makeCrudRoutes = ({
         return res.status(400).json({
           message: `Campos obrigatorios faltando ou vazios: ${missing.join(', ')}`,
         });
+      }
+
+      if (table === 'modelos') {
+        const result = await insertModeloRow(pool, body);
+        return res.status(201).json(result);
       }
 
       stringifyJsonbColumns(body);
@@ -347,6 +330,8 @@ makeCrudRoutes({
     'formas_pagamento',
     'observacoes',
     'ativo',
+    'origem_cadastro',
+    'status_cadastro',
   ],
 });
 

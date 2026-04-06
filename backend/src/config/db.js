@@ -137,6 +137,14 @@ const initDb = async () => {
     ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS responsavel_telefone TEXT;
   `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS origem_cadastro TEXT NOT NULL DEFAULT 'interno';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS status_cadastro TEXT NOT NULL DEFAULT 'aprovado';
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bookers (

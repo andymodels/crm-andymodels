@@ -10,6 +10,7 @@ const osDocumentosRouter = require('./routes/os_documentos');
 const dashboardRouter = require('./routes/dashboard');
 const extratoModeloRouter = require('./routes/extrato_modelo');
 const financeiroRouter = require('./routes/financeiro');
+const publicCadastroModeloRouter = require('./routes/publicCadastroModelo');
 
 const app = express();
 
@@ -44,10 +45,15 @@ app.use('/api', osDocumentosRouter);
 app.use('/api', dashboardRouter);
 app.use('/api', extratoModeloRouter);
 app.use('/api', financeiroRouter);
+app.use('/api', publicCadastroModeloRouter);
 
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {
   app.use(express.static(publicDir));
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(publicDir, 'index.html'), (err) => (err ? next(err) : undefined));
+  });
 } else {
   app.get('/', (_req, res) => {
     res.json({

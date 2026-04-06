@@ -176,6 +176,8 @@ const fieldLabels = {
   responsavel_telefone: 'Telefone do responsável',
   emite_nf_propria: 'Emite NF própria',
   ativo: 'Ativo',
+  origem_cadastro: 'Origem do cadastro',
+  status_cadastro: 'Status do cadastro',
   formas_pagamento: 'Formas de pagamento',
   razao_social_ou_nome: 'Razão social ou nome',
   cnpj_ou_cpf: 'CNPJ ou CPF',
@@ -284,7 +286,16 @@ const cadastroConfig = {
   modelos: {
     label: 'Modelos',
     endpoint: 'modelos',
-    columns: ['nome', 'cpf', 'data_nascimento', 'telefones', 'emails', 'formas_pagamento'],
+    columns: [
+      'nome',
+      'cpf',
+      'data_nascimento',
+      'origem_cadastro',
+      'status_cadastro',
+      'telefones',
+      'emails',
+      'formas_pagamento',
+    ],
     form: {
       nome: '',
       cpf: '',
@@ -297,6 +308,8 @@ const cadastroConfig = {
       responsavel_cpf: '',
       responsavel_telefone: '',
       observacoes: '',
+      origem_cadastro: 'interno',
+      status_cadastro: 'aprovado',
       ativo: true,
     },
   },
@@ -374,6 +387,10 @@ function App() {
   const [osDraft, setOsDraft] = useState(null);
   const [osUsuarioAlteracao, setOsUsuarioAlteracao] = useState('');
   const [modelosList, setModelosList] = useState([]);
+  const modelosParaSelecao = useMemo(
+    () => modelosList.filter((m) => Boolean(m.ativo)),
+    [modelosList],
+  );
   const [bookersList, setBookersList] = useState([]);
   const [parceirosList, setParceirosList] = useState([]);
   /** Agregado em torno da O.S.: contratos, a receber, pagamentos modelo (GET /dashboard/alertas). */
@@ -1359,6 +1376,8 @@ function App() {
       nextForm.responsavel_cpf = formatCpfDisplay(onlyDigits(item.responsavel_cpf || ''));
       nextForm.responsavel_telefone = formatPhoneDisplay(onlyDigits(item.responsavel_telefone || ''));
       nextForm.cpf = formatCpfDisplay(onlyDigits(item.cpf || ''));
+      nextForm.origem_cadastro = item.origem_cadastro ?? 'interno';
+      nextForm.status_cadastro = item.status_cadastro ?? 'aprovado';
     }
     if (tab === 'clientes') {
       nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).map(
@@ -2799,7 +2818,7 @@ function App() {
                       className="ml-2 rounded-lg border border-slate-300 px-3 py-2"
                     >
                       <option value="">Todos</option>
-                      {modelosList.map((m) => (
+                      {modelosParaSelecao.map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.nome}
                         </option>
@@ -3125,6 +3144,35 @@ function App() {
 
                 if (isModeloTab && (field === 'responsavel_nome' || field === 'responsavel_cpf' || field === 'responsavel_telefone') && !isMinor) {
                   return null;
+                }
+
+                if (isModeloTab && field === 'origem_cadastro') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">{labelForField(field)}</span>
+                      <input
+                        value={form.origem_cadastro ?? ''}
+                        readOnly
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700"
+                      />
+                    </label>
+                  );
+                }
+
+                if (isModeloTab && field === 'status_cadastro') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600">
+                      <span className="mb-1 block">{labelForField(field)}</span>
+                      <select
+                        value={form.status_cadastro ?? 'aprovado'}
+                        onChange={(event) => onChange('status_cadastro', event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      >
+                        <option value="pendente">Pendente</option>
+                        <option value="aprovado">Aprovado</option>
+                      </select>
+                    </label>
+                  );
                 }
 
                 if (typeof initial === 'boolean') {
@@ -3630,7 +3678,7 @@ function App() {
                                 className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
                               >
                                 <option value="">Selecione o modelo…</option>
-                                {modelosList.map((m) => (
+                                {modelosParaSelecao.map((m) => (
                                   <option key={m.id} value={m.id}>
                                     {m.nome}
                                   </option>
@@ -4273,7 +4321,7 @@ function App() {
                                       className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
                                     >
                                       <option value="">A definir / selecione…</option>
-                                      {modelosList.map((m) => (
+                                      {modelosParaSelecao.map((m) => (
                                         <option key={m.id} value={m.id}>
                                           {m.nome}
                                         </option>
