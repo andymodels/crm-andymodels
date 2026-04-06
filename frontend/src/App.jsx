@@ -1302,6 +1302,30 @@ function App({ authUser, onLogout = () => {} }) {
     }
   };
 
+  const buscarDadosEmpresaPorCnpj = async () => {
+    if (!isClienteTab || form.tipo_pessoa !== 'PJ') return;
+    const cnpjDigits = String(form.documento || '').replace(/\D/g, '');
+    if (cnpjDigits.length !== 14) return;
+    try {
+      const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjDigits}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setForm((prev) => ({
+        ...prev,
+        nome_empresa: String(prev.nome_empresa || '').trim() || String(data.razao_social || ''),
+        nome_fantasia: String(prev.nome_fantasia || '').trim() || String(data.nome_fantasia || ''),
+        cep: String(prev.cep || '').trim() || formatCepDisplay(String(data.cep || '').replace(/\D/g, '')),
+        logradouro: String(prev.logradouro || '').trim() || String(data.logradouro || ''),
+        numero: String(prev.numero || '').trim() || String(data.numero || ''),
+        bairro: String(prev.bairro || '').trim() || String(data.bairro || ''),
+        cidade: String(prev.cidade || '').trim() || String(data.municipio || ''),
+        uf: String(prev.uf || '').trim() || String(data.uf || ''),
+      }));
+    } catch {
+      // Silent fail to keep form usable offline.
+    }
+  };
+
   const handleMaskedCadastroChange = (field, value) => {
     if (isClienteTab && field === 'documento') {
       const d = onlyDigits(value);
@@ -3680,7 +3704,13 @@ function App({ authUser, onLogout = () => {} }) {
                           ? handleMaskedCadastroChange(field, event.target.value)
                           : onChange(field, event.target.value)
                       }
-                      onBlur={isClienteTab && field === 'cep' ? buscarEnderecoPorCep : undefined}
+                      onBlur={
+                        isClienteTab && field === 'documento' && form.tipo_pessoa === 'PJ'
+                          ? buscarDadosEmpresaPorCnpj
+                          : isClienteTab && field === 'cep'
+                            ? buscarEnderecoPorCep
+                            : undefined
+                      }
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
                     />
                   </label>
