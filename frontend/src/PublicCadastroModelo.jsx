@@ -355,14 +355,6 @@ export default function PublicCadastroModelo() {
             />
           </label>
 
-          <TextField
-            label="Sexo"
-            value={form.sexo}
-            onChange={(v) => onChange('sexo', v)}
-            placeholder="Masculino ou Feminino"
-            required
-          />
-
           <label className="flex items-center gap-2 rounded-md border border-slate-200 p-3 text-sm md:col-span-2">
             <input
               type="checkbox"
@@ -447,9 +439,19 @@ export default function PublicCadastroModelo() {
 
           <BlockTitle>Medidas</BlockTitle>
 
+          <div className="md:col-span-2">
+            <TextField
+              label="Sexo"
+              value={form.sexo}
+              onChange={(v) => onChange('sexo', v)}
+              placeholder="Masculino ou Feminino"
+              required
+            />
+          </div>
+
           {!showMedidasFem && !showMedidasMasc ? (
             <p className="md:col-span-2 text-sm text-slate-600">
-              Informe o sexo (Masculino ou Feminino) acima para preencher as medidas.
+              Preencha o sexo (Masculino ou Feminino) para exibir os campos de medida.
             </p>
           ) : null}
 
