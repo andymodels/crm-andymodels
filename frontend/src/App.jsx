@@ -200,6 +200,7 @@ const fieldLabels = {
   medida_sapato: 'Sapato',
   medida_cabelo: 'Cabelo',
   medida_olhos: 'Olhos',
+  foto_perfil_base64: 'Foto de perfil',
   formas_pagamento: 'Formas de pagamento',
   razao_social_ou_nome: 'Razão social ou nome',
   cnpj_ou_cpf: 'CNPJ ou CPF',
@@ -328,6 +329,9 @@ const cadastroConfig = {
       passaporte: '',
       sexo: '',
       data_nascimento: '',
+      telefones: [''],
+      emails: [''],
+      foto_perfil_base64: '',
       cep: '',
       logradouro: '',
       numero: '',
@@ -335,8 +339,6 @@ const cadastroConfig = {
       bairro: '',
       cidade: '',
       uf: '',
-      telefones: [''],
-      emails: [''],
       emite_nf_propria: false,
       formas_pagamento: [{ ...emptyFormaRecebimento }],
       responsavel_nome: '',
@@ -3367,6 +3369,52 @@ function App({ authUser, onLogout = () => {} }) {
                         <option value="aprovado">Aprovado</option>
                       </select>
                     </label>
+                  );
+                }
+
+                if (isModeloTab && field === 'foto_perfil_base64') {
+                  return (
+                    <div key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">{labelForField(field)}</span>
+                      <div className="rounded-lg border border-slate-200 bg-white p-3">
+                        {form.foto_perfil_base64 ? (
+                          <img
+                            src={form.foto_perfil_base64}
+                            alt="Foto de perfil"
+                            className="mb-3 h-28 w-28 rounded-lg border border-slate-200 object-cover"
+                          />
+                        ) : (
+                          <p className="mb-3 text-xs text-slate-500">Nenhuma foto enviada.</p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
+                            Escolher foto
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(event) => {
+                                const file = event.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = () => onChange('foto_perfil_base64', String(reader.result || ''));
+                                reader.readAsDataURL(file);
+                                event.target.value = '';
+                              }}
+                            />
+                          </label>
+                          {form.foto_perfil_base64 ? (
+                            <button
+                              type="button"
+                              className="rounded-md border border-red-300 px-3 py-2 text-xs text-red-700"
+                              onClick={() => onChange('foto_perfil_base64', '')}
+                            >
+                              Remover foto
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
                   );
                 }
 
