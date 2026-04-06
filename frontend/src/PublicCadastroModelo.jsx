@@ -5,6 +5,7 @@ import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from './apiConfig
 import { sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatPhoneDisplay, formatCepDisplay } from './utils/brMasks';
+import { toDateInputValue } from './utils/dateInput';
 
 const BRAND_ORANGE = '#F59E0B';
 const SUCCESS_TEXT = 'Cadastro recebido com sucesso. Obrigado pela atualização.';
@@ -469,7 +470,8 @@ export default function PublicCadastroModelo() {
             </span>
             <input
               type="date"
-              value={form.data_nascimento}
+              autoComplete="off"
+              value={toDateInputValue(form.data_nascimento)}
               onChange={(e) => onChange('data_nascimento', e.target.value)}
               className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
               required

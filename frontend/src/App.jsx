@@ -4,6 +4,7 @@ import OperacaoCalendar from './components/OperacaoCalendar';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
+import { toDateInputValue } from './utils/dateInput';
 
 const rawApi = import.meta.env.VITE_API_URL;
 const trimmed =
@@ -132,7 +133,10 @@ function createEmptyOrcamentoForm() {
   };
 }
 
-/** Espelha `computeOsFinancials` do backend para exibir % taxa / NF e valores em R$ no formulário. */
+/**
+ * Espelha `computeOsFinancials`: cachê somado é líquido ao modelo; taxa % sobre cachês; extras;
+ * imposto % sobre subtotal; total = subtotal + imposto (sem desconto no cachê).
+ */
 function previewOrcamentoFinanceiro(form) {
   const tipo = form.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
   const impPct = nPrev(form.imposto_percent ?? 10);
@@ -2789,7 +2793,8 @@ function App({ authUser, onLogout = () => {} }) {
                     <span className="mb-1 block">De (data)</span>
                     <input
                       type="date"
-                      value={finDespesaFiltroDe}
+                      autoComplete="off"
+                      value={toDateInputValue(finDespesaFiltroDe)}
                       onChange={(e) => setFinDespesaFiltroDe(e.target.value)}
                       className="rounded-lg border border-slate-300 px-3 py-2"
                     />
@@ -2798,7 +2803,8 @@ function App({ authUser, onLogout = () => {} }) {
                     <span className="mb-1 block">Até (data)</span>
                     <input
                       type="date"
-                      value={finDespesaFiltroAte}
+                      autoComplete="off"
+                      value={toDateInputValue(finDespesaFiltroAte)}
                       onChange={(e) => setFinDespesaFiltroAte(e.target.value)}
                       className="rounded-lg border border-slate-300 px-3 py-2"
                     />
@@ -2852,7 +2858,8 @@ function App({ authUser, onLogout = () => {} }) {
                     <span className="mb-1 block">Data</span>
                     <input
                       type="date"
-                      value={finDespesaForm.data_despesa}
+                      autoComplete="off"
+                      value={toDateInputValue(finDespesaForm.data_despesa)}
                       onChange={(e) => setFinDespesaForm((p) => ({ ...p, data_despesa: e.target.value }))}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2"
                       required
@@ -3034,7 +3041,8 @@ function App({ authUser, onLogout = () => {} }) {
                     <span className="mb-1 block">Data</span>
                     <input
                       type="date"
-                      value={finForm.data_recebimento}
+                      autoComplete="off"
+                      value={toDateInputValue(finForm.data_recebimento)}
                       onChange={(e) => setFinForm((p) => ({ ...p, data_recebimento: e.target.value }))}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2"
                       required
@@ -3214,7 +3222,8 @@ function App({ authUser, onLogout = () => {} }) {
                     <span className="mb-1 block">Data</span>
                     <input
                       type="date"
-                      value={pagamentoForm.data_pagamento}
+                      autoComplete="off"
+                      value={toDateInputValue(pagamentoForm.data_pagamento)}
                       onChange={(e) => setPagamentoForm((p) => ({ ...p, data_pagamento: e.target.value }))}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2"
                       required
@@ -3768,7 +3777,10 @@ function App({ authUser, onLogout = () => {} }) {
                     </span>
                     <input
                       type={field === 'data_nascimento' ? 'date' : 'text'}
-                      value={form[field] ?? ''}
+                      autoComplete={field === 'data_nascimento' ? 'off' : undefined}
+                      value={
+                        field === 'data_nascimento' ? toDateInputValue(form[field]) : form[field] ?? ''
+                      }
                       onChange={(event) =>
                         useMaskedCadastroInput
                           ? handleMaskedCadastroChange(field, event.target.value)
@@ -4000,8 +4012,8 @@ function App({ authUser, onLogout = () => {} }) {
               )}
 
               {orcamentosSubView === 'formulario' && (
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex flex-col gap-2 rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                     <button
                       type="button"
@@ -4027,7 +4039,7 @@ function App({ authUser, onLogout = () => {} }) {
                       !orcamentoFormLocked && (
                         <button
                           type="button"
-                          className="w-full rounded-xl px-6 py-3.5 text-base font-semibold text-white shadow-md sm:min-w-[220px]"
+                          className="w-full rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-sm sm:min-w-[200px]"
                           style={{ backgroundColor: BRAND_ORANGE }}
                           onClick={() => aprovarOrcamento(orcamentoEditingId)}
                         >
@@ -4047,7 +4059,7 @@ function App({ authUser, onLogout = () => {} }) {
                       )}
                   </div>
                 </div>
-                <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={saveOrcamento}>
+                <form className="grid grid-cols-1 gap-2 md:grid-cols-2 md:gap-x-4 md:gap-y-2" onSubmit={saveOrcamento}>
                   {orcamentoFormLocked && (
                     <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
                       <p className="font-medium">
@@ -4066,16 +4078,16 @@ function App({ authUser, onLogout = () => {} }) {
                   )}
                   <fieldset
                     disabled={orcamentoFormLocked}
-                    className="md:col-span-2 grid min-w-0 grid-cols-1 gap-3 border-0 p-0 md:grid-cols-2 [&:disabled]:opacity-60"
+                    className="md:col-span-2 grid min-w-0 grid-cols-1 gap-2 border-0 p-0 md:grid-cols-2 [&:disabled]:opacity-60"
                   >
-                  <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-                    <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">1. Cliente</p>
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cliente</p>
                     <label className="text-sm text-slate-600">
-                      <span className="mb-1 block font-medium">Cliente</span>
+                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Nome</span>
                       <select
                         value={orcamentoForm.cliente_id}
                         onChange={(event) => onChangeOrcamento('cliente_id', event.target.value)}
-                        className="w-full max-w-lg rounded-lg border border-slate-300 bg-white px-3 py-2"
+                        className="w-full max-w-xl rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
                       >
                         <option value="">Selecione o cliente</option>
                         {clients.map((client) => (
@@ -4087,26 +4099,27 @@ function App({ authUser, onLogout = () => {} }) {
                     </label>
                   </div>
 
+                  <div className="grid grid-cols-1 gap-2 md:col-span-2 md:grid-cols-2">
                   <label
                     className={`text-sm text-slate-600 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
                   >
-                    <span className="mb-1 block">Tipo de trabalho</span>
+                    <span className="mb-0.5 block text-xs font-medium text-slate-700">Tipo de trabalho</span>
                     <input
                       value={orcamentoForm.tipo_trabalho}
                       onChange={(event) => onChangeOrcamento('tipo_trabalho', event.target.value)}
                       disabled={!orcamentoForm.cliente_id}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                      className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
                     />
                   </label>
 
                   <div
-                    className={`rounded-xl border border-slate-200 bg-white p-4 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
+                    className={`rounded-lg border border-slate-200 bg-white p-3 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
                   >
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      2. O job inclui modelos?
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Job com modelos?
                     </p>
                     <label className="text-sm text-slate-600">
-                      <span className="mb-1 block font-medium">Resposta</span>
+                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Tipo de proposta</span>
                       <select
                         value={orcamentoForm.tipo_proposta_os || 'com_modelo'}
                         disabled={!orcamentoForm.cliente_id}
@@ -4119,72 +4132,69 @@ function App({ authUser, onLogout = () => {} }) {
                           quantidade_modelos_referencia: v === 'sem_modelo' ? '' : prev.quantidade_modelos_referencia ?? '',
                         }));
                         }}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                        className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
                       >
-                        <option value="com_modelo">Sim</option>
-                        <option value="sem_modelo">Não (serviço sem modelo)</option>
+                        <option value="com_modelo">Com modelos</option>
+                        <option value="sem_modelo">Sem modelo (serviço)</option>
                       </select>
                     </label>
-                    <p className="mt-2 text-xs text-slate-500">
-                      Com modelos: use a quantidade como referência e, quando souber, adicione modelos do cadastro com
-                      cachê. Para aprovar, é obrigatório ter modelos reais definidos.
+                    <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
+                      Na aprovação, com modelos é obrigatório definir pelo menos um modelo do cadastro com cachê.
                     </p>
+                  </div>
                   </div>
 
                   {orcamentoForm.tipo_proposta_os === 'sem_modelo' && (
                     <label className="text-sm text-slate-600 md:col-span-2">
-                      <span className="mb-1 block">Valor do serviço (sem modelo)</span>
+                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Valor base do serviço (sem modelo)</span>
                       <input
                         type="number"
                         step="0.01"
                         value={orcamentoForm.valor_servico_sem_modelo}
                         onChange={(event) => onChangeOrcamento('valor_servico_sem_modelo', event.target.value)}
                         disabled={!orcamentoForm.cliente_id}
-                        className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                        className="w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
                       />
-                      <span className="mt-1 block text-xs text-slate-500">
-                        Obrigatório para aprovar quando não houver modelos. No rascunho pode ficar zero.
+                      <span className="mt-0.5 block text-[11px] text-slate-500">
+                        Obrigatório para aprovar. Rascunho pode ficar zero.
                       </span>
                     </label>
                   )}
 
                   {orcamentoForm.tipo_proposta_os === 'com_modelo' && (
                     <div
-                      className={`md:col-span-2 rounded-xl border border-amber-200 bg-amber-50/60 p-4 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
+                      className={`md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
                     >
-                      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-amber-900/80">
-                        3. Modelos no orçamento
-                      </p>
-                      <label className="mb-4 block max-w-xs text-sm text-slate-700">
-                        <span className="mb-1 block font-medium">Quantidade de modelos</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={999}
-                          inputMode="numeric"
-                          placeholder="0"
-                          value={orcamentoForm.quantidade_modelos_referencia}
-                          onChange={handleQuantidadeModelosRefChange}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                        />
-                        <span className="mt-1 block text-xs text-slate-600">
-                          Referência inicial (opcional). Não gera linhas automáticas. Na aprovação, serão exigidos
-                          modelos do cadastro com cachê.
-                        </span>
-                      </label>
+                      <div className="mb-2 flex flex-wrap items-end gap-3">
+                        <label className="block w-full max-w-[140px] text-sm text-slate-700">
+                          <span className="mb-0.5 block text-[11px] font-medium text-slate-600">Qtd. referência</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={999}
+                            inputMode="numeric"
+                            placeholder="0"
+                            value={orcamentoForm.quantidade_modelos_referencia}
+                            onChange={handleQuantidadeModelosRefChange}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          />
+                        </label>
+                        <p className="min-w-0 flex-1 text-[11px] leading-snug text-slate-600">
+                          Opcional. Linhas abaixo definem nomes e cachês (para aprovação).
+                        </p>
+                      </div>
 
-                      <p className="mb-2 text-sm font-medium text-slate-800">Modelos do cadastro (opcional no rascunho)</p>
+                      <p className="mb-1.5 text-xs font-medium text-slate-800">Modelos do cadastro</p>
                       {(orcamentoForm.linhas || []).length === 0 ? (
-                        <p className="text-sm text-slate-600">
-                          Adicione modelos reais quando já souber quem entra no job. Para aprovar, preencha pelo menos um
-                          modelo com cachê.
+                        <p className="text-xs text-slate-600">
+                          Inclua modelos e cachês quando souber o elenco. Mínimo uma linha para aprovar.
                         </p>
                       ) : (
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           {(orcamentoForm.linhas || []).map((line, index) => (
                             <div
                               key={line.id ?? `ol-${index}`}
-                              className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3 md:grid-cols-[1fr_minmax(100px,1fr)_auto_auto]"
+                              className="grid gap-1.5 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_minmax(100px,1fr)_auto_auto]"
                             >
                               <select
                                 value={line.modelo_id ?? ''}
@@ -4193,9 +4203,9 @@ function App({ authUser, onLogout = () => {} }) {
                                     modelo_id: event.target.value ? Number(event.target.value) : '',
                                     origemCadastro: true,
                                   })}
-                                className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
                               >
-                                <option value="">Selecione o modelo…</option>
+                                <option value="">Modelo…</option>
                                 {modelosParaSelecao.map((m) => (
                                   <option key={m.id} value={m.id}>
                                     {m.nome}
@@ -4210,9 +4220,9 @@ function App({ authUser, onLogout = () => {} }) {
                                 value={line.cache_modelo ?? ''}
                                 onChange={(event) =>
                                   updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
-                                className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
                               />
-                              <label className="flex items-center gap-2 text-xs text-slate-700">
+                              <label className="flex items-center gap-1.5 text-[11px] text-slate-700">
                                 <input
                                   type="checkbox"
                                   checked={Boolean(line.emite_nf_propria)}
@@ -4233,138 +4243,198 @@ function App({ authUser, onLogout = () => {} }) {
                         </div>
                       )}
 
-                      <div className="mt-3">
+                      <div className="mt-2">
                         <button
                           type="button"
-                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-white"
+                          className="rounded-md px-2.5 py-1 text-xs font-medium text-white"
                           style={{ backgroundColor: BRAND_ORANGE }}
                           onClick={addOrcamentoLinhaCadastro}
                         >
-                          + Modelo do cadastro
+                          + Modelo
                         </button>
                       </div>
                     </div>
                   )}
-                  <label className="text-sm text-slate-600 md:col-span-2">
-                    <span className="mb-1 block">Descrição</span>
-                    <input value={orcamentoForm.descricao} onChange={(event) => onChangeOrcamento('descricao', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Data do trabalho</span>
-                    <input
-                      type="date"
-                      value={orcamentoForm.data_trabalho}
-                      onChange={(event) => onChangeOrcamento('data_trabalho', event.target.value)}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Horário</span>
-                    <input
-                      value={orcamentoForm.horario_trabalho}
-                      onChange={(event) => onChangeOrcamento('horario_trabalho', event.target.value)}
-                      placeholder="Ex.: 09h–18h"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2">
-                    <span className="mb-1 block">Local</span>
-                    <input
-                      value={orcamentoForm.local_trabalho}
-                      onChange={(event) => onChangeOrcamento('local_trabalho', event.target.value)}
-                      placeholder="Endereço ou estúdio"
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">
-                      Cachê base estimado (total)
-                      {orcamentoForm.tipo_proposta_os === 'com_modelo' &&
-                        (orcamentoForm.linhas || []).length > 0 &&
-                        ' — soma dos modelos'}
-                    </span>
-                    {orcamentoForm.tipo_proposta_os === 'com_modelo' && (orcamentoForm.linhas || []).length > 0 ? (
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Descrição e agenda
+                    </p>
+                    <label className="mb-2 block text-sm text-slate-600">
+                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Descrição do trabalho</span>
                       <input
-                        type="text"
-                        readOnly
-                        value={String(
-                          (orcamentoForm.linhas || []).reduce(
-                            (s, l) => s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0),
-                            0,
-                          ),
-                        )}
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700"
+                        value={orcamentoForm.descricao}
+                        onChange={(event) => onChangeOrcamento('descricao', event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
                       />
-                    ) : (
-                      <input
-                        type="number"
-                        value={orcamentoForm.cache_base_estimado_total}
-                        onChange={(event) => onChangeOrcamento('cache_base_estimado_total', event.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    )}
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Taxa da agência (%)</span>
-                    <input type="number" value={orcamentoForm.taxa_agencia_percent} onChange={(event) => onChangeOrcamento('taxa_agencia_percent', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                    <span className="mt-1 block text-xs text-slate-500">
-                      Valor ref. da taxa: {formatBRL(orcamentoFinanceiroPreview.taxa_agencia_valor)}
-                    </span>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Extras da agência (valor)</span>
-                    <input type="number" value={orcamentoForm.extras_agencia_valor} onChange={(event) => onChangeOrcamento('extras_agencia_valor', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2">
-                    <span className="mb-1 block font-medium">Nota fiscal / imposto (%)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={orcamentoForm.imposto_percent}
-                      onChange={(event) => onChangeOrcamento('imposto_percent', event.target.value)}
-                      className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2"
-                      placeholder="10"
-                    />
-                    <span className="mt-1 block text-xs text-slate-500">
-                      Sobre o <strong>subtotal</strong> (cachê + taxa da agência + extras):{' '}
-                      {formatBRL(orcamentoFinanceiroPreview.impostoValor)}. O{' '}
-                      <strong>total ao cliente</strong> = subtotal + nota (
-                      {formatBRL(orcamentoFinanceiroPreview.totalCliente)}). No PDF ao cliente vai só o total final.
-                    </span>
-                  </label>
-                  <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-                    <p className="text-xs text-slate-500">Subtotal (base + taxa + extras)</p>
-                    <p className="font-medium text-slate-800">{formatBRL(orcamentoFinanceiroPreview.subtotal)}</p>
-                    <p className="mt-2 text-xs text-slate-500">Total ao cliente (subtotal + nota)</p>
-                    <p className="text-lg font-semibold text-slate-900">{formatBRL(orcamentoFinanceiroPreview.totalCliente)}</p>
+                    </label>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Data</span>
+                        <input
+                          type="date"
+                          autoComplete="off"
+                          value={toDateInputValue(orcamentoForm.data_trabalho)}
+                          onChange={(event) => onChangeOrcamento('data_trabalho', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Horário</span>
+                        <input
+                          value={orcamentoForm.horario_trabalho}
+                          onChange={(event) => onChangeOrcamento('horario_trabalho', event.target.value)}
+                          placeholder="Ex.: 09h–18h"
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600 sm:col-span-2 lg:col-span-2">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Local</span>
+                        <input
+                          value={orcamentoForm.local_trabalho}
+                          onChange={(event) => onChangeOrcamento('local_trabalho', event.target.value)}
+                          placeholder="Estúdio / endereço"
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                    </div>
                   </div>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Condições de pagamento</span>
-                    <input value={orcamentoForm.condicoes_pagamento} onChange={(event) => onChangeOrcamento('condicoes_pagamento', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Data de vencimento</span>
-                    <input
-                      type="date"
-                      value={orcamentoForm.data_vencimento || ''}
-                      onChange={(event) => onChangeOrcamento('data_vencimento', event.target.value)}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Mídias - Uso de imagem</span>
-                    <input value={orcamentoForm.uso_imagem} onChange={(event) => onChangeOrcamento('uso_imagem', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Tempo de uso de imagem</span>
-                    <input value={orcamentoForm.prazo} onChange={(event) => onChangeOrcamento('prazo', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2">
-                    <span className="mb-1 block">Território</span>
-                    <input value={orcamentoForm.territorio} onChange={(event) => onChangeOrcamento('territorio', event.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2" />
-                  </label>
+
+                  <div className="md:col-span-2 rounded-lg border border-slate-300 bg-slate-50/90 p-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                      Valores — fechamento ao cliente
+                    </p>
+                    <p className="mb-2 text-[11px] text-slate-500">
+                      Ordem: cachê → taxa agência → extras → imposto → total final (interno: taxa/imposto calculados; PDF
+                      só o total).
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">
+                          1. Cachê dos modelos (R$)
+                          {orcamentoForm.tipo_proposta_os === 'com_modelo' &&
+                            (orcamentoForm.linhas || []).length > 0 &&
+                            ' · soma'}
+                        </span>
+                        {orcamentoForm.tipo_proposta_os === 'com_modelo' && (orcamentoForm.linhas || []).length > 0 ? (
+                          <input
+                            type="text"
+                            readOnly
+                            value={String(
+                              (orcamentoForm.linhas || []).reduce(
+                                (s, l) => s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0),
+                                0,
+                              ),
+                            )}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-800"
+                          />
+                        ) : (
+                          <input
+                            type="number"
+                            value={orcamentoForm.cache_base_estimado_total}
+                            onChange={(event) => onChangeOrcamento('cache_base_estimado_total', event.target.value)}
+                            className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                          />
+                        )}
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">2. Taxa da agência (%)</span>
+                        <input
+                          type="number"
+                          value={orcamentoForm.taxa_agencia_percent}
+                          onChange={(event) => onChangeOrcamento('taxa_agencia_percent', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                        />
+                        <span className="mt-0.5 block text-[11px] text-slate-500">
+                          ≈ {formatBRL(orcamentoFinanceiroPreview.taxa_agencia_valor)}
+                        </span>
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">3. Extras agência (R$)</span>
+                        <input
+                          type="number"
+                          value={orcamentoForm.extras_agencia_valor}
+                          onChange={(event) => onChangeOrcamento('extras_agencia_valor', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">4. Imposto / NF (%)</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={orcamentoForm.imposto_percent}
+                          onChange={(event) => onChangeOrcamento('imposto_percent', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                          placeholder="10"
+                        />
+                        <span className="mt-0.5 block text-[11px] text-slate-500">
+                          ≈ {formatBRL(orcamentoFinanceiroPreview.impostoValor)} sobre subtotal
+                        </span>
+                      </label>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-amber-200/90 bg-amber-50/80 px-3 py-2">
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-amber-950/90">5. Resultado</p>
+                        <p className="text-[11px] text-slate-600">
+                          Subtotal {formatBRL(orcamentoFinanceiroPreview.subtotal)} · Total ao cliente
+                        </p>
+                      </div>
+                      <p className="text-xl font-bold tabular-nums text-slate-900">
+                        {formatBRL(orcamentoFinanceiroPreview.totalCliente)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Pagamento e uso de imagem
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <label className="text-sm text-slate-600 md:col-span-2">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Condições de pagamento</span>
+                        <input
+                          value={orcamentoForm.condicoes_pagamento}
+                          onChange={(event) => onChangeOrcamento('condicoes_pagamento', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Data de vencimento</span>
+                        <input
+                          type="date"
+                          autoComplete="off"
+                          value={toDateInputValue(orcamentoForm.data_vencimento)}
+                          onChange={(event) => onChangeOrcamento('data_vencimento', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Mídias — uso de imagem</span>
+                        <input
+                          value={orcamentoForm.uso_imagem}
+                          onChange={(event) => onChangeOrcamento('uso_imagem', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Tempo de uso de imagem</span>
+                        <input
+                          value={orcamentoForm.prazo}
+                          onChange={(event) => onChangeOrcamento('prazo', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600 md:col-span-2">
+                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Território</span>
+                        <input
+                          value={orcamentoForm.territorio}
+                          onChange={(event) => onChangeOrcamento('territorio', event.target.value)}
+                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        />
+                      </label>
+                    </div>
+                  </div>
                   </fieldset>
                   <div className="md:col-span-2 flex flex-wrap items-center gap-3">
                     {!orcamentoFormLocked && (
@@ -4394,9 +4464,9 @@ function App({ authUser, onLogout = () => {} }) {
                     )}
                   </div>
                   {orcamentoEditingId && (
-                    <p className="md:col-span-2 text-xs text-slate-500">
-                      No PDF ao cliente: lista de modelos (apenas nomes), texto fixo sobre prestação de serviços e valor
-                      total — o detalhamento financeiro fica só no sistema.
+                    <p className="md:col-span-2 text-[11px] leading-snug text-slate-500">
+                      PDF ao cliente: A4, marca no topo, cliente, descrição, nomes dos modelos e valor total — sem
+                      comissões ou divisão interna.
                     </p>
                   )}
                 </form>
@@ -4703,7 +4773,8 @@ function App({ authUser, onLogout = () => {} }) {
                       <span className="mb-1 block">Data do trabalho</span>
                       <input
                         type="date"
-                        value={osDraft.data_trabalho ? String(osDraft.data_trabalho).slice(0, 10) : ''}
+                        autoComplete="off"
+                        value={toDateInputValue(osDraft.data_trabalho)}
                         onChange={(e) => updateOsDraft('data_trabalho', e.target.value || null)}
                         disabled={osDraft.status === 'recebida'}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2"
@@ -4713,11 +4784,8 @@ function App({ authUser, onLogout = () => {} }) {
                       <span className="mb-1 block">Vencimento (cliente — calendário)</span>
                       <input
                         type="date"
-                        value={
-                          osDraft.data_vencimento_cliente
-                            ? String(osDraft.data_vencimento_cliente).slice(0, 10)
-                            : ''
-                        }
+                        autoComplete="off"
+                        value={toDateInputValue(osDraft.data_vencimento_cliente)}
                         onChange={(e) => updateOsDraft('data_vencimento_cliente', e.target.value || null)}
                         disabled={osDraft.status === 'recebida'}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2"
@@ -4903,7 +4971,8 @@ function App({ authUser, onLogout = () => {} }) {
                                   <span className="mb-0.5 block">Previsão pagamento ao modelo</span>
                                   <input
                                     type="date"
-                                    value={line.data_prevista_pagamento || ''}
+                                    autoComplete="off"
+                                    value={toDateInputValue(line.data_prevista_pagamento)}
                                     onChange={(e) =>
                                       updateOsLinha(index, { data_prevista_pagamento: e.target.value || '' })}
                                     disabled={osDraft.status === 'recebida'}

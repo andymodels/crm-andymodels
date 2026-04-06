@@ -119,10 +119,116 @@ function fmtMoneyBR(v) {
 
 function fmtDateBR(d) {
   if (d == null || d === '') return '—';
+  const s = String(d).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   const x = new Date(d);
   if (Number.isNaN(x.getTime())) return '—';
   return x.toLocaleDateString('pt-BR');
 }
+
+/** Impressão/PDF do orçamento ao cliente: A4, limpo, sem detalhe interno de comissões. */
+const STYLE_ORCAMENTO_CLIENTE = `
+  @page { size: A4; margin: 14mm 16mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, system-ui, -apple-system, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.45;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+  }
+  .doc-shell { max-width: 100%; }
+  .doc-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #e2e8f0;
+    margin-bottom: 18px;
+  }
+  .doc-header .brand { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+  .doc-header img.doc-logo { height: 48px; width: auto; max-width: 200px; object-fit: contain; flex-shrink: 0; }
+  .doc-header .brand-text { font-size: 1.05rem; font-weight: 800; letter-spacing: 0.04em; color: #0f172a; }
+  .doc-header .title-block { text-align: right; flex: 1; min-width: 0; }
+  .doc-header .title-block h1 { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; color: #0f172a; }
+  .doc-header .title-block .sub { margin-top: 4px; font-size: 9pt; color: #64748b; }
+  .section { margin-bottom: 18px; page-break-inside: avoid; }
+  .section h2 {
+    margin: 0 0 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 5px;
+  }
+  .section .body { font-size: 10.5pt; color: #1e293b; }
+  .section .body p { margin: 0 0 10px; white-space: pre-wrap; }
+  .section .body p:last-child { margin-bottom: 0; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 9.5pt; color: #475569; }
+  .meta-grid .k { color: #94a3b8; font-weight: 600; }
+  .cliente-nome { font-size: 11pt; font-weight: 600; color: #0f172a; margin-bottom: 6px; }
+  .cliente-extras { font-size: 9pt; color: #64748b; line-height: 1.5; }
+  .cliente-extras .linha { margin: 2px 0; }
+  ul.modelos-nomes { margin: 6px 0 0; padding-left: 1.15rem; }
+  ul.modelos-nomes li { margin: 4px 0; }
+  .muted-mini { margin: 0; font-size: 9.5pt; color: #64748b; font-style: italic; }
+  .condicoes { font-size: 10pt; color: #334155; white-space: pre-wrap; margin: 0; }
+  .valor-total-wrap {
+    margin-top: 6px;
+    padding: 16px 18px;
+    background: #fafafa;
+    border: 1px solid #e4e4e7;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .valor-total-wrap .rotulo {
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #52525b;
+    margin-bottom: 8px;
+  }
+  .valor-total-wrap .num {
+    font-size: 1.85rem;
+    font-weight: 700;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    line-height: 1.2;
+  }
+  .valor-total-wrap .nota-legal {
+    margin-top: 10px;
+    font-size: 8.5pt;
+    color: #71717a;
+    line-height: 1.4;
+    max-width: 42rem;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .rodape-agencia {
+    margin-top: 28px;
+    padding-top: 14px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 8.5pt;
+    color: #64748b;
+    line-height: 1.45;
+    text-align: center;
+  }
+  .rodape-agencia-nome { margin: 0 0 4px; font-weight: 700; font-size: 9pt; letter-spacing: 0.06em; color: #475569; }
+  .rodape-agencia-linha { margin: 2px 0; }
+  .print-hint { margin-top: 14px; font-size: 8pt; color: #94a3b8; text-align: center; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .section { break-inside: avoid; }
+    .rodape-agencia { break-inside: avoid; }
+  }
+`;
 
 const STYLE = `
   body { font-family: system-ui, -apple-system, sans-serif; max-width: 800px; margin: 1.5rem auto; padding: 0 1rem; color: #0f172a; line-height: 1.5; font-size: 11pt; }
@@ -224,8 +330,8 @@ async function loadOrcamentoDoc(pool, id) {
 }
 
 /**
- * PDF para o cliente: dados do cliente, descrição, trabalho, condições, lista de modelos (só nomes), valor total.
- * Bloco final: texto fixo sobre prestação de serviços + valor total (sem discriminar linhas internas).
+ * PDF para o cliente: A4, marca no topo, seções enxutas — cliente, descrição, modelos (só nomes), valor total.
+ * Sem detalhamento interno (comissões, taxas, divisão de cachê).
  */
 function buildOrcamentoHtml(data) {
   const { orc, nums, linhasModelos = [] } = data;
@@ -233,7 +339,6 @@ function buildOrcamentoHtml(data) {
   const clienteNome = esc(orc.nome_fantasia || orc.nome_empresa || '');
   const razao = esc(orc.nome_empresa || '');
   const docCliente = pickClienteDoc(orc);
-  const cnpjLinha = esc(docCliente);
   const enderecoTxt = formatClienteEndereco(orc);
   const telTxt = formatClienteTelefones(orc);
   const emailTxt = formatClienteEmails(orc);
@@ -245,61 +350,62 @@ function buildOrcamentoHtml(data) {
   const horaLoc = esc(orc.horario_trabalho || '');
   const loc = esc(orc.local_trabalho || '');
   const dataTrab = fmtDateBR(orc.data_trabalho);
-  const tipoPropLabel =
-    orc.tipo_proposta_os === 'sem_modelo' ? 'Serviço sem modelo' : 'Com modelos';
-  const qtdRef =
-    orc.quantidade_modelos_referencia != null && orc.quantidade_modelos_referencia !== ''
-      ? esc(String(orc.quantidade_modelos_referencia))
-      : '—';
 
   const logoHtml = logoUri
-    ? `<img class="doc-logo" src="${logoUri}" alt="Andy Models" />`
-    : `<span class="doc-logo" style="font-size:1.15rem;font-weight:700;color:#0f172a;letter-spacing:0.02em;">Andy Models</span>`;
+    ? `<img class="doc-logo" src="${logoUri}" alt="${esc(AGENCIA_RODAPE_ORCAMENTO.nome)}" />`
+    : '';
 
   const discretoLinhas = [];
-  if (docCliente) {
-    discretoLinhas.push(
-      `<div class="linha"><span class="rotulo">CNPJ / Documento</span>${cnpjLinha}</div>`,
+  if (docCliente) discretoLinhas.push(`<div class="linha"><strong>Doc.</strong> ${esc(docCliente)}</div>`);
+  if (enderecoTxt) discretoLinhas.push(`<div class="linha">${esc(enderecoTxt)}</div>`);
+  if (telTxt) discretoLinhas.push(`<div class="linha"><strong>Tel.</strong> ${esc(telTxt)}</div>`);
+  if (emailTxt) discretoLinhas.push(`<div class="linha"><strong>Email</strong> ${esc(emailTxt)}</div>`);
+  const clienteExtrasHtml =
+    discretoLinhas.length > 0 ? `<div class="cliente-extras">${discretoLinhas.join('')}</div>` : '';
+
+  const metaLinhas = [];
+  if (orc.tipo_trabalho && String(orc.tipo_trabalho).trim()) {
+    metaLinhas.push(
+      `<div><span class="k">Tipo</span> ${esc(String(orc.tipo_trabalho).trim())}</div>`,
     );
   }
-  if (enderecoTxt) {
-    discretoLinhas.push(
-      `<div class="linha"><span class="rotulo">Endereço</span>${esc(enderecoTxt)}</div>`,
-    );
+  if (dataTrab !== '—') metaLinhas.push(`<div><span class="k">Data</span> ${esc(dataTrab)}</div>`);
+  if (horaLoc) metaLinhas.push(`<div><span class="k">Horário</span> ${horaLoc}</div>`);
+  if (loc) metaLinhas.push(`<div><span class="k">Local</span> ${loc}</div>`);
+  const uso = orc.uso_imagem != null && String(orc.uso_imagem).trim();
+  const prazo = orc.prazo != null && String(orc.prazo).trim();
+  const terr = orc.territorio != null && String(orc.territorio).trim();
+  if (uso) metaLinhas.push(`<div><span class="k">Uso de imagem</span> ${esc(uso)}</div>`);
+  if (prazo) metaLinhas.push(`<div><span class="k">Prazo</span> ${esc(prazo)}</div>`);
+  if (terr) metaLinhas.push(`<div><span class="k">Território</span> ${esc(terr)}</div>`);
+  const metaGridHtml =
+    metaLinhas.length > 0 ? `<div class="meta-grid">${metaLinhas.join('')}</div>` : '';
+
+  const rawDesc = orc.descricao != null ? String(orc.descricao).trim() : '';
+  const descricaoTxt = rawDesc ? esc(rawDesc) : '—';
+
+  let modelosSectionBody;
+  if (orc.tipo_proposta_os === 'sem_modelo') {
+    modelosSectionBody =
+      '<p class="muted-mini">Serviço contratado sem listagem de modelos nesta proposta.</p>';
+  } else if (linhasModelos.length === 0) {
+    modelosSectionBody =
+      '<p class="muted-mini">Modelos a confirmar na contratação.</p>';
+  } else {
+    modelosSectionBody = `<ul class="modelos-nomes">${linhasModelos.map((l) => `<li>${esc(l.modelo_nome)}</li>`).join('')}</ul>`;
   }
-  if (telTxt) {
-    discretoLinhas.push(`<div class="linha"><span class="rotulo">Telefone</span>${esc(telTxt)}</div>`);
-  }
-  if (emailTxt) {
-    discretoLinhas.push(`<div class="linha"><span class="rotulo">Email</span>${esc(emailTxt)}</div>`);
-  }
-  const clienteDiscretoHtml =
-    discretoLinhas.length > 0
-      ? `<div class="cliente-discreto">${discretoLinhas.join('')}</div>`
+
+  const condicoesBlock =
+    orc.condicoes_pagamento != null && String(orc.condicoes_pagamento).trim()
+      ? `<div class="section">
+    <h2>Condições comerciais</h2>
+    <p class="condicoes">${esc(orc.condicoes_pagamento)}</p>
+  </div>`
       : '';
 
-  const linhasModelosRows =
-    linhasModelos.length === 0
-      ? '<tr><td><em>Nenhum modelo do cadastro neste orçamento.</em></td></tr>'
-      : linhasModelos.map((l) => `<tr><td>${esc(l.modelo_nome)}</td></tr>`).join('');
-
-  const blocoModelosOuServico =
-    orc.tipo_proposta_os === 'sem_modelo'
-      ? `<div class="bloco">
-    <h2>Valor do serviço (referência)</h2>
-    <p style="margin:0;">${fmtMoneyBR(orc.valor_servico_sem_modelo)} <span class="muted">(base sem modelo)</span></p>
-  </div>`
-      : `<div class="bloco">
-    <h2>Quantidade de modelos (referência)</h2>
-    <p style="margin:0;">${qtdRef}</p>
-  </div>
-  <div class="bloco">
-    <h2>Modelos</h2>
-    <table class="linhas">
-      <thead><tr><th>Modelo</th></tr></thead>
-      <tbody>${linhasModelosRows}</tbody>
-    </table>
-  </div>`;
+  const brandBlock = logoHtml
+    ? `<div class="brand">${logoHtml}</div>`
+    : `<div class="brand"><span class="brand-text">${esc(AGENCIA_RODAPE_ORCAMENTO.nome)}</span></div>`;
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -307,60 +413,50 @@ function buildOrcamentoHtml(data) {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Orçamento nº ${esc(String(orc.id))}</title>
-  <style>${STYLE}</style>
+  <style>${STYLE_ORCAMENTO_CLIENTE}</style>
 </head>
 <body>
+  <div class="doc-shell">
   <header class="doc-header">
-    ${logoHtml}
-    <div class="doc-header-text">
-      <div class="ref-bar" style="margin-bottom:0;">
-        <strong>ANDY MODELS</strong> · Orçamento nº ${esc(String(orc.id))} · Emitido em ${esc(dataRef)}
-      </div>
+    ${brandBlock}
+    <div class="title-block">
+      <h1>Orçamento</h1>
+      <div class="sub">Nº ${esc(String(orc.id))} · ${esc(dataRef)}</div>
     </div>
   </header>
-  <h1>Orçamento</h1>
 
-  <div class="bloco">
+  <div class="section">
     <h2>Cliente</h2>
-    <table class="meta">
-      <tr><td>Nome / fantasia</td><td>${clienteNome}${razao && razao !== clienteNome ? ` <span class="muted">(${razao})</span>` : ''}</td></tr>
-    </table>
-    ${clienteDiscretoHtml}
+    <div class="body">
+      <div class="cliente-nome">${clienteNome}${razao && razao !== clienteNome ? ` <span style="color:#64748b;font-weight:500;">(${razao})</span>` : ''}</div>
+      ${clienteExtrasHtml}
+    </div>
   </div>
 
-  <div class="bloco">
+  <div class="section">
     <h2>Descrição do trabalho</h2>
-    <p style="margin:0; white-space: pre-wrap;">${esc(orc.descricao || '—')}</p>
+    <div class="body">
+      <p>${descricaoTxt}</p>
+      ${metaGridHtml}
+    </div>
   </div>
 
-  <div class="bloco">
-    <h2>Trabalho</h2>
-    <table class="meta">
-      <tr><td>Tipo de trabalho</td><td>${esc(orc.tipo_trabalho || '—')}</td></tr>
-      <tr><td>Proposta</td><td>${esc(tipoPropLabel)}</td></tr>
-      <tr><td>Data do trabalho</td><td>${esc(dataTrab)}</td></tr>
-      <tr><td>Horário</td><td>${horaLoc || '—'}</td></tr>
-      <tr><td>Local</td><td>${loc || '—'}</td></tr>
-      <tr><td>Uso de imagem</td><td>${esc(orc.uso_imagem || '—')}</td></tr>
-      <tr><td>Prazo</td><td>${esc(orc.prazo || '—')}</td></tr>
-      <tr><td>Território</td><td>${esc(orc.territorio || '—')}</td></tr>
-    </table>
+  <div class="section">
+    <h2>Modelos</h2>
+    <div class="body">${modelosSectionBody}</div>
   </div>
 
-  ${blocoModelosOuServico}
+  ${condicoesBlock}
 
-  <div class="bloco">
-    <h2>Condições de pagamento</h2>
-    <p style="margin:0; white-space: pre-wrap;">${esc(orc.condicoes_pagamento || '—')}</p>
-  </div>
-
-  <div class="bloco">
+  <div class="section">
     <h2>Valor total</h2>
-    <p style="margin:0 0 0.75rem; font-size:0.95rem;">
-      Valor total da prestação de serviços de casting, produção e contratação de modelos, incluindo custos operacionais e encargos
-    </p>
-    <div class="valor-bruto-box">
-      <p class="valor-bruto-num">${fmtMoneyBR(nums.total_cliente)}</p>
+    <div class="valor-total-wrap">
+      <div class="rotulo">Investimento (total ao cliente)</div>
+      <p class="num">${fmtMoneyBR(nums.total_cliente)}</p>
+      <p class="nota-legal">
+        Valor global da prestação de serviços de casting e contratação de modelos, incluindo encargos operacionais
+        aplicáveis à proposta, conforme combinado com a agência.
+      </p>
     </div>
   </div>
 
@@ -370,7 +466,8 @@ function buildOrcamentoHtml(data) {
     <p class="rodape-agencia-linha">${esc(AGENCIA_RODAPE_ORCAMENTO.telefones)}</p>
   </footer>
 
-  <p class="muted">Proposta para impressão ou PDF pelo navegador.</p>
+  <p class="print-hint">Use Imprimir → Salvar como PDF · Formato A4</p>
+  </div>
 </body>
 </html>`;
 }

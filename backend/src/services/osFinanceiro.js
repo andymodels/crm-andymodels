@@ -1,28 +1,24 @@
 /**
- * Distribuição (ordem fixa; percentuais inexistentes = 0):
- * 1) agencia_parcial = total_cliente - imposto_valor - modelo_liquido_total
- * 2) parceiro_valor = agencia_parcial * (parceiro_percent/100)
- * 3) agencia_apos_parceiro = agencia_parcial - parceiro_valor
- * 4) booker_valor = agencia_apos_parceiro * (booker_percent/100)
- * 5) agencia_final = agencia_apos_parceiro - booker_valor
- * 6) resultado_agencia = agencia_final - extras_despesa_valor
+ * Regra de fechamento ao cliente (com modelo):
+ * - valor_modelos = soma dos cachês (líquidos ao modelo, sem desconto automático)
+ * - valor_agência = percentual sobre valor_modelos
+ * - subtotal = valor_modelos + valor_agência + extras agência
+ * - imposto/NF = percentual sobre o subtotal
+ * - total_cliente = subtotal + imposto
  *
- * Modelo: sempre sobre cachê (lineLiquido).
- * Subtotal = cachê + taxa agência + extras (ou valor serviço + extras sem modelo).
- * Imposto/nota (%): sobre o subtotal. total_cliente = subtotal + imposto_valor.
- * Extras agência: entram no subtotal.
+ * Distribuição interna (parceiro/booker sobre a fatia da agência):
+ * - agencia_parcial = total_cliente - imposto_valor - modelo_liquido_total  (= taxa agência + extras no subtotal)
+ * - demais passos inalterados na ordem
  */
 
 const n = (v) => Number(v || 0);
 
-function lineLiquido(cacheModelo, impostoPercent, agenciaFeePercent, emiteNfPropria) {
-  const c = n(cacheModelo);
-  const imp = n(impostoPercent) / 100;
-  const fee = n(agenciaFeePercent) / 100;
-  if (emiteNfPropria) {
-    return c - c * fee;
-  }
-  return c - c * imp - c * fee;
+/**
+ * Valor devido ao modelo = cachê informado (sem deduzir taxa nem imposto).
+ * Parâmetros extras ignorados — mantidos por compatibilidade.
+ */
+function lineLiquido(cacheModelo, _impostoPercent, _agenciaFeePercent, _emiteNfPropria) {
+  return n(cacheModelo);
 }
 
 function computeOsFinancials({
@@ -59,16 +55,10 @@ function computeOsFinancials({
     const linhasArr = Array.isArray(linhas) ? linhas : [];
     if (linhasArr.length > 0) {
       cacheTotal = linhasArr.reduce((s, l) => s + n(l.cache_modelo), 0);
-      modeloLiquidoTotal = linhasArr.reduce(
-        (s, l) =>
-          s +
-          lineLiquido(l.cache_modelo, impPct, feePct, Boolean(l.emite_nf_propria)),
-        0,
-      );
     } else {
       cacheTotal = n(cache_modelo_total);
-      modeloLiquidoTotal = lineLiquido(cacheTotal, impPct, feePct, false);
     }
+    modeloLiquidoTotal = cacheTotal;
     taxaAgenciaValor = cacheTotal * (feePct / 100);
     subtotalCliente = cacheTotal + taxaAgenciaValor + extrasAg;
   }
