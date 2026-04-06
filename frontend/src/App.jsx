@@ -400,8 +400,7 @@ const cadastroConfig = {
 function App({ authUser, onLogout = () => {} }) {
   const [module, setModule] = useState('inicio');
   const [cadastrosMenuOpen, setCadastrosMenuOpen] = useState(false);
-  /** Bookers tem menos campos obrigatórios que Clientes — melhor para primeiro teste. */
-  const [tab, setTab] = useState('bookers');
+  const [tab, setTab] = useState('clientes');
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(cadastroConfig.bookers.form);
   const [editingId, setEditingId] = useState(null);
@@ -2110,6 +2109,7 @@ function App({ authUser, onLogout = () => {} }) {
                 onClick={() => {
                   setCadastrosMenuOpen((prev) => !prev);
                   setModule('cadastros');
+                  setTab('clientes');
                 }}
                 className={`w-full rounded-xl border px-3 py-2 text-left text-sm font-medium transition ${
                   module === 'cadastros'
