@@ -141,7 +141,6 @@ function createEmptyOrcamentoForm() {
  * imposto % sobre subtotal; total = subtotal + imposto (sem desconto no cachê).
  */
 function previewOrcamentoFinanceiro(form) {
-  const tipo = form.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
   const impPct = nPrev(form.imposto_percent ?? 10);
   const feePct = nPrev(form.taxa_agencia_percent);
   const extrasAg = nPrev(form.extras_agencia_valor);
@@ -158,6 +157,7 @@ function previewOrcamentoFinanceiro(form) {
       cache_modelo: nPrev(l.cache_modelo),
       emite_nf_propria: Boolean(l.emite_nf_propria),
     }));
+  const tipo = linhas.length > 0 ? 'com_modelo' : 'sem_modelo';
 
   if (tipo === 'sem_modelo') {
     const vs = nPrev(form.valor_servico_sem_modelo);
@@ -1846,21 +1846,18 @@ function App({ authUser, onLogout = () => {} }) {
         ? `${API_BASE}/orcamentos/${orcamentoEditingId}`
         : `${API_BASE}/orcamentos`;
 
-      const tipoProp = orcamentoForm.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
-      let linhasPayload = [];
-      if (tipoProp === 'com_modelo') {
-        linhasPayload = (orcamentoForm.linhas || [])
-          .filter((l) => {
-            const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
-            return Number.isFinite(mid) && mid > 0;
-          })
-          .map((l) => ({
-            modelo_id: Number(l.modelo_id),
-            cache_modelo: Number(l.cache_modelo),
-            emite_nf_propria: Boolean(l.emite_nf_propria),
-            rotulo: String(l.rotulo || '').trim() || undefined,
-          }));
-      }
+      const linhasPayload = (orcamentoForm.linhas || [])
+        .filter((l) => {
+          const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+          return Number.isFinite(mid) && mid > 0;
+        })
+        .map((l) => ({
+          modelo_id: Number(l.modelo_id),
+          cache_modelo: Number(l.cache_modelo),
+          emite_nf_propria: Boolean(l.emite_nf_propria),
+          rotulo: String(l.rotulo || '').trim() || undefined,
+        }));
+      const tipoProp = linhasPayload.length > 0 ? 'com_modelo' : 'sem_modelo';
       let cacheBase = Number(orcamentoForm.cache_base_estimado_total || 0);
       if (tipoProp === 'com_modelo' && linhasPayload.length > 0) {
         cacheBase = linhasPayload.reduce(
@@ -4217,58 +4214,27 @@ function App({ authUser, onLogout = () => {} }) {
                     />
                   </label>
 
+                  <div className="hidden md:block" />
+                  </div>
+
+                  <label className="text-sm text-slate-600 md:col-span-2">
+                    <span className="mb-0.5 block text-xs font-medium text-slate-700">Valor base do serviço (sem modelos)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={orcamentoForm.valor_servico_sem_modelo}
+                      onChange={(event) => onChangeOrcamento('valor_servico_sem_modelo', event.target.value)}
+                      disabled={!orcamentoForm.cliente_id}
+                      className="w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
+                    />
+                    <span className="mt-0.5 block text-[11px] text-slate-500">
+                      Usado automaticamente quando não houver modelos adicionados.
+                    </span>
+                  </label>
+
                   <div
-                    className={`rounded-lg border border-slate-200 bg-white p-3 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
+                    className={`md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
                   >
-                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      Job com modelos?
-                    </p>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Tipo de proposta</span>
-                      <select
-                        value={orcamentoForm.tipo_proposta_os || 'com_modelo'}
-                        disabled={!orcamentoForm.cliente_id}
-                        onChange={(event) => {
-                          const v = event.target.value;
-                        setOrcamentoForm((prev) => ({
-                          ...prev,
-                          tipo_proposta_os: v,
-                          linhas: v === 'sem_modelo' ? [] : prev.linhas || [],
-                        }));
-                        }}
-                        className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
-                      >
-                        <option value="com_modelo">Com modelos</option>
-                        <option value="sem_modelo">Sem modelo (serviço)</option>
-                      </select>
-                    </label>
-                    <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
-                      Na aprovação, com modelos é obrigatório definir pelo menos um modelo do cadastro com cachê.
-                    </p>
-                  </div>
-                  </div>
-
-                  {orcamentoForm.tipo_proposta_os === 'sem_modelo' && (
-                    <label className="text-sm text-slate-600 md:col-span-2">
-                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Valor base do serviço (sem modelo)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={orcamentoForm.valor_servico_sem_modelo}
-                        onChange={(event) => onChangeOrcamento('valor_servico_sem_modelo', event.target.value)}
-                        disabled={!orcamentoForm.cliente_id}
-                        className="w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
-                      />
-                      <span className="mt-0.5 block text-[11px] text-slate-500">
-                        Obrigatório para aprovar. Rascunho pode ficar zero.
-                      </span>
-                    </label>
-                  )}
-
-                  {orcamentoForm.tipo_proposta_os === 'com_modelo' && (
-                    <div
-                      className={`md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
-                    >
                       <p className="mb-1.5 text-xs font-medium text-slate-800">Modelos do cadastro</p>
                       {(orcamentoForm.linhas || []).length === 0 ? (
                         <p className="text-xs text-slate-600">
@@ -4344,7 +4310,6 @@ function App({ authUser, onLogout = () => {} }) {
                         </button>
                       </div>
                     </div>
-                  )}
                   <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                       Descrição e agenda
@@ -4401,11 +4366,10 @@ function App({ authUser, onLogout = () => {} }) {
                       <label className="text-sm text-slate-600">
                         <span className="mb-0.5 block text-xs font-medium text-slate-700">
                           1. Cachê dos modelos (R$)
-                          {orcamentoForm.tipo_proposta_os === 'com_modelo' &&
-                            (orcamentoForm.linhas || []).length > 0 &&
+                          {(orcamentoForm.linhas || []).length > 0 &&
                             ' · soma'}
                         </span>
-                        {orcamentoForm.tipo_proposta_os === 'com_modelo' && (orcamentoForm.linhas || []).length > 0 ? (
+                        {(orcamentoForm.linhas || []).length > 0 ? (
                           <input
                             type="text"
                             readOnly
