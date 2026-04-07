@@ -161,11 +161,14 @@ function buildContratoDocumentHtml(ctx) {
     }
     .assinatura-agencia {
       display: block;
-      width: 260px;
+      width: 250px;
       max-width: 100%;
       height: auto;
-      margin: 0 auto 12px;
+      margin: 0 auto 14px;
       object-fit: contain;
+      opacity: 0.42;
+      mix-blend-mode: screen;
+      filter: grayscale(12%) contrast(108%) brightness(103%);
       page-break-inside: avoid;
     }
     .line {

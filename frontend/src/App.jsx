@@ -3482,6 +3482,15 @@ function App({ authUser, onLogout = () => {} }) {
                             >
                               Visualizar
                             </a>
+                            <a
+                              href={`${API_BASE}/ordens-servico/${item.os_id}/contrato-pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-blue-300 px-2 py-1 text-xs text-blue-800"
+                              title="Gerar PDF do contrato"
+                            >
+                              📄 PDF
+                            </a>
                             <button
                               type="button"
                               className="rounded-md border border-amber-300 px-2 py-1 text-xs text-amber-900"
