@@ -13,7 +13,7 @@ function isExpired(criadoEm) {
 /**
  * Validação para GET (sem lock). Pode marcar como expirado no banco se o prazo passou.
  */
-async function validateTokenReadOnly(pool, token) {
+async function validateTokenReadOnly(pool, token, expectedType = 'modelo') {
   const t = String(token ?? '').trim();
   if (!t) return { ok: false, message: 'Token ausente.' };
 
@@ -23,6 +23,9 @@ async function validateTokenReadOnly(pool, token) {
   if (r.rows.length === 0) return { ok: false, message: 'Link invalido ou inexistente.' };
 
   const row = r.rows[0];
+  const tipo = String(row.tipo || 'modelo').trim().toLowerCase();
+  const need = String(expectedType || 'modelo').trim().toLowerCase();
+  if (tipo !== need) return { ok: false, message: 'Link inválido para este tipo de cadastro.' };
   if (row.status === 'usado') return { ok: false, message: 'Este link ja foi utilizado.' };
   if (row.status === 'expirado') return { ok: false, message: 'Este link expirou.' };
 
@@ -37,7 +40,7 @@ async function validateTokenReadOnly(pool, token) {
 /**
  * Dentro de transação: lock da linha e validação antes do INSERT do modelo.
  */
-async function validateAndLockLink(client, token) {
+async function validateAndLockLink(client, token, expectedType = 'modelo') {
   const t = String(token ?? '').trim();
   if (!t) return { ok: false, message: 'Token do link e obrigatorio.' };
 
@@ -45,6 +48,9 @@ async function validateAndLockLink(client, token) {
   if (r.rows.length === 0) return { ok: false, message: 'Link invalido ou inexistente.' };
 
   const row = r.rows[0];
+  const tipo = String(row.tipo || 'modelo').trim().toLowerCase();
+  const need = String(expectedType || 'modelo').trim().toLowerCase();
+  if (tipo !== need) return { ok: false, message: 'Link inválido para este tipo de cadastro.' };
   if (row.status === 'usado') return { ok: false, message: 'Este link ja foi utilizado.' };
   if (row.status === 'expirado') return { ok: false, message: 'Este link expirou.' };
 

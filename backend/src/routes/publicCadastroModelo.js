@@ -100,7 +100,7 @@ function validateMedidas(sexoParsed, raw) {
 router.get('/public/cadastro-modelo/validar', async (req, res, next) => {
   try {
     const token = trimStr(req.query.token);
-    const v = await validateTokenReadOnly(pool, token);
+    const v = await validateTokenReadOnly(pool, token, 'modelo');
     if (!v.ok) {
       return res.status(400).json({ ok: false, message: v.message });
     }
@@ -202,7 +202,7 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const linkV = await validateAndLockLink(client, token);
+      const linkV = await validateAndLockLink(client, token, 'modelo');
       if (!linkV.ok) {
         await client.query('ROLLBACK');
         return res.status(400).json({ message: linkV.message });

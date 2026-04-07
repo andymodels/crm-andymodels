@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import './index.css'
 import App from './App.jsx'
 import PublicCadastroModelo from './PublicCadastroModelo.jsx'
+import PublicCadastroCliente from './PublicCadastroCliente.jsx'
 import AuthGate from './AuthGate.jsx'
 import ModeloExtratoPortal from './ModeloExtratoPortal.jsx'
 import ContratoAssinaturaPublica from './ContratoAssinaturaPublica.jsx'
@@ -13,6 +14,7 @@ createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <Routes>
         <Route path="/cadastro-modelo" element={<PublicCadastroModelo />} />
+        <Route path="/cadastro-cliente" element={<PublicCadastroCliente />} />
         <Route path="/extrato-modelo" element={<ModeloExtratoPortal />} />
         <Route path="/assinatura-contrato" element={<ContratoAssinaturaPublica />} />
         <Route path="/*" element={<AuthGate>{({ user, onLogout }) => <App authUser={user} onLogout={onLogout} />}</AuthGate>} />

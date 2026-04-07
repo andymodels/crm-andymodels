@@ -392,6 +392,7 @@ makeCrudRoutes({
     'cidade',
     'uf',
     'website',
+    'instagram',
     'observacoes',
   ],
 });
@@ -435,6 +436,7 @@ makeCrudRoutes({
     'cidade',
     'uf',
     'website',
+    'instagram',
     'observacoes',
   ],
 });

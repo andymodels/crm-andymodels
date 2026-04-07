@@ -82,6 +82,10 @@ const initDb = async () => {
     ALTER TABLE clientes
     ADD COLUMN IF NOT EXISTS website TEXT NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE clientes
+    ADD COLUMN IF NOT EXISTS instagram TEXT NOT NULL DEFAULT '';
+  `);
 
   try {
     await pool.query(`
@@ -243,11 +247,37 @@ const initDb = async () => {
       criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       usado_em TIMESTAMPTZ,
       status TEXT NOT NULL DEFAULT 'ativo',
-      modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL
+      tipo TEXT NOT NULL DEFAULT 'modelo',
+      modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL,
+      cliente_id INTEGER REFERENCES clientes(id) ON DELETE SET NULL
     );
   `);
   await pool.query(`
+    ALTER TABLE cadastro_links
+    ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'modelo';
+  `);
+  await pool.query(`
+    ALTER TABLE cadastro_links
+    ADD COLUMN IF NOT EXISTS cliente_id INTEGER REFERENCES clientes(id) ON DELETE SET NULL;
+  `);
+  await pool.query(`
+    UPDATE cadastro_links SET tipo = 'modelo' WHERE tipo IS NULL OR TRIM(tipo) = '';
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_cadastro_links_token ON cadastro_links (token);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_cadastro_links_tipo_status ON cadastro_links (tipo, status);
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cadastro_publico_historico (
+      id SERIAL PRIMARY KEY,
+      entidade TEXT NOT NULL,
+      entidade_id INTEGER NOT NULL,
+      acao TEXT NOT NULL,
+      detalhes JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
   `);
 
   await pool.query(`

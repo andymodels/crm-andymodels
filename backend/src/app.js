@@ -11,6 +11,7 @@ const dashboardRouter = require('./routes/dashboard');
 const extratoModeloRouter = require('./routes/extrato_modelo');
 const financeiroRouter = require('./routes/financeiro');
 const publicCadastroModeloRouter = require('./routes/publicCadastroModelo');
+const publicCadastroClienteRouter = require('./routes/publicCadastroCliente');
 const cadastroLinksRouter = require('./routes/cadastroLinks');
 const authRouter = require('./routes/auth');
 const { requireAdminAuth } = require('./middleware/requireAdminAuth');
@@ -66,6 +67,7 @@ app.get('/api', (_req, res) => {
 
 // Rotas públicas
 app.use('/api', publicCadastroModeloRouter);
+app.use('/api', publicCadastroClienteRouter);
 app.use('/api', authRouter);
 app.use('/api', modeloPortalRouter);
 app.use('/api', publicContratoAssinaturaRouter);
