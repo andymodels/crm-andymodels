@@ -12,7 +12,7 @@ services:
     region: frankfurt
     plan: free
     rootDir: backend
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm run install:chrome && npm run build
     startCommand: npm run start:render
     healthCheckPath: /health
     envVars:
@@ -25,6 +25,8 @@ services:
       # URL pública do SPA (links gerados em Cadastros → Gerar link de cadastro)
       - key: PUBLIC_APP_URL
         value: "https://crm-andymodels.onrender.com"
+      - key: PUPPETEER_CACHE_DIR
+        value: "/opt/render/project/src/backend/.cache/puppeteer"
       # Opcional: horas de validade de cada link (predefinição no código: 72)
       - key: CADASTRO_LINK_HORAS_VALIDADE
         value: "72"

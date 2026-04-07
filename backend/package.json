@@ -5,6 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "postinstall": "node scripts/postinstall-build-web.js",
+    "install:chrome": "npx puppeteer browsers install chrome",
     "build": "npm install --prefix ../frontend && npm run build --prefix ../frontend && node scripts/copy-frontend.js",
     "copy-frontend": "node scripts/copy-frontend.js",
     "render-build": "npm run build",
