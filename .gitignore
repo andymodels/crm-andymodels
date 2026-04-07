@@ -1,5 +1,6 @@
 node_modules
 dist
+backend/.cache
 .env
 .DS_Store
 *.log

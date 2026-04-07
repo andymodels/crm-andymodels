@@ -25,6 +25,7 @@ services:
       # URL pública do SPA (links gerados em Cadastros → Gerar link de cadastro)
       - key: PUBLIC_APP_URL
         value: "https://crm-andymodels.onrender.com"
+      # Cache do Chromium no disco do serviço (não use /opt/render/.cache/puppeteer no painel).
       - key: PUPPETEER_CACHE_DIR
         value: "/opt/render/project/src/backend/.cache/puppeteer"
       # Opcional: horas de validade de cada link (predefinição no código: 72)
