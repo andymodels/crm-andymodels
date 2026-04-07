@@ -217,10 +217,10 @@ const navMainBtn = (active) =>
   active
     ? 'bg-[#F59E0B] text-white shadow-sm ring-1 ring-amber-500/40'
     : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-800';
-/** Submenu Cadastros: só o item ativo em destaque (âmbar suave); resto neutro */
+/** Submenu Cadastros: ativo em laranja mais claro (diferente do laranja sólido do grupo “Cadastros”) */
 const navSubBtn = (active) =>
   active
-    ? 'border border-amber-300 bg-amber-100 font-semibold text-amber-950 shadow-sm ring-1 ring-amber-400/30'
+    ? 'border border-orange-200 bg-orange-100 font-semibold text-amber-950 shadow-sm ring-1 ring-orange-300/40'
     : 'border border-transparent bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800';
 const LOAD_ERROR_MESSAGE = 'Erro ao carregar dados. Verifique conexão com servidor.';
 
@@ -477,6 +477,81 @@ const cadastroConfig = {
   },
 };
 
+const CADASTRO_PAINEL_BOTAO_NOVO = {
+  clientes: 'Criar novo cliente',
+  modelos: 'Criar novo modelo',
+  bookers: 'Criar novo booker',
+  parceiros: 'Criar novo parceiro/fornecedor',
+};
+
+const CADASTRO_PAINEL_BUSCA_DICA = {
+  clientes:
+    'Você pode buscar por razão social, nome fantasia, CNPJ, CPF, e-mail, telefone ou nome do representante.',
+  modelos: 'Você pode buscar por nome, CPF, RG, passaporte, e-mail ou telefone.',
+  bookers: 'Você pode buscar por nome, CPF, e-mail ou telefone.',
+  parceiros: 'Você pode buscar por razão social ou nome, CNPJ/CPF, tipo de serviço ou contato.',
+};
+
+function itemMatchesCadastroBusca(tab, item, rawQuery) {
+  const q = String(rawQuery || '').trim().toLowerCase();
+  const qDigits = onlyDigits(rawQuery);
+  const push = (arr, v) => {
+    if (v == null || v === '') return;
+    if (Array.isArray(v)) {
+      v.forEach((x) => push(arr, x));
+      return;
+    }
+    if (typeof v === 'object') {
+      arr.push(JSON.stringify(v));
+      return;
+    }
+    arr.push(String(v));
+  };
+  const pieces = [];
+  if (tab === 'clientes') {
+    push(pieces, item.nome_empresa);
+    push(pieces, item.nome_fantasia);
+    push(pieces, item.documento);
+    push(pieces, item.cnpj);
+    push(pieces, item.contato_principal);
+    push(pieces, item.email);
+    push(pieces, item.telefone);
+    push(pieces, item.emails);
+    push(pieces, item.telefones);
+  } else if (tab === 'modelos') {
+    push(pieces, item.nome);
+    push(pieces, item.cpf);
+    push(pieces, item.rg);
+    push(pieces, item.passaporte);
+    push(pieces, item.email);
+    push(pieces, item.telefone);
+    push(pieces, item.emails);
+    push(pieces, item.telefones);
+  } else if (tab === 'bookers') {
+    push(pieces, item.nome);
+    push(pieces, item.cpf);
+    push(pieces, item.email);
+    push(pieces, item.telefone);
+    push(pieces, item.emails);
+    push(pieces, item.telefones);
+  } else if (tab === 'parceiros') {
+    push(pieces, item.razao_social_ou_nome);
+    push(pieces, item.cnpj_ou_cpf);
+    push(pieces, item.tipo_servico);
+    push(pieces, item.contato);
+    push(pieces, item.email);
+    push(pieces, item.telefone);
+    push(pieces, item.emails);
+    push(pieces, item.telefones);
+  }
+  const hay = pieces.join(' ').toLowerCase();
+  const hayDigits = onlyDigits(pieces.join(''));
+  if (!q && qDigits.length < 2) return true;
+  if (q.length >= 1 && hay.includes(q)) return true;
+  if (qDigits.length >= 2 && hayDigits.includes(qDigits)) return true;
+  return false;
+}
+
 function App({ authUser, onLogout = () => {} }) {
   const [module, setModule] = useState('inicio');
   const [cadastrosMenuOpen, setCadastrosMenuOpen] = useState(false);
@@ -490,6 +565,9 @@ function App({ authUser, onLogout = () => {} }) {
   /** Erro ao carregar a lista (GET); separado para não apagar mensagens do formulário quando o GET termina depois. */
   const [cadastroListError, setCadastroListError] = useState('');
   const [cadastroSaving, setCadastroSaving] = useState(false);
+  /** Cadastros: `entrada` = painel busca + últimos 10; `formulario` = ficha + lista completa (comportamento anterior). */
+  const [cadastrosSubView, setCadastrosSubView] = useState('entrada');
+  const [cadastroBuscaInput, setCadastroBuscaInput] = useState('');
   const [apiOnline, setApiOnline] = useState(true);
   const [clients, setClients] = useState([]);
   const [orcamentos, setOrcamentos] = useState([]);
@@ -600,9 +678,21 @@ function App({ authUser, onLogout = () => {} }) {
 
   const contratosPendentes = alertasOperacionais?.contratos_pendentes ?? { count: 0, items: [] };
 
+  const cadastrosPainelRows = useMemo(() => {
+    if (module !== 'cadastros') return [];
+    const filtered = items.filter((item) => itemMatchesCadastroBusca(tab, item, cadastroBuscaInput));
+    return filtered.slice(0, 10);
+  }, [module, items, tab, cadastroBuscaInput]);
+
   useEffect(() => {
     if (module !== 'cadastros') setCadastrosMenuOpen(false);
   }, [module]);
+
+  useEffect(() => {
+    if (module !== 'cadastros') return;
+    setCadastrosSubView('entrada');
+    setCadastroBuscaInput('');
+  }, [module, tab]);
   const saldoAbertoClienteDashboard = useMemo(
     () =>
       (alertasOperacionais?.contas_receber ?? []).reduce(
@@ -1587,6 +1677,7 @@ function App({ authUser, onLogout = () => {} }) {
       setCadastroListError('');
       setEditingId(null);
       setForm(current.form);
+      setCadastrosSubView('entrada');
     } catch (e) {
       if (e?.name === 'AbortError') {
         setError(
@@ -1652,6 +1743,14 @@ function App({ authUser, onLogout = () => {} }) {
       nextForm.emails = normalizeDynamicTextList(item.emails?.length ? item.emails : [item.email]);
     }
     setForm(nextForm);
+    setCadastrosSubView('formulario');
+  };
+
+  const iniciarNovoCadastro = () => {
+    setEditingId(null);
+    setForm(cadastroConfig[tab].form);
+    setError('');
+    setCadastrosSubView('formulario');
   };
 
   const handleDelete = async (id) => {
@@ -2357,16 +2456,10 @@ function App({ authUser, onLogout = () => {} }) {
                   setModule('cadastros');
                   setTab('clientes');
                 }}
-                className={`w-full rounded-xl border px-3 py-2 text-left text-sm font-medium transition ${
-                  module === 'cadastros'
-                    ? 'border-amber-300 bg-amber-50 text-amber-950'
-                    : 'border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'cadastros')}`}
               >
-                <span className="flex items-center justify-between">
-                  <span>Cadastros</span>
-                  <span className="text-xs">{cadastrosMenuOpen ? '▾' : '▸'}</span>
-                </span>
+                <span>Cadastros</span>
+                <span className="text-xs opacity-90">{cadastrosMenuOpen ? '▾' : '▸'}</span>
               </button>
               {cadastrosMenuOpen && (
                 <nav className="mt-2 space-y-1.5 pl-2" aria-label="Tipos de cadastro">
@@ -2375,6 +2468,7 @@ function App({ authUser, onLogout = () => {} }) {
                       key={key}
                       type="button"
                       onClick={() => {
+                        setCadastrosMenuOpen(true);
                         setModule('cadastros');
                         setTab(key);
                       }}
@@ -2498,7 +2592,9 @@ function App({ authUser, onLogout = () => {} }) {
                 </h2>
                 <p className="text-sm text-slate-500">
                   {module === 'cadastros'
-                    ? 'Cadastro simples e operacional, pronto para alimentar O.S. e financeiro.'
+                    ? cadastrosSubView === 'entrada'
+                      ? 'Busque, veja os últimos registros ou crie um novo cadastro.'
+                      : 'Cadastro simples e operacional, pronto para alimentar O.S. e financeiro.'
                     : module === 'orcamentos'
                       ? orcamentosSubView === 'lista'
                         ? 'Listagem completa com filtros e paginação.'
@@ -2598,7 +2694,15 @@ function App({ authUser, onLogout = () => {} }) {
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Status</p>
-                <p className="text-lg font-semibold text-emerald-600">Ativo</p>
+                <p
+                  className={`text-lg font-semibold ${module === 'cadastros' ? 'text-slate-800' : 'text-emerald-600'}`}
+                >
+                  {module === 'cadastros'
+                    ? cadastrosSubView === 'entrada'
+                      ? 'Painel'
+                      : 'Formulário'
+                    : 'Ativo'}
+                </p>
               </div>
             </div>
           </section>
@@ -3614,7 +3718,128 @@ function App({ authUser, onLogout = () => {} }) {
             </section>
           )}
 
-          {module === 'cadastros' && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          {module === 'cadastros' && cadastrosSubView === 'entrada' && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between lg:gap-6">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-lg font-semibold text-slate-900">{current.label}</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Busque cadastros existentes ou abra o formulário para criar um novo registro.
+                  </p>
+                  <label className="mt-4 block">
+                    <span className="mb-1 block text-sm font-medium text-slate-800">Buscar</span>
+                    <input
+                      type="search"
+                      value={cadastroBuscaInput}
+                      onChange={(e) => setCadastroBuscaInput(e.target.value)}
+                      placeholder="Nome, CPF, CNPJ, e-mail, telefone…"
+                      className="w-full max-w-2xl rounded-xl border-2 border-slate-200 px-4 py-3 text-base shadow-sm outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <p className="mt-2 max-w-2xl text-xs text-slate-500">
+                    {CADASTRO_PAINEL_BUSCA_DICA[tab] || ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm"
+                  style={{ backgroundColor: BRAND_ORANGE }}
+                  onClick={iniciarNovoCadastro}
+                >
+                  {CADASTRO_PAINEL_BOTAO_NOVO[tab] || 'Criar novo cadastro'}
+                </button>
+              </div>
+              {cadastroListError ? (
+                <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  {cadastroListError}
+                </p>
+              ) : null}
+              <h4 className="mb-2 text-sm font-semibold text-slate-800">Últimos cadastros (até 10)</h4>
+              {loading ? (
+                <p className="text-sm text-slate-500">Carregando...</p>
+              ) : cadastrosPainelRows.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  {cadastroBuscaInput.trim()
+                    ? 'Nenhum resultado para esta busca.'
+                    : 'Nenhum cadastro ainda neste módulo.'}
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-slate-500">
+                        {current.columns.map((column) => (
+                          <th key={column} className="px-2 py-2 font-medium">
+                            {labelForField(column)}
+                          </th>
+                        ))}
+                        <th className="px-2 py-2 font-medium">acao</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cadastrosPainelRows.map((item) => (
+                        <tr key={item.id} className="border-b border-slate-100">
+                          {current.columns.map((column) => (
+                            <td key={column} className="px-2 py-2">
+                              {column === 'formas_pagamento'
+                                ? normalizeFormasRecebimento(item.formas_pagamento).map(formatFormaResumo).join(' · ')
+                                : column === 'telefones'
+                                  ? `${normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).filter(Boolean).length} telefone(s)`
+                                  : column === 'emails'
+                                    ? `${normalizeDynamicTextList(item.emails?.length ? item.emails : [item.email]).filter(Boolean).length} email(s)`
+                                    : String(item[column] ?? '')}
+                            </td>
+                          ))}
+                          <td className="px-2 py-2 space-x-2">
+                            <a
+                              href={`${API_BASE}/${current.endpoint}/${item.id}/pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700"
+                            >
+                              PDF
+                            </a>
+                            <button
+                              type="button"
+                              className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                              onClick={() => startEdit(item)}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700"
+                              onClick={() => handleDelete(item.id)}
+                            >
+                              Deletar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
+
+          {module === 'cadastros' && cadastrosSubView === 'formulario' && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="mb-4">
+                <button
+                  type="button"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setCadastrosSubView('entrada');
+                    setEditingId(null);
+                    setForm(current.form);
+                    setError('');
+                  }}
+                >
+                  ← Voltar ao painel
+                </button>
+              </div>
             <form
               className="grid grid-cols-1 gap-3 md:grid-cols-2"
               onSubmit={onSubmit}
@@ -4050,6 +4275,7 @@ function App({ authUser, onLogout = () => {} }) {
                     onClick={() => {
                       setEditingId(null);
                       setForm(current.form);
+                      setCadastrosSubView('entrada');
                     }}
                   >
                     Cancelar edicao
@@ -4057,9 +4283,11 @@ function App({ authUser, onLogout = () => {} }) {
                 )}
               </div>
             </form>
-          </section>}
+            </section>
+          )}
 
-          {module === 'cadastros' && <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          {module === 'cadastros' && cadastrosSubView === 'formulario' && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-base font-semibold">Lista de {current.label.toLowerCase()}</h3>
               <span className="text-xs font-medium text-slate-500">Editar e deletar com um clique</span>
@@ -4128,7 +4356,8 @@ function App({ authUser, onLogout = () => {} }) {
                 Dica: você pode registrar múltiplos telefones, emails e formas de recebimento.
               </p>
             )}
-          </section>}
+          </section>
+          )}
 
           {module === 'orcamentos' && (
             <>
