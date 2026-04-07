@@ -471,6 +471,8 @@ makeCrudRoutes({
     'ativo',
     'origem_cadastro',
     'status_cadastro',
+    'instagram',
+    'tiktok',
     'sexo',
     'passaporte',
     'rg',

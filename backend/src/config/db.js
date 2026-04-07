@@ -197,6 +197,14 @@ const initDb = async () => {
   `);
   await pool.query(`
     ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS instagram TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS tiktok TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS cep TEXT NOT NULL DEFAULT '';
   `);
   await pool.query(`
