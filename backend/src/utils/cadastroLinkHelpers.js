@@ -17,9 +17,10 @@ async function validateTokenReadOnly(pool, token, expectedType = 'modelo') {
   const t = String(token ?? '').trim();
   if (!t) return { ok: false, message: 'Token ausente.' };
 
-  const r = await pool.query('SELECT id, token, criado_em, status, usado_em FROM cadastro_links WHERE token = $1', [
-    t,
-  ]);
+  const r = await pool.query(
+    'SELECT id, token, criado_em, status, usado_em, tipo, modelo_id, cliente_id FROM cadastro_links WHERE token = $1',
+    [t],
+  );
   if (r.rows.length === 0) return { ok: false, message: 'Link invalido ou inexistente.' };
 
   const row = r.rows[0];

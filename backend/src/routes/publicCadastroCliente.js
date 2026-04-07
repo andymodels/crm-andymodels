@@ -11,6 +11,21 @@ function trimStr(v) {
   return String(v ?? '').trim();
 }
 
+function duplicateClienteMessage(err) {
+  const c = String(err?.constraint || '').toLowerCase();
+  const d = String(err?.detail || '').toLowerCase();
+  if (c.includes('clientes_documento_unique') || c.includes('documento') || d.includes('(documento)')) {
+    return 'CPF/CNPJ já cadastrado.';
+  }
+  if (c.includes('clientes_cnpj_key') || c.includes('cnpj') || d.includes('(cnpj)')) {
+    return 'CNPJ já cadastrado.';
+  }
+  if (c.includes('clientes_nome_empresa_key') || d.includes('(nome_empresa)')) {
+    return 'Empresa já cadastrada.';
+  }
+  return 'Este CPF/CNPJ já está cadastrado.';
+}
+
 router.get('/public/cadastro-cliente/validar', async (req, res, next) => {
   try {
     const token = trimStr(req.query.token);
@@ -62,6 +77,23 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
       if (!linkV.ok) {
         await client.query('ROLLBACK');
         return res.status(400).json({ message: linkV.message });
+      }
+
+      const documento = trimStr(body.documento);
+      const nomeEmpresa = trimStr(body.nome_empresa);
+      if (documento) {
+        const dupDoc = await client.query(`SELECT 1 FROM clientes WHERE documento = $1 LIMIT 1`, [documento]);
+        if (dupDoc.rowCount > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ message: 'CPF/CNPJ já cadastrado.' });
+        }
+      }
+      if (nomeEmpresa) {
+        const dupNome = await client.query(`SELECT 1 FROM clientes WHERE lower(nome_empresa) = lower($1) LIMIT 1`, [nomeEmpresa]);
+        if (dupNome.rowCount > 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ message: 'Empresa já cadastrada.' });
+        }
       }
 
       const cols = [
@@ -121,7 +153,7 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
         // ignore
       }
       if (err.code === '23505') {
-        return res.status(400).json({ message: 'Este CNPJ/CPF já está cadastrado.' });
+        return res.status(400).json({ message: duplicateClienteMessage(err) });
       }
       throw err;
     } finally {
