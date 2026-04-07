@@ -1,3 +1,6 @@
+const fs = require('fs');
+const path = require('path');
+
 /**
  * Contrato: texto jurídico fixo da agência + apenas dados da O.S. e cadastros.
  * Exibe ao cliente: dados do cliente, modelos, valor total, uso de imagem e condições de pagamento.
@@ -16,6 +19,16 @@ function esc(s) {
 function fmtMoneyBR(n) {
   const v = Number(n || 0);
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function loadAssinaturaDataUri() {
+  try {
+    const assinaturaPath = path.join(__dirname, '..', 'assets', 'assinatura-andy-models.png');
+    const buf = fs.readFileSync(assinaturaPath);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  } catch {
+    return '';
+  }
 }
 
 function buildListaModelosHtml(linhas) {
@@ -65,6 +78,7 @@ function buildContratoDocumentHtml(ctx) {
     month: 'long',
     year: 'numeric',
   });
+  const assinaturaDataUri = loadAssinaturaDataUri();
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -73,63 +87,71 @@ function buildContratoDocumentHtml(ctx) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Contrato — O.S. nº ${osNumero}</title>
   <style>
-    @page { size: A4; margin: 20mm 20mm 25mm 20mm; }
+    @page { size: A4; margin: 20mm; }
     html, body { background: #fff; color: #111827; }
     body {
       font-family: 'Times New Roman', Georgia, serif;
       font-size: 12pt;
       line-height: 1.5;
       margin: 0;
+      width: 100%;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
     .documento {
       width: 100%;
-      max-width: 170mm;
-      margin: 0 auto;
-      padding: 0;
+      max-width: 794px;
+      margin: 0;
+      padding: 0 8mm;
+      box-sizing: border-box;
     }
     .ref-bar {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12mm;
+      margin-bottom: 7mm;
       font-size: 10.5pt;
       color: #374151;
       border-bottom: 1px solid #d1d5db;
-      padding-bottom: 3mm;
+      padding-bottom: 2mm;
     }
     h1 {
       font-size: 13pt;
       text-align: center;
       text-transform: uppercase;
       letter-spacing: 0.01em;
-      margin: 0 0 9mm 0;
+      margin: 0 0 6mm 0;
       line-height: 1.4;
       font-weight: 700;
     }
     h2 {
       font-size: 12pt;
-      margin: 8mm 0 3mm;
+      margin: 5.2mm 0 2.2mm;
       font-weight: 700;
       text-transform: uppercase;
       page-break-after: avoid;
     }
-    p.clause { margin: 0 0 3.2mm 0; text-align: justify; }
+    p.clause {
+      margin: 0 0 2.2mm 0;
+      text-align: justify;
+      orphans: 3;
+      widows: 3;
+      page-break-inside: avoid;
+    }
     p.muted { color: #6b7280; }
     ul.lista-modelos {
-      margin: 0 0 4mm 0;
+      margin: 0 0 3mm 0;
       padding-left: 6mm;
       page-break-inside: avoid;
     }
     ul.lista-modelos li { margin: 0 0 1.8mm 0; }
     .rodape-local-data {
-      margin-top: 10mm;
+      margin-top: 6mm;
       text-align: right;
       page-break-inside: avoid;
     }
     .sign {
-      margin-top: 12mm;
+      margin-top: 8mm;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12mm;
@@ -137,17 +159,30 @@ function buildContratoDocumentHtml(ctx) {
       page-break-inside: avoid;
       break-inside: avoid;
     }
-    .digital-hint {
-      font-size: 10pt;
-      color: #4b5563;
-      margin-bottom: 9mm;
-      min-height: 14px;
+    .assinatura-agencia {
+      display: block;
+      width: 260px;
+      max-width: 100%;
+      height: auto;
+      margin: 0 auto 12px;
+      object-fit: contain;
+      page-break-inside: avoid;
     }
     .line {
       border-top: 1px solid #111827;
       padding-top: 2.8mm;
       font-size: 10.5pt;
       font-weight: 700;
+    }
+    @media print {
+      @page { size: A4; margin: 20mm; }
+      html, body { width: 100%; margin: 0; }
+      .documento {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 0;
+      }
     }
   </style>
 </head>
@@ -233,11 +268,11 @@ function buildContratoDocumentHtml(ctx) {
 
   <div class="sign">
     <div>
-      <div class="digital-hint">&nbsp;</div>
+      <div style="height: 54px;"></div>
       <div class="line">CONTRATANTE / CLIENTE</div>
     </div>
     <div>
-      <div class="digital-hint">Assinatura digital da agência</div>
+      ${assinaturaDataUri ? `<img class="assinatura-agencia" src="${assinaturaDataUri}" alt="Assinatura Andy Models" />` : '<div style="height: 54px;"></div>'}
       <div class="line">CONTRATADA – ANDY MODELS</div>
     </div>
   </div>
