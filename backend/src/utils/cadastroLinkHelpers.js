@@ -25,7 +25,17 @@ async function validateTokenReadOnly(pool, token, expectedType = 'modelo') {
   const row = r.rows[0];
   const tipo = String(row.tipo || 'modelo').trim().toLowerCase();
   const need = String(expectedType || 'modelo').trim().toLowerCase();
-  if (tipo !== need) return { ok: false, message: 'Link inválido para este tipo de cadastro.' };
+  if (tipo !== need) {
+    // Compatibilidade: links antigos sem tipo consistente podem ser ajustados
+    // quando ainda estão ativos e sem uso associado.
+    const semUsoAssociado = !row.modelo_id && !row.cliente_id && row.status === 'ativo';
+    if (semUsoAssociado) {
+      await pool.query(`UPDATE cadastro_links SET tipo = $2 WHERE id = $1`, [row.id, need]);
+      row.tipo = need;
+    } else {
+      return { ok: false, message: 'Link inválido para este tipo de cadastro.' };
+    }
+  }
   if (row.status === 'usado') return { ok: false, message: 'Este link ja foi utilizado.' };
   if (row.status === 'expirado') return { ok: false, message: 'Este link expirou.' };
 
@@ -50,7 +60,15 @@ async function validateAndLockLink(client, token, expectedType = 'modelo') {
   const row = r.rows[0];
   const tipo = String(row.tipo || 'modelo').trim().toLowerCase();
   const need = String(expectedType || 'modelo').trim().toLowerCase();
-  if (tipo !== need) return { ok: false, message: 'Link inválido para este tipo de cadastro.' };
+  if (tipo !== need) {
+    const semUsoAssociado = !row.modelo_id && !row.cliente_id && row.status === 'ativo';
+    if (semUsoAssociado) {
+      await client.query(`UPDATE cadastro_links SET tipo = $2 WHERE id = $1`, [row.id, need]);
+      row.tipo = need;
+    } else {
+      return { ok: false, message: 'Link inválido para este tipo de cadastro.' };
+    }
+  }
   if (row.status === 'usado') return { ok: false, message: 'Este link ja foi utilizado.' };
   if (row.status === 'expirado') return { ok: false, message: 'Este link expirou.' };
 

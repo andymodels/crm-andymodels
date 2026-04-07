@@ -1,21 +1,47 @@
 const puppeteer = require('puppeteer');
+const fs = require('fs');
 const path = require('path');
 
 function ensurePuppeteerCacheDir() {
-  if (process.env.PUPPETEER_CACHE_DIR && String(process.env.PUPPETEER_CACHE_DIR).trim() !== '') return;
-  // Fallback local (gravável no Render e em dev), evita depender de /opt/render/.cache
-  process.env.PUPPETEER_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'puppeteer');
+  const current = String(process.env.PUPPETEER_CACHE_DIR || '').trim();
+  if (!current) {
+    // Fallback local (gravável no Render e em dev), evita depender de /opt/render/.cache
+    process.env.PUPPETEER_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'puppeteer');
+  }
+  try {
+    fs.mkdirSync(process.env.PUPPETEER_CACHE_DIR, { recursive: true });
+  } catch {
+    // ignora falha de mkdir; o launch vai reportar erro claro se necessário
+  }
+}
+
+function fileExists(p) {
+  try {
+    return !!p && fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+function resolveExecutablePath() {
+  const fromEnv = String(process.env.PUPPETEER_EXECUTABLE_PATH || '').trim();
+  if (fromEnv && fileExists(fromEnv)) return fromEnv;
+
+  const fromPuppeteer = typeof puppeteer.executablePath === 'function' ? puppeteer.executablePath() : '';
+  if (fromPuppeteer && fileExists(fromPuppeteer)) return fromPuppeteer;
+
+  // Sem caminho válido: deixa o Puppeteer decidir automaticamente.
+  return undefined;
 }
 
 async function renderContratoPdfBuffer(html) {
   let browser = null;
   try {
     ensurePuppeteerCacheDir();
-    const executablePath =
-      process.env.PUPPETEER_EXECUTABLE_PATH || (typeof puppeteer.executablePath === 'function' ? puppeteer.executablePath() : undefined);
+    const executablePath = resolveExecutablePath();
     browser = await puppeteer.launch({
       headless: true,
-      executablePath,
+      ...(executablePath ? { executablePath } : {}),
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
