@@ -1,9 +1,18 @@
 const puppeteer = require('puppeteer');
+const path = require('path');
+
+function ensurePuppeteerCacheDir() {
+  if (process.env.PUPPETEER_CACHE_DIR && String(process.env.PUPPETEER_CACHE_DIR).trim() !== '') return;
+  // Fallback local (gravável no Render e em dev), evita depender de /opt/render/.cache
+  process.env.PUPPETEER_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'puppeteer');
+}
 
 async function renderContratoPdfBuffer(html) {
   let browser = null;
   try {
-    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+    ensurePuppeteerCacheDir();
+    const executablePath =
+      process.env.PUPPETEER_EXECUTABLE_PATH || (typeof puppeteer.executablePath === 'function' ? puppeteer.executablePath() : undefined);
     browser = await puppeteer.launch({
       headless: true,
       executablePath,

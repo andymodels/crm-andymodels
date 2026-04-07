@@ -151,6 +151,30 @@ router.get('/ordens-servico/:id/contrato-preview', async (req, res, next) => {
   }
 });
 
+router.get('/ordens-servico/:id/contrato-html-download', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).send('ID invalido.');
+    const ctx = await loadContratoContext(pool, id);
+    if (!ctx) return res.status(404).send('O.S. nao encontrada.');
+    if (!ctx.os.emitir_contrato) {
+      return res.status(400).send('Esta O.S. nao esta marcada para emitir contrato.');
+    }
+    const errosPrev = await validarContratoPronto(pool, id, ctx.os, ctx.os.tipo_os || 'com_modelo');
+    if (errosPrev.length > 0) {
+      return res
+        .status(400)
+        .send(`Dados incompletos para o contrato: ${errosPrev.join('; ')}. Ajuste a O.S. e o cadastro.`);
+    }
+    const html = buildContratoDocumentHtml(ctx);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="contrato-os-${id}.html"`);
+    res.send(html);
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.get('/ordens-servico/:id/contrato-pdf', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -174,7 +198,15 @@ router.get('/ordens-servico/:id/contrato-pdf', async (req, res, next) => {
     return res.redirect(`/api/ordens-servico/${id}/documentos/${doc.id}/download`);
   } catch (e) {
     if (e.code === 'PDF_GENERATION_FAILED') {
-      return res.status(503).json({ message: e.message });
+      const fallback = `/api/ordens-servico/${Number(req.params.id)}/contrato-html-download`;
+      // Para uso em links diretos (UI), envia para o fallback automaticamente.
+      if (String(req.headers.accept || '').includes('text/html')) {
+        return res.redirect(fallback);
+      }
+      return res.status(503).json({
+        message: `${e.message} Use o fallback HTML para conversão manual.`,
+        fallback_html_url: `${publicAppBase()}${fallback}`,
+      });
     }
     next(e);
   }
@@ -232,6 +264,9 @@ router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) 
           : null,
         pdf_link: Number.isFinite(Number(req.params.id))
           ? `${base}/api/ordens-servico/${Number(req.params.id)}/contrato-pdf`
+          : null,
+        fallback_html_url: Number.isFinite(Number(req.params.id))
+          ? `${base}/api/ordens-servico/${Number(req.params.id)}/contrato-html-download`
           : null,
         smtp_error_code: e.code || null,
         smtp_error_detail: e.message || null,
@@ -315,8 +350,8 @@ router.get('/contratos/:osId/preview', async (req, res, next) => {
 });
 
 router.post('/contratos/:osId/reenviar', async (req, res, next) => {
+  const osId = Number(req.params.osId);
   try {
-    const osId = Number(req.params.osId);
     if (Number.isNaN(osId)) return res.status(400).json({ message: 'ID invalido.' });
     const dbRow = await pool.query(
       `
@@ -343,15 +378,18 @@ router.post('/contratos/:osId/reenviar', async (req, res, next) => {
     });
   } catch (e) {
     if (e.code === 'SMTP_DISABLED' || e.code === 'PDF_GENERATION_FAILED') {
-      return res.status(503).json({ message: e.message });
+      return res.status(503).json({
+        message: e.message,
+        fallback_html_url: `${publicAppBase()}/api/ordens-servico/${osId}/contrato-html-download`,
+      });
     }
     next(e);
   }
 });
 
 router.post('/ordens-servico/:id/contrato-regenerar', async (req, res, next) => {
+  const id = Number(req.params.id);
   try {
-    const id = Number(req.params.id);
     if (Number.isNaN(id)) return res.status(400).json({ message: 'ID invalido.' });
     const generated = await generateContratoForOs(pool, id);
     if (!generated.ok) return res.status(400).json({ message: generated.message || 'Falha ao regenerar contrato.' });
@@ -361,7 +399,10 @@ router.post('/ordens-servico/:id/contrato-regenerar', async (req, res, next) => 
     });
   } catch (e) {
     if (e.code === 'PDF_GENERATION_FAILED') {
-      return res.status(503).json({ message: e.message });
+      return res.status(503).json({
+        message: e.message,
+        fallback_html_url: `${publicAppBase()}/api/ordens-servico/${id}/contrato-html-download`,
+      });
     }
     next(e);
   }

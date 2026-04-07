@@ -535,6 +535,7 @@ function App({ authUser, onLogout = () => {} }) {
   const [contratoEmailMsg, setContratoEmailMsg] = useState('');
   const [contratoEmailLoading, setContratoEmailLoading] = useState(false);
   const [contratoEmailFallbackLink, setContratoEmailFallbackLink] = useState('');
+  const [contratoHtmlFallbackUrl, setContratoHtmlFallbackUrl] = useState('');
   const [senhaAtual, setSenhaAtual] = useState('');
   const [senhaNova, setSenhaNova] = useState('');
   const [senhaMsg, setSenhaMsg] = useState('');
@@ -1012,6 +1013,7 @@ function App({ authUser, onLogout = () => {} }) {
       setContratoEmailDest(data.cliente_email ? String(data.cliente_email) : '');
       setContratoEmailMsg('');
       setContratoEmailFallbackLink('');
+      setContratoHtmlFallbackUrl('');
     } catch {
       setOsError(LOAD_ERROR_MESSAGE);
       setOsDraft(null);
@@ -1172,6 +1174,7 @@ function App({ authUser, onLogout = () => {} }) {
       setOsUsuarioAlteracao('');
       if (data.cliente_email) setContratoEmailDest(String(data.cliente_email));
       setContratoEmailFallbackLink('');
+      setContratoHtmlFallbackUrl('');
       const listRes = await fetch(`${API_BASE}/ordens-servico`);
       if (listRes.ok) setOsList(await listRes.json());
       await refreshAlertasOperacionais();
@@ -1206,6 +1209,7 @@ function App({ authUser, onLogout = () => {} }) {
     setContratoEmailLoading(true);
     setContratoEmailMsg('');
     setContratoEmailFallbackLink('');
+    setContratoHtmlFallbackUrl('');
     try {
       const r = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}/contrato-enviar-email`, {
         method: 'POST',
@@ -1224,6 +1228,7 @@ function App({ authUser, onLogout = () => {} }) {
         );
       }
       if (data?.assinatura_link) setContratoEmailFallbackLink(String(data.assinatura_link));
+      if (data?.fallback_html_url) setContratoHtmlFallbackUrl(String(data.fallback_html_url));
       await loadOsDetail(osDraft.id);
     } catch (e) {
       setContratoEmailMsg(`Erro ao enviar e-mail: ${e.message || 'verifique configuração SMTP'}`);
@@ -5376,6 +5381,18 @@ function App({ authUser, onLogout = () => {} }) {
                                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
                               >
                                 Abrir link
+                              </a>
+                            </div>
+                          )}
+                          {contratoHtmlFallbackUrl && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <a
+                                href={contratoHtmlFallbackUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+                              >
+                                Baixar HTML do contrato (fallback)
                               </a>
                             </div>
                           )}
