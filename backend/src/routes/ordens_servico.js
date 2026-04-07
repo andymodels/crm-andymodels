@@ -10,6 +10,8 @@ const { generateContratoForOs, sendContratoAssinaturaEmail } = require('../servi
 const router = express.Router();
 
 const n = (v) => Number(v || 0);
+const publicAppBase = () =>
+  String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(/\/$/, '');
 
 async function loadDocumentos(osId) {
   const r = await pool.query(
@@ -169,10 +171,11 @@ router.get('/ordens-servico/:id/contrato-pdf', async (req, res, next) => {
     );
     if (r.rows.length === 0) return res.status(404).send('PDF do contrato nao encontrado.');
     const doc = r.rows[0];
-    res.setHeader('Content-Type', doc.mime || 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${doc.nome_arquivo || `contrato-os-${id}.pdf`}"`);
     return res.redirect(`/api/ordens-servico/${id}/documentos/${doc.id}/download`);
   } catch (e) {
+    if (e.code === 'PDF_GENERATION_FAILED') {
+      return res.status(503).json({ message: e.message });
+    }
     next(e);
   }
 });
@@ -209,9 +212,29 @@ router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) 
       pdf_link: sent.pdf_link || null,
     });
   } catch (e) {
-    if (e.code === 'SMTP_DISABLED') {
-      return res.status(503).json({
-        message: e.message,
+    if (
+      e.code === 'SMTP_DISABLED' ||
+      e.code === 'SMTP_CONFIG_INVALID' ||
+      e.code === 'SMTP_SEND_FAILED' ||
+      e.code === 'PDF_GENERATION_FAILED'
+    ) {
+      // Fallback obrigatório: não bloqueia fluxo de assinatura por falha SMTP.
+      const fallbackCtx = await loadContratoContext(pool, Number(req.params.id)).catch(() => null);
+      const token = fallbackCtx?.os?.contrato_assinatura_token || null;
+      const base = publicAppBase();
+      const assinatura_link = token ? `${base}/assinatura-contrato?token=${encodeURIComponent(token)}` : null;
+      return res.status(200).json({
+        message: `Erro ao enviar e-mail: ${e.message || 'verifique configuração SMTP'}. Você pode enviar o link manualmente.`,
+        contrato_enviado: false,
+        assinatura_link,
+        preview_link: Number.isFinite(Number(req.params.id))
+          ? `${base}/api/ordens-servico/${Number(req.params.id)}/contrato-preview`
+          : null,
+        pdf_link: Number.isFinite(Number(req.params.id))
+          ? `${base}/api/ordens-servico/${Number(req.params.id)}/contrato-pdf`
+          : null,
+        smtp_error_code: e.code || null,
+        smtp_error_detail: e.message || null,
       });
     }
     next(e);
@@ -319,7 +342,7 @@ router.post('/contratos/:osId/reenviar', async (req, res, next) => {
       assinatura_link: sent.assinatura_link || generated.assinatura_link,
     });
   } catch (e) {
-    if (e.code === 'SMTP_DISABLED') {
+    if (e.code === 'SMTP_DISABLED' || e.code === 'PDF_GENERATION_FAILED') {
       return res.status(503).json({ message: e.message });
     }
     next(e);
@@ -337,6 +360,9 @@ router.post('/ordens-servico/:id/contrato-regenerar', async (req, res, next) => 
       assinatura_link: generated.assinatura_link,
     });
   } catch (e) {
+    if (e.code === 'PDF_GENERATION_FAILED') {
+      return res.status(503).json({ message: e.message });
+    }
     next(e);
   }
 });

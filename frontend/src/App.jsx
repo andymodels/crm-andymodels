@@ -530,6 +530,7 @@ function App({ authUser, onLogout = () => {} }) {
   const [contratoEmailDest, setContratoEmailDest] = useState('');
   const [contratoEmailMsg, setContratoEmailMsg] = useState('');
   const [contratoEmailLoading, setContratoEmailLoading] = useState(false);
+  const [contratoEmailFallbackLink, setContratoEmailFallbackLink] = useState('');
   const [senhaAtual, setSenhaAtual] = useState('');
   const [senhaNova, setSenhaNova] = useState('');
   const [senhaMsg, setSenhaMsg] = useState('');
@@ -1006,6 +1007,7 @@ function App({ authUser, onLogout = () => {} }) {
       setOsUsuarioAlteracao('');
       setContratoEmailDest(data.cliente_email ? String(data.cliente_email) : '');
       setContratoEmailMsg('');
+      setContratoEmailFallbackLink('');
     } catch {
       setOsError(LOAD_ERROR_MESSAGE);
       setOsDraft(null);
@@ -1165,6 +1167,7 @@ function App({ authUser, onLogout = () => {} }) {
       });
       setOsUsuarioAlteracao('');
       if (data.cliente_email) setContratoEmailDest(String(data.cliente_email));
+      setContratoEmailFallbackLink('');
       const listRes = await fetch(`${API_BASE}/ordens-servico`);
       if (listRes.ok) setOsList(await listRes.json());
       await refreshAlertasOperacionais();
@@ -1198,6 +1201,7 @@ function App({ authUser, onLogout = () => {} }) {
     if (!osDraft?.id) return;
     setContratoEmailLoading(true);
     setContratoEmailMsg('');
+    setContratoEmailFallbackLink('');
     try {
       const r = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}/contrato-enviar-email`, {
         method: 'POST',
@@ -1208,12 +1212,29 @@ function App({ authUser, onLogout = () => {} }) {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.message || 'Erro ao enviar.');
-      setContratoEmailMsg('Enviado com sucesso.');
+      if (data?.contrato_enviado) {
+        setContratoEmailMsg('Enviado com sucesso.');
+      } else {
+        setContratoEmailMsg(
+          data?.message || 'Erro ao enviar e-mail: verifique configuração SMTP. Use o link manual abaixo.',
+        );
+      }
+      if (data?.assinatura_link) setContratoEmailFallbackLink(String(data.assinatura_link));
       await loadOsDetail(osDraft.id);
     } catch (e) {
-      setContratoEmailMsg(e.message || 'Erro ao enviar.');
+      setContratoEmailMsg(`Erro ao enviar e-mail: ${e.message || 'verifique configuração SMTP'}`);
     } finally {
       setContratoEmailLoading(false);
+    }
+  };
+
+  const copiarLinkAssinatura = async () => {
+    if (!contratoEmailFallbackLink) return;
+    try {
+      await navigator.clipboard.writeText(contratoEmailFallbackLink);
+      setContratoEmailMsg('Link de assinatura copiado. Você pode enviar manualmente ao cliente.');
+    } catch {
+      setContratoEmailMsg('Não foi possível copiar automaticamente. Abra o link e copie manualmente.');
     }
   };
 
@@ -5334,6 +5355,25 @@ function App({ authUser, onLogout = () => {} }) {
                             >
                               {contratoEmailMsg}
                             </p>
+                          )}
+                          {contratoEmailFallbackLink && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+                                onClick={copiarLinkAssinatura}
+                              >
+                                Copiar link de assinatura
+                              </button>
+                              <a
+                                href={contratoEmailFallbackLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+                              >
+                                Abrir link
+                              </a>
+                            </div>
                           )}
                           {osDraft.contrato_enviado_em && (
                             <p className="text-xs text-slate-500">

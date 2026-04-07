@@ -1,11 +1,20 @@
 const puppeteer = require('puppeteer');
 
 async function renderContratoPdfBuffer(html) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
+  let browser = null;
   try {
+    const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--no-zygote',
+        '--single-process',
+      ],
+    });
     const page = await browser.newPage();
     await page.setContent(String(html || ''), { waitUntil: 'networkidle0' });
     return await page.pdf({
@@ -19,8 +28,14 @@ async function renderContratoPdfBuffer(html) {
         left: '20mm',
       },
     });
+  } catch (e) {
+    const err = new Error(
+      `Falha ao gerar PDF do contrato (Chromium/Puppeteer): ${e?.message || 'erro desconhecido'}.`,
+    );
+    err.code = 'PDF_GENERATION_FAILED';
+    throw err;
   } finally {
-    await browser.close();
+    if (browser) await browser.close().catch(() => {});
   }
 }
 

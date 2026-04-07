@@ -5,7 +5,7 @@ const { loadContratoContext } = require('./contratoContext');
 const { validarContratoPronto } = require('./contratoReadiness');
 const { buildContratoDocumentHtml } = require('./contratoHtml');
 const { renderContratoPdfBuffer } = require('./contratoPdf');
-const { sendContratoEmail } = require('./contratoEmail');
+const { sendContratoEmail, validateContratoEmailEnv } = require('./contratoEmail');
 
 const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
 
@@ -142,6 +142,15 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
     `Contrato — O.S. nº ${osId} — ${ctx.cliente.nome_fantasia || ctx.cliente.nome_empresa || 'Cliente'}`;
   const to = String(destinatario || '').trim();
   try {
+    const envCheck = validateContratoEmailEnv();
+    if (envCheck.missing.length > 0 || envCheck.invalid.length > 0) {
+      const msg = `Configuração SMTP inválida. Faltando: ${envCheck.missing.join(', ') || 'nenhum'}; Inválido: ${envCheck.invalid.join(', ') || 'nenhum'}.`;
+      const cfgErr = new Error(msg);
+      cfgErr.code = 'SMTP_CONFIG_INVALID';
+      cfgErr.meta = envCheck;
+      throw cfgErr;
+    }
+
     await sendContratoEmail({
       to,
       subject,
@@ -152,6 +161,15 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
       `UPDATE ordens_servico SET contrato_enviado_em = NOW(), updated_at = NOW() WHERE id = $1`,
       [osId],
     );
+    const errPayload = {
+      destinatario: to,
+      status: 'erro',
+      erro: String(error?.message || 'falha no envio'),
+      code: String(error?.code || ''),
+      smtp_type: String(error?.smtp_type || ''),
+      smtp_raw_code: String(error?.smtp_raw_code || ''),
+    };
+    console.error('[contrato][email] falha no envio', { osId, ...errPayload });
     await db.query(
       `
       INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
@@ -171,7 +189,7 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
         'sistema',
         'contrato_email_envio',
         '',
-        JSON.stringify({ destinatario: to, status: 'erro', erro: String(error?.message || 'falha no envio') }),
+        JSON.stringify(errPayload),
       ],
     );
     throw error;

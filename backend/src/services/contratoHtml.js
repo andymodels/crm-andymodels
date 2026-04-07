@@ -166,9 +166,7 @@ function buildContratoDocumentHtml(ctx) {
       height: auto;
       margin: 0 auto 14px;
       object-fit: contain;
-      opacity: 0.42;
-      mix-blend-mode: screen;
-      filter: grayscale(12%) contrast(108%) brightness(103%);
+      opacity: 0.78;
       page-break-inside: avoid;
     }
     .line {
