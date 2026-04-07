@@ -377,10 +377,29 @@ router.post('/contratos/:osId/reenviar', async (req, res, next) => {
       assinatura_link: sent.assinatura_link || generated.assinatura_link,
     });
   } catch (e) {
-    if (e.code === 'SMTP_DISABLED' || e.code === 'PDF_GENERATION_FAILED') {
+    if (e.code === 'PDF_GENERATION_FAILED') {
       return res.status(503).json({
         message: e.message,
         fallback_html_url: `${publicAppBase()}/api/ordens-servico/${osId}/contrato-html-download`,
+      });
+    }
+    if (
+      e.code === 'SMTP_DISABLED' ||
+      e.code === 'SMTP_CONFIG_INVALID' ||
+      e.code === 'SMTP_SEND_FAILED'
+    ) {
+      const base = publicAppBase();
+      const fallbackCtx = await loadContratoContext(pool, osId).catch(() => null);
+      const token = fallbackCtx?.os?.contrato_assinatura_token || null;
+      const assinatura_link = token ? `${base}/assinatura-contrato?token=${encodeURIComponent(token)}` : null;
+      return res.status(200).json({
+        message: `Erro ao enviar e-mail: ${e.message || 'verifique configuração SMTP'}. Você pode enviar o link manualmente.`,
+        contrato_enviado: false,
+        assinatura_link,
+        preview_link: `${base}/api/ordens-servico/${osId}/contrato-preview`,
+        pdf_link: `${base}/api/ordens-servico/${osId}/contrato-pdf`,
+        fallback_html_url: `${base}/api/ordens-servico/${osId}/contrato-html-download`,
+        smtp_error_code: e.code || null,
       });
     }
     next(e);

@@ -161,15 +161,6 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
       `UPDATE ordens_servico SET contrato_enviado_em = NOW(), updated_at = NOW() WHERE id = $1`,
       [osId],
     );
-    const errPayload = {
-      destinatario: to,
-      status: 'erro',
-      erro: String(error?.message || 'falha no envio'),
-      code: String(error?.code || ''),
-      smtp_type: String(error?.smtp_type || ''),
-      smtp_raw_code: String(error?.smtp_raw_code || ''),
-    };
-    console.error('[contrato][email] falha no envio', { osId, ...errPayload });
     await db.query(
       `
       INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
@@ -179,19 +170,26 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
     );
     return { ok: true, assinatura_link: link, preview_link: previewLink, pdf_link: pdfLink };
   } catch (error) {
-    await db.query(
-      `
-      INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
-      VALUES ($1, $2, $3, $4, $5)
-      `,
-      [
-        osId,
-        'sistema',
-        'contrato_email_envio',
-        '',
-        JSON.stringify(errPayload),
-      ],
-    );
+    const errPayload = {
+      destinatario: to,
+      status: 'erro',
+      erro: String(error?.message || 'falha no envio'),
+      code: String(error?.code || ''),
+      smtp_type: String(error?.smtp_type || ''),
+      smtp_raw_code: String(error?.smtp_raw_code || ''),
+    };
+    console.error('[contrato][email] falha no envio', { osId, ...errPayload });
+    try {
+      await db.query(
+        `
+        INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
+        VALUES ($1, $2, $3, $4, $5)
+        `,
+        [osId, 'sistema', 'contrato_email_envio', '', JSON.stringify(errPayload)],
+      );
+    } catch (histErr) {
+      console.error('[contrato][email] falha ao gravar historico', histErr);
+    }
     throw error;
   }
 }
