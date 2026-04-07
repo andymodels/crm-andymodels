@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { loadContratoContext } = require('./contratoContext');
 const { validarContratoPronto } = require('./contratoReadiness');
 const { buildContratoDocumentHtml } = require('./contratoHtml');
+const { renderContratoPdfBuffer } = require('./contratoPdf');
 const { sendContratoEmail } = require('./contratoEmail');
 
 const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
@@ -68,21 +69,21 @@ async function deleteOldGeneratedDoc(db, osId) {
   }
 }
 
-async function saveGeneratedContractSnapshot(db, osId, html) {
+async function saveGeneratedContractSnapshot(db, osId, pdfBuffer) {
   ensureDir(UPLOAD_ROOT);
   const dir = path.join(UPLOAD_ROOT, 'os', String(osId));
   ensureDir(dir);
-  const fileName = `contrato-os-${osId}.html`;
+  const fileName = `contrato-os-${osId}.pdf`;
   const abs = path.join(dir, fileName);
-  fs.writeFileSync(abs, html, 'utf8');
+  fs.writeFileSync(abs, pdfBuffer);
   const relPath = `os/${osId}/${fileName}`;
-  const sha = sha256Hex(Buffer.from(html, 'utf8'));
+  const sha = sha256Hex(pdfBuffer);
 
   await deleteOldGeneratedDoc(db, osId);
   await db.query(
     `
     INSERT INTO os_documentos (os_id, tipo, nome_arquivo, mime, storage_path, sha256)
-    VALUES ($1, 'contrato_pdf_gerado', $2, 'text/html; charset=utf-8', $3, $4)
+    VALUES ($1, 'contrato_pdf_gerado', $2, 'application/pdf', $3, $4)
     `,
     [osId, fileName, relPath, sha],
   );
@@ -97,7 +98,8 @@ async function generateContratoForOs(db, osId) {
 
   const token = await ensureContratoToken(db, osId);
   const html = buildContratoDocumentHtml(ctx);
-  await saveGeneratedContractSnapshot(db, osId, html);
+  const pdfBuffer = await renderContratoPdfBuffer(html);
+  await saveGeneratedContractSnapshot(db, osId, pdfBuffer);
   await db.query(
     `
     UPDATE ordens_servico
@@ -123,23 +125,57 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
   const token = await ensureContratoToken(db, osId);
   const link = contratoAssinaturaUrl(token);
   const htmlContrato = buildContratoDocumentHtml(ctx);
+  const pdfBuffer = await renderContratoPdfBuffer(htmlContrato);
+  const fileName = `contrato-os-${osId}.pdf`;
+  const previewLink = `${appBaseUrl()}/api/ordens-servico/${osId}/contrato-preview`;
+  const pdfLink = `${appBaseUrl()}/api/ordens-servico/${osId}/contrato-pdf`;
   const html = `
     <p>Olá,</p>
     <p>Segue o contrato da O.S. nº <strong>${osId}</strong>.</p>
+    <p><strong>Visualização:</strong> <a href="${previewLink}" target="_blank" rel="noreferrer">${previewLink}</a></p>
+    <p><strong>PDF:</strong> <a href="${pdfLink}" target="_blank" rel="noreferrer">${pdfLink}</a></p>
     <p>Assine neste link:</p>
     <p><a href="${link}" target="_blank" rel="noreferrer">${link}</a></p>
-    <hr />
-    ${htmlContrato}
   `;
   const subject =
     process.env.CONTRATO_EMAIL_ASSUNTO ||
     `Contrato — O.S. nº ${osId} — ${ctx.cliente.nome_fantasia || ctx.cliente.nome_empresa || 'Cliente'}`;
-  await sendContratoEmail({ to: String(destinatario || '').trim(), subject, html });
-  await db.query(
-    `UPDATE ordens_servico SET contrato_enviado_em = NOW(), updated_at = NOW() WHERE id = $1`,
-    [osId],
-  );
-  return { ok: true, assinatura_link: link };
+  const to = String(destinatario || '').trim();
+  try {
+    await sendContratoEmail({
+      to,
+      subject,
+      html,
+      attachments: [{ filename: fileName, content: pdfBuffer, contentType: 'application/pdf' }],
+    });
+    await db.query(
+      `UPDATE ordens_servico SET contrato_enviado_em = NOW(), updated_at = NOW() WHERE id = $1`,
+      [osId],
+    );
+    await db.query(
+      `
+      INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
+      VALUES ($1, $2, $3, $4, $5)
+      `,
+      [osId, 'sistema', 'contrato_email_envio', '', JSON.stringify({ destinatario: to, status: 'enviado' })],
+    );
+    return { ok: true, assinatura_link: link, preview_link: previewLink, pdf_link: pdfLink };
+  } catch (error) {
+    await db.query(
+      `
+      INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
+      VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        osId,
+        'sistema',
+        'contrato_email_envio',
+        '',
+        JSON.stringify({ destinatario: to, status: 'erro', erro: String(error?.message || 'falha no envio') }),
+      ],
+    );
+    throw error;
+  }
 }
 
 module.exports = {

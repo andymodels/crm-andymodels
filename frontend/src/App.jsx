@@ -5282,12 +5282,20 @@ function App({ authUser, onLogout = () => {} }) {
                               rel="noreferrer"
                               className="font-medium text-amber-800 underline"
                             >
-                              Gerar / visualizar contrato (HTML)
+                              Visualizar contrato (HTML)
+                            </a>
+                            <span className="text-slate-500"> · </span>
+                            <a
+                              href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium text-amber-800 underline"
+                            >
+                              Gerar PDF
                             </a>
                             <span className="text-slate-500">
                               {' '}
-                              — impressão ou “Salvar como PDF” no navegador. Conteúdo jurídico definitivo deve ser validado
-                              pelo jurídico; os valores acompanham o cálculo da O.S.
+                              — layout A4 profissional para impressão e envio.
                             </span>
                           </p>
                           <div className="flex flex-wrap items-end gap-2 rounded-lg border border-amber-100 bg-white p-3">

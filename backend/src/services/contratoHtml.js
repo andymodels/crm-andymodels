@@ -26,7 +26,7 @@ function buildListaModelosHtml(linhas) {
     .map((l) => {
       const nome = esc(l.modelo_nome);
       const cpf = esc(l.modelo_cpf || '');
-      return `<li><strong>${nome}</strong> — CPF ${cpf || '—'}</li>`;
+      return `<li>${nome} — ${cpf || 'CPF não informado'}</li>`;
     })
     .join('');
   return `<ul class="lista-modelos">${items}</ul>`;
@@ -73,25 +73,89 @@ function buildContratoDocumentHtml(ctx) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Contrato — O.S. nº ${osNumero}</title>
   <style>
-    body { font-family: 'Georgia', 'Times New Roman', serif; max-width: 820px; margin: 1.5rem auto; padding: 0 1.25rem; color: #0f172a; line-height: 1.55; font-size: 11pt; }
-    .ref-bar { background: #0f172a; color: #fff; padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1.25rem; font-size: 0.9rem; }
-    h1 { font-size: 1.05rem; text-align: center; text-transform: uppercase; letter-spacing: 0.03em; margin: 1.25rem 0 1rem; line-height: 1.35; }
-    h2 { font-size: 0.95rem; margin-top: 1.25rem; margin-bottom: 0.45rem; color: #1e293b; font-weight: 700; }
-    p.clause { margin: 0.55rem 0; text-align: justify; }
-    p.muted { color: #64748b; }
-    ul.lista-modelos { margin: 0.5rem 0 0.75rem 1.25rem; }
-    ul.lista-modelos li { margin: 0.25rem 0; }
-    hr.sep { border: none; border-top: 1px solid #cbd5e1; margin: 2rem 0; }
-    .sign { margin-top: 2rem; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; text-align: center; font-size: 10pt; }
-    .sign .line { border-top: 1px solid #000; margin-top: 2.5rem; padding-top: 0.35rem; }
-    @media print { body { margin: 0; } }
+    @page { size: A4; margin: 20mm 20mm 25mm 20mm; }
+    html, body { background: #fff; color: #111827; }
+    body {
+      font-family: 'Times New Roman', Georgia, serif;
+      font-size: 12pt;
+      line-height: 1.5;
+      margin: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .documento {
+      width: 100%;
+      max-width: 170mm;
+      margin: 0 auto;
+      padding: 0;
+    }
+    .ref-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12mm;
+      font-size: 10.5pt;
+      color: #374151;
+      border-bottom: 1px solid #d1d5db;
+      padding-bottom: 3mm;
+    }
+    h1 {
+      font-size: 13pt;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 0.01em;
+      margin: 0 0 9mm 0;
+      line-height: 1.4;
+      font-weight: 700;
+    }
+    h2 {
+      font-size: 12pt;
+      margin: 8mm 0 3mm;
+      font-weight: 700;
+      text-transform: uppercase;
+      page-break-after: avoid;
+    }
+    p.clause { margin: 0 0 3.2mm 0; text-align: justify; }
+    p.muted { color: #6b7280; }
+    ul.lista-modelos {
+      margin: 0 0 4mm 0;
+      padding-left: 6mm;
+      page-break-inside: avoid;
+    }
+    ul.lista-modelos li { margin: 0 0 1.8mm 0; }
+    .rodape-local-data {
+      margin-top: 10mm;
+      text-align: right;
+      page-break-inside: avoid;
+    }
+    .sign {
+      margin-top: 12mm;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12mm;
+      text-align: center;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .digital-hint {
+      font-size: 10pt;
+      color: #4b5563;
+      margin-bottom: 9mm;
+      min-height: 14px;
+    }
+    .line {
+      border-top: 1px solid #111827;
+      padding-top: 2.8mm;
+      font-size: 10.5pt;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
+  <main class="documento">
   <div class="ref-bar">
-    <strong>O.S. nº ${osNumero}</strong>
-    ${os.contrato_template_versao ? ` · Template ${esc(os.contrato_template_versao)}` : ''}
-    · ${esc(dataRef)}
+    <div><strong>O.S. nº ${osNumero}</strong></div>
+    <div>${esc(dataRef)}</div>
   </div>
 
   <h1>Instrumento particular de contrato de prestação de serviços e cessão de imagem por tempo determinado para utilização em campanha publicitária</h1>
@@ -164,18 +228,20 @@ function buildContratoDocumentHtml(ctx) {
   <h2>CLÁUSULAS ADICIONAIS</h2>
   ${clausulasAdicionais}
 
-  <p class="clause" style="margin-top:1.5rem">E por estarem de acordo, as partes firmam o presente instrumento.</p>
-
-  <hr class="sep" />
+  <p class="clause" style="margin-top:6mm">E por estarem de acordo, as partes firmam o presente instrumento.</p>
+  <p class="rodape-local-data">Vila Velha – ES, ${esc(dataRef)}.</p>
 
   <div class="sign">
     <div>
+      <div class="digital-hint">&nbsp;</div>
       <div class="line">CONTRATANTE / CLIENTE</div>
     </div>
     <div>
-      <div class="line">CONTRATADA — ANDY MODELS</div>
+      <div class="digital-hint">Assinatura digital da agência</div>
+      <div class="line">CONTRATADA – ANDY MODELS</div>
     </div>
   </div>
+  </main>
 </body>
 </html>`;
 }

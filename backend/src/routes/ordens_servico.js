@@ -149,6 +149,34 @@ router.get('/ordens-servico/:id/contrato-preview', async (req, res, next) => {
   }
 });
 
+router.get('/ordens-servico/:id/contrato-pdf', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) return res.status(400).send('ID invalido.');
+    const generated = await generateContratoForOs(pool, id);
+    if (!generated.ok) {
+      return res.status(400).send(generated.message || 'Falha ao gerar contrato.');
+    }
+    const r = await pool.query(
+      `
+      SELECT id, nome_arquivo, mime
+      FROM os_documentos
+      WHERE os_id = $1 AND tipo = 'contrato_pdf_gerado'
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [id],
+    );
+    if (r.rows.length === 0) return res.status(404).send('PDF do contrato nao encontrado.');
+    const doc = r.rows[0];
+    res.setHeader('Content-Type', doc.mime || 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${doc.nome_arquivo || `contrato-os-${id}.pdf`}"`);
+    return res.redirect(`/api/ordens-servico/${id}/documentos/${doc.id}/download`);
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -177,6 +205,8 @@ router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) 
       message: 'Contrato enviado por e-mail.',
       contrato_enviado: true,
       assinatura_link: sent.assinatura_link || generated.assinatura_link,
+      preview_link: sent.preview_link || null,
+      pdf_link: sent.pdf_link || null,
     });
   } catch (e) {
     if (e.code === 'SMTP_DISABLED') {

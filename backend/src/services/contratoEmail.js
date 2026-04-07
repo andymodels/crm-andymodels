@@ -18,7 +18,7 @@ function createTransport() {
 /**
  * Envia HTML por SMTP. Requer SMTP_HOST (e credenciais conforme servidor).
  */
-async function sendContratoEmail({ to, subject, html }) {
+async function sendContratoEmail({ to, subject, html, attachments }) {
   const transport = createTransport();
   if (!transport) {
     const err = new Error('SMTP nao configurado. Defina SMTP_HOST e demais variaveis no .env do backend.');
@@ -31,6 +31,7 @@ async function sendContratoEmail({ to, subject, html }) {
     to,
     subject,
     html,
+    attachments: Array.isArray(attachments) ? attachments : undefined,
   });
 }
 
