@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../config/db');
 const { sanitizeAndValidateCliente } = require('../utils/brValidators');
 const { validateTokenReadOnly, validateAndLockLink } = require('../utils/cadastroLinkHelpers');
+const { stringifyJsonbColumns } = require('../utils/jsonbBody');
 
 const router = express.Router();
 
@@ -69,6 +70,11 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
     Object.assign(body, sv.body);
     body.instagram = trimStr(raw.instagram);
     body.observacoes = trimStr(body.observacoes);
+    if (body.inscricao_estadual === undefined || body.inscricao_estadual === null) {
+      body.inscricao_estadual = '';
+    } else {
+      body.inscricao_estadual = trimStr(body.inscricao_estadual);
+    }
 
     const client = await pool.connect();
     try {
@@ -82,7 +88,10 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
       const documento = trimStr(body.documento);
       const nomeEmpresa = trimStr(body.nome_empresa);
       if (documento) {
-        const dupDoc = await client.query(`SELECT 1 FROM clientes WHERE documento = $1 LIMIT 1`, [documento]);
+        const dupDoc = await client.query(
+          `SELECT 1 FROM clientes WHERE documento = $1 OR cnpj = $1 LIMIT 1`,
+          [documento],
+        );
         if (dupDoc.rowCount > 0) {
           await client.query('ROLLBACK');
           return res.status(400).json({ message: 'CPF/CNPJ já cadastrado.' });
@@ -120,7 +129,10 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
         'instagram',
         'observacoes',
       ];
-      const vals = cols.map((c) => body[c]);
+      const insertBody = {};
+      for (const c of cols) insertBody[c] = body[c];
+      stringifyJsonbColumns(insertBody);
+      const vals = cols.map((c) => insertBody[c]);
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       const ins = await client.query(
         `
@@ -136,13 +148,21 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
         `UPDATE cadastro_links SET status = 'usado', usado_em = NOW(), cliente_id = $1 WHERE id = $2`,
         [clienteRow.id, linkV.row.id],
       );
-      await client.query(
-        `
-        INSERT INTO cadastro_publico_historico (entidade, entidade_id, acao, detalhes)
-        VALUES ('cliente', $1, 'criado_via_link_publico', $2::jsonb)
-        `,
-        [clienteRow.id, JSON.stringify({ via: 'cadastro-cliente', token_link_id: linkV.row.id })],
-      );
+      try {
+        await client.query(
+          `
+          INSERT INTO cadastro_publico_historico (entidade, entidade_id, acao, detalhes)
+          VALUES ('cliente', $1, 'criado_via_link_publico', $2::jsonb)
+          `,
+          [clienteRow.id, JSON.stringify({ via: 'cadastro-cliente', token_link_id: linkV.row.id })],
+        );
+      } catch (histErr) {
+        if (histErr.code === '42P01') {
+          console.warn('[public/cadastro-cliente] cadastro_publico_historico ausente:', histErr.message);
+        } else {
+          throw histErr;
+        }
+      }
 
       await client.query('COMMIT');
       return res.status(201).json({ message: SUCCESS_MESSAGE, id: clienteRow.id });
@@ -154,6 +174,16 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
       }
       if (err.code === '23505') {
         return res.status(400).json({ message: duplicateClienteMessage(err) });
+      }
+      if (err.code === '22P02' || err.code === '42804') {
+        return res.status(400).json({
+          message: 'Dados em formato invalido. Verifique telefones e e-mails e tente novamente.',
+        });
+      }
+      if (err.code === '23502') {
+        return res.status(400).json({
+          message: `Campo obrigatorio: ${err.column || 'desconhecido'}.`,
+        });
       }
       throw err;
     } finally {
