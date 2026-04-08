@@ -109,6 +109,7 @@ router.get('/modelo/extrato', requireModeloAuth, async (req, res, next) => {
       FROM os_modelos om
       JOIN ordens_servico os ON os.id = om.os_id
       WHERE om.modelo_id = $1
+        AND os.status IS DISTINCT FROM 'cancelada'
       ORDER BY os.data_trabalho DESC NULLS LAST, os.id DESC, om.id DESC
     `;
 

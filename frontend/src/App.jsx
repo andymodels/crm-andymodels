@@ -75,9 +75,21 @@ const labelOrcamentoStatus = (s) => {
   return s ? String(s) : '—';
 };
 
+/** Status operacional da O.S. (legado: aberta → ativa, recebida → finalizada). */
+const labelOsStatus = (s) => {
+  const v = String(s || '').toLowerCase();
+  if (v === 'aberta') return 'ativa';
+  if (v === 'recebida') return 'finalizada';
+  if (v === 'ativa') return 'ativa';
+  if (v === 'finalizada') return 'finalizada';
+  if (v === 'cancelada') return 'cancelada';
+  return s ? String(s) : '—';
+};
+
 const labelContratoStatus = (s) => {
   if (s === 'aguardando_assinatura') return 'Aguardando assinatura';
   if (s === 'assinado') return 'Assinado';
+  if (s === 'recebido') return 'Recebido';
   if (s === 'cancelado') return 'Cancelado';
   return s ? String(s) : '—';
 };
@@ -608,7 +620,8 @@ function App({ authUser, onLogout = () => {} }) {
   const [orcamentoLoading, setOrcamentoLoading] = useState(false);
   /** Filtros rápidos no formulário de orçamento (não vão para a API). */
   const [orcamentoClienteBusca, setOrcamentoClienteBusca] = useState('');
-  const [orcamentoModeloBusca, setOrcamentoModeloBusca] = useState('');
+  /** Busca ao lado do select de modelo, uma string por índice de linha (mesmo comprimento que `linhas`). */
+  const [orcamentoModeloBuscaPorLinha, setOrcamentoModeloBuscaPorLinha] = useState([]);
   const [contratosList, setContratosList] = useState([]);
   const [contratosLoading, setContratosLoading] = useState(false);
   const [contratosError, setContratosError] = useState('');
@@ -616,9 +629,7 @@ function App({ authUser, onLogout = () => {} }) {
   const [osList, setOsList] = useState([]);
   const [osLoading, setOsLoading] = useState(false);
   const [osError, setOsError] = useState('');
-  const [osSaving, setOsSaving] = useState(false);
   const [osDraft, setOsDraft] = useState(null);
-  const [osUsuarioAlteracao, setOsUsuarioAlteracao] = useState('');
   const [modelosList, setModelosList] = useState([]);
   const modelosParaSelecao = useMemo(
     () => modelosList.filter((m) => Boolean(m.ativo)),
@@ -1124,7 +1135,6 @@ function App({ authUser, onLogout = () => {} }) {
         documentos: Array.isArray(data.documentos) ? data.documentos : [],
         historico: Array.isArray(data.historico) ? data.historico : [],
       });
-      setOsUsuarioAlteracao('');
       setContratoEmailDest(data.cliente_email ? String(data.cliente_email) : '');
       setContratoEmailMsg('');
       setContratoEmailFallbackLink('');
@@ -1135,168 +1145,26 @@ function App({ authUser, onLogout = () => {} }) {
     }
   };
 
-  const updateOsDraft = (key, value) => {
-    setOsDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
-  };
-
-  const addOsLinha = () => {
-    setOsDraft((prev) => {
-      if (!prev) return prev;
-      const n = prev.linhas.length + 1;
-      return {
-        ...prev,
-        linhas: [
-          ...prev.linhas,
-          {
-            modelo_id: '',
-            rotulo: `Modelo ${n}`,
-            cache_modelo: '',
-            emite_nf_propria: false,
-            data_prevista_pagamento: '',
-          },
-        ],
-      };
-    });
-  };
-
-  const updateOsLinha = (index, patch) => {
-    setOsDraft((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        linhas: prev.linhas.map((line, i) => (i === index ? { ...line, ...patch } : line)),
-      };
-    });
-  };
-
-  const removeOsLinha = (index) => {
-    setOsDraft((prev) => {
-      if (!prev) return prev;
-      return { ...prev, linhas: prev.linhas.filter((_, i) => i !== index) };
-    });
-  };
-
-  const saveOs = async (event) => {
-    event.preventDefault();
-    if (!osDraft?.id) return;
+  const cancelarOs = async (id) => {
+    if (
+      !window.confirm(
+        'Cancelar esta O.S.? O fluxo de contrato será desativado. Só é permitido se não houver recebimentos do cliente nem pagamentos a modelos registrados.',
+      )
+    ) {
+      return;
+    }
     setOsError('');
-    setOsSaving(true);
     try {
-      const tipo = osDraft.tipo_os || 'com_modelo';
-      if (osDraft.emitir_contrato) {
-        const faltando = [];
-        if (!String(osDraft.uso_imagem ?? '').trim()) faltando.push('uso de imagem');
-        if (!String(osDraft.prazo ?? '').trim()) faltando.push('prazo');
-        if (!String(osDraft.territorio ?? '').trim()) faltando.push('território');
-        if (!String(osDraft.condicoes_pagamento ?? '').trim()) faltando.push('condições de pagamento');
-        if (faltando.length > 0) {
-          setOsError(
-            `Com “Contrato com cliente” ativo, preencha na O.S.: ${faltando.join(', ')} (texto objetivo, não deixe em branco).`,
-          );
-          setOsSaving(false);
-          return;
-        }
-      }
-      if (tipo === 'com_modelo') {
-        if (!osDraft.linhas || osDraft.linhas.length === 0) {
-          setOsError('Com o tipo “Com modelo”, adicione pelo menos um modelo ao job e preencha cachê e NF.');
-          setOsSaving(false);
-          return;
-        }
-        for (let i = 0; i < osDraft.linhas.length; i += 1) {
-          const l = osDraft.linhas[i];
-          const cacheNum = Number(l.cache_modelo);
-          if (!Number.isFinite(cacheNum) || cacheNum < 0) {
-            setOsError(`Modelos do job — linha ${i + 1}: informe o cachê do modelo (valor numérico ≥ 0).`);
-            setOsSaving(false);
-            return;
-          }
-          if (!l.modelo_id && !String(l.rotulo ?? '').trim()) {
-            setOsError(
-              `Modelos do job — linha ${i + 1}: selecione um modelo cadastrado ou preencha a referência da vaga.`,
-            );
-            setOsSaving(false);
-            return;
-          }
-        }
-      }
-
-      const payload = {
-        tipo_os: tipo,
-        descricao: osDraft.descricao,
-        data_trabalho: osDraft.data_trabalho || null,
-        uso_imagem: osDraft.uso_imagem,
-        tipo_trabalho: osDraft.tipo_trabalho,
-        prazo: osDraft.prazo,
-        territorio: osDraft.territorio,
-        condicoes_pagamento: osDraft.condicoes_pagamento,
-        valor_servico: tipo === 'sem_modelo' ? Number(osDraft.valor_servico || 0) : 0,
-        agencia_fee_percent: Number(osDraft.agencia_fee_percent ?? 0),
-        extras_agencia_valor: Number(osDraft.extras_agencia_valor ?? 0),
-        extras_despesa_valor: Number(osDraft.extras_despesa_valor ?? 0),
-        extras_despesa_descricao: osDraft.extras_despesa_descricao || '',
-        imposto_percent: Number(osDraft.imposto_percent ?? 10),
-        parceiro_id: osDraft.parceiro_id ? Number(osDraft.parceiro_id) : null,
-        parceiro_percent:
-          osDraft.parceiro_percent === '' || osDraft.parceiro_percent == null ? null : Number(osDraft.parceiro_percent),
-        booker_id: osDraft.booker_id ? Number(osDraft.booker_id) : null,
-        booker_percent: osDraft.booker_percent === '' || osDraft.booker_percent == null ? null : Number(osDraft.booker_percent),
-        emitir_contrato: Boolean(osDraft.emitir_contrato),
-        contrato_template_versao: osDraft.contrato_template_versao || null,
-        contrato_observacao: osDraft.contrato_observacao ?? '',
-        data_vencimento_cliente: osDraft.data_vencimento_cliente || null,
-      };
-      if (tipo === 'com_modelo') {
-        payload.linhas = osDraft.linhas.map((l) => {
-          const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : null;
-          return {
-            modelo_id: mid != null && !Number.isNaN(mid) && mid > 0 ? mid : null,
-            rotulo: String(l.rotulo ?? '').trim() || undefined,
-            cache_modelo: Number(l.cache_modelo),
-            emite_nf_propria: Boolean(l.emite_nf_propria),
-            data_prevista_pagamento: l.data_prevista_pagamento || null,
-          };
-        });
-      }
-      payload.usuario = osUsuarioAlteracao.trim();
-
-      const response = await fetch(`${API_BASE}/ordens-servico/${osDraft.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Erro ao salvar O.S.');
-
-      setOsDraft({
-        ...data,
-        linhas: Array.isArray(data.linhas)
-          ? data.linhas.map((l) => ({
-            id: l.id,
-            modelo_id: l.modelo_id != null ? l.modelo_id : '',
-            rotulo: l.rotulo ?? '',
-            modelo_nome: l.modelo_nome,
-            cache_modelo: l.cache_modelo,
-            emite_nf_propria: Boolean(l.emite_nf_propria),
-            data_prevista_pagamento: l.data_prevista_pagamento
-              ? String(l.data_prevista_pagamento).slice(0, 10)
-              : '',
-          }))
-          : [],
-        documentos: Array.isArray(data.documentos) ? data.documentos : [],
-        historico: Array.isArray(data.historico) ? data.historico : [],
-      });
-      setOsUsuarioAlteracao('');
-      if (data.cliente_email) setContratoEmailDest(String(data.cliente_email));
-      setContratoEmailFallbackLink('');
-      setContratoHtmlFallbackUrl('');
+      const r = await fetch(`${API_BASE}/ordens-servico/${id}/cancelar`, { method: 'POST' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || 'Erro ao cancelar O.S.');
+      alert(data.message || 'O.S. cancelada.');
+      if (osDraft?.id === id) await loadOsDetail(id);
       const listRes = await fetch(`${API_BASE}/ordens-servico`);
       if (listRes.ok) setOsList(await listRes.json());
       await refreshAlertasOperacionais();
-    } catch (requestError) {
-      setOsError(requestError.message || LOAD_ERROR_MESSAGE);
-    } finally {
-      setOsSaving(false);
+    } catch (e) {
+      setOsError(e.message || LOAD_ERROR_MESSAGE);
     }
   };
 
@@ -2011,7 +1879,7 @@ function App({ authUser, onLogout = () => {} }) {
     setOrcamentoEditingOsId(null);
     setOrcamentoForm(createEmptyOrcamentoForm());
     setOrcamentoClienteBusca('');
-    setOrcamentoModeloBusca('');
+    setOrcamentoModeloBuscaPorLinha([]);
   };
 
   const voltarParaGestaoOrcamentos = () => {
@@ -2462,15 +2330,37 @@ function App({ authUser, onLogout = () => {} }) {
 
   const orcamentoFinanceiroPreview = previewOrcamentoFinanceiro(orcamentoForm);
 
-  const orcamentoLinhasComModeloValido = useMemo(
+  /** Pelo menos uma linha com modelo válido e cachê digitado → total do bloco Valores vem só da soma das linhas. */
+  const orcamentoCacheModelosAutomatico = useMemo(
     () =>
-      (orcamentoForm.linhas || []).filter((l) => {
+      (orcamentoForm.linhas || []).some((l) => {
         const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
-        return Number.isFinite(mid) && mid > 0;
+        const okModel = Number.isFinite(mid) && mid > 0;
+        const c = String(l.cache_modelo ?? '').trim();
+        const okCache = c !== '' && Number.isFinite(Number(c));
+        return okModel && okCache;
       }),
     [orcamentoForm.linhas],
   );
-  const orcamentoTemModelosNoCalculo = orcamentoLinhasComModeloValido.length > 0;
+
+  const orcamentoTotalCacheModelosSomado = useMemo(
+    () =>
+      (orcamentoForm.linhas || []).reduce((s, l) => {
+        const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+        if (!Number.isFinite(mid) || mid <= 0) return s;
+        return s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0);
+      }, 0),
+    [orcamentoForm.linhas],
+  );
+
+  useEffect(() => {
+    if (!orcamentoCacheModelosAutomatico) return;
+    const t = String(orcamentoTotalCacheModelosSomado);
+    setOrcamentoForm((prev) => {
+      if (String(prev.valor_servico_sem_modelo) === t && String(prev.cache_base_estimado_total) === t) return prev;
+      return { ...prev, valor_servico_sem_modelo: t, cache_base_estimado_total: t };
+    });
+  }, [orcamentoCacheModelosAutomatico, orcamentoTotalCacheModelosSomado]);
 
   const clientesOrcamentoFiltrados = useMemo(() => {
     const q = String(orcamentoClienteBusca || '').trim().toLowerCase();
@@ -2485,11 +2375,15 @@ function App({ authUser, onLogout = () => {} }) {
     });
   }, [clients, orcamentoClienteBusca]);
 
-  const modelosOrcamentoFiltrados = useMemo(() => {
-    const q = String(orcamentoModeloBusca || '').trim().toLowerCase();
-    if (!q) return modelosParaSelecao;
-    return modelosParaSelecao.filter((m) => String(m.nome || '').toLowerCase().includes(q));
-  }, [modelosParaSelecao, orcamentoModeloBusca]);
+  useEffect(() => {
+    const n = (orcamentoForm.linhas || []).length;
+    setOrcamentoModeloBuscaPorLinha((prev) => {
+      if (prev.length === n) return prev;
+      const next = prev.slice(0, n);
+      while (next.length < n) next.push('');
+      return next;
+    });
+  }, [orcamentoForm.linhas?.length]);
 
   return (
     <div className="min-h-screen bg-[#F7F7F7] text-slate-900">
@@ -2680,7 +2574,7 @@ function App({ authUser, onLogout = () => {} }) {
                           ? 'Recebimentos do cliente por O.S. e resumo (vínculo ao número da O.S.).'
                           : module === 'extrato'
                             ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
-                            : 'Ordens de serviço após aprovação do orçamento: linhas de modelo e resumo financeiro.'}
+                            : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
                 </p>
               </div>
               <span
@@ -2716,7 +2610,7 @@ function App({ authUser, onLogout = () => {} }) {
                           : `${osList.length} O.S.`}
               </span>
             </div>
-            {module !== 'orcamentos' && (
+            {module !== 'orcamentos' && module !== 'jobs' && (
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Modulo atual</p>
@@ -3323,8 +3217,7 @@ function App({ authUser, onLogout = () => {} }) {
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800">Recebimentos (cliente)</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Ao registrar um recebimento, a O.S. passa para <strong>recebida</strong> e os valores do job deixam de
-                  poder ser alterados. O valor vem do <strong>total_cliente</strong> da O.S.; você só confirma o montante
+                  Ao registrar um recebimento, a O.S. passa para <strong>finalizada</strong> e deixa de aceitar novos lançamentos neste fluxo. O valor vem do <strong>total_cliente</strong> da O.S.; você só confirma o montante
                   (saldo em aberto é preenchido automaticamente).
                 </p>
                 {finOsContexto && (
@@ -3363,7 +3256,7 @@ function App({ authUser, onLogout = () => {} }) {
                       {finOsOptions.map((os) => (
                         <option key={os.id} value={os.id}>
                           #{os.id} — {os.nome_empresa || os.nome_fantasia}
-                          {os.status === 'recebida' ? ' (recebida)' : ''}
+                          {os.status === 'finalizada' || os.status === 'recebida' ? ' (finalizada)' : ''}
                         </option>
                       ))}
                     </select>
@@ -4599,17 +4492,6 @@ function App({ authUser, onLogout = () => {} }) {
                   <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2">
                     <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cliente</p>
                     <div className="flex flex-col gap-1.5 sm:flex-row sm:items-end">
-                      <label className="min-w-0 flex-1 text-xs text-slate-600">
-                        <span className="mb-0.5 block font-medium text-slate-700">Buscar (nome ou CNPJ)</span>
-                        <input
-                          type="search"
-                          value={orcamentoClienteBusca}
-                          onChange={(event) => setOrcamentoClienteBusca(event.target.value)}
-                          placeholder="Filtra a lista ao lado"
-                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
-                          autoComplete="off"
-                        />
-                      </label>
                       <label className="min-w-0 flex-1 text-xs text-slate-600 sm:min-w-[220px]">
                         <span className="mb-0.5 block font-medium text-slate-700">Cliente</span>
                         <select
@@ -4630,6 +4512,17 @@ function App({ authUser, onLogout = () => {} }) {
                           ))}
                         </select>
                       </label>
+                      <label className="min-w-0 flex-1 text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Buscar (nome ou CNPJ)</span>
+                        <input
+                          type="search"
+                          value={orcamentoClienteBusca}
+                          onChange={(event) => setOrcamentoClienteBusca(event.target.value)}
+                          placeholder="Filtra a lista do select"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                          autoComplete="off"
+                        />
+                      </label>
                     </div>
                     {orcamentoClienteBusca.trim() && clientesOrcamentoFiltrados.length === 0 ? (
                       <p className="mt-1 text-[11px] text-amber-800">Nenhum cliente corresponde à busca.</p>
@@ -4640,74 +4533,82 @@ function App({ authUser, onLogout = () => {} }) {
                     className={`md:col-span-2 rounded-lg border border-slate-200 bg-white p-2 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
                   >
                     <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Modelos</p>
-                    <div className="mb-1 flex flex-col gap-1.5 sm:flex-row sm:items-end">
-                      <label className="min-w-0 flex-1 text-xs text-slate-600">
-                        <span className="mb-0.5 block font-medium text-slate-700">Buscar modelo</span>
-                        <input
-                          type="search"
-                          value={orcamentoModeloBusca}
-                          onChange={(event) => setOrcamentoModeloBusca(event.target.value)}
-                          placeholder="Filtra a lista nos selects"
-                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
-                          autoComplete="off"
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold text-white"
-                        style={{ backgroundColor: BRAND_ORANGE }}
-                        onClick={addOrcamentoLinhaCadastro}
-                      >
-                        + adicionar modelo
-                      </button>
-                    </div>
                     {(orcamentoForm.linhas || []).length === 0 ? (
-                      <p className="text-[11px] text-slate-500">
-                        Opcional na estimativa: sem modelos, use o valor manual em Valores (mantém o total ao definir o elenco depois).
+                      <p className="mb-2 text-[11px] text-slate-500">
+                        Opcional: sem linhas, use o cachê manual em Valores. Adicione linhas para informar modelo e
+                        cachê por pessoa.
                       </p>
-                    ) : (
-                      <div className="space-y-1">
-                        {(orcamentoForm.linhas || []).map((line, index) => (
+                    ) : null}
+                    <div className="space-y-1">
+                      {(orcamentoForm.linhas || []).map((line, index) => {
+                        const qLinha = String(orcamentoModeloBuscaPorLinha[index] ?? '')
+                          .trim()
+                          .toLowerCase();
+                        const modelosFiltradosLinha =
+                          !qLinha
+                            ? modelosParaSelecao
+                            : modelosParaSelecao.filter((m) =>
+                                String(m.nome || '')
+                                  .toLowerCase()
+                                  .includes(qLinha),
+                              );
+                        return (
                           <div
                             key={line.id ?? `ol-${index}`}
-                            className="grid gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1.5 sm:grid-cols-[minmax(0,1.3fr)_minmax(96px,0.85fr)_auto_auto] sm:items-end"
+                            className="flex flex-col gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1.5 sm:flex-row sm:flex-wrap sm:items-end"
                           >
-                            <select
-                              value={line.modelo_id ?? ''}
-                              onChange={(event) =>
-                                updateOrcamentoLinha(index, {
-                                  modelo_id: event.target.value ? Number(event.target.value) : '',
-                                  origemCadastro: true,
-                                })}
-                              className="rounded border border-slate-300 px-2 py-1 text-sm"
-                            >
-                              <option value="">Modelo…</option>
-                              {modelosOrcamentoComSelecao(line, modelosOrcamentoFiltrados, modelosParaSelecao).map(
-                                (m) => (
+                            <div className="flex min-w-0 flex-1 gap-1 sm:min-w-[200px]">
+                              <select
+                                value={line.modelo_id ?? ''}
+                                onChange={(event) =>
+                                  updateOrcamentoLinha(index, {
+                                    modelo_id: event.target.value ? Number(event.target.value) : '',
+                                    origemCadastro: true,
+                                  })}
+                                className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+                              >
+                                <option value="">Modelo…</option>
+                                {modelosOrcamentoComSelecao(
+                                  line,
+                                  modelosFiltradosLinha,
+                                  modelosParaSelecao,
+                                ).map((m) => (
                                   <option key={m.id} value={m.id}>
                                     {m.nome}
                                   </option>
-                                ),
-                              )}
-                            </select>
-                            {line.modelo_id !== '' && line.modelo_id != null ? (
-                              <label className="min-w-0">
-                                <span className="mb-0.5 block text-[10px] font-medium text-slate-500">Cachê R$</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  placeholder="0,00"
-                                  value={line.cache_modelo ?? ''}
-                                  onChange={(event) =>
-                                    updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
-                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                />
-                              </label>
-                            ) : (
-                              <div className="pb-1 text-[10px] text-slate-400 sm:pb-2">Escolha o modelo</div>
-                            )}
-                            <label className="flex items-center gap-1 text-[10px] text-slate-700">
+                                ))}
+                              </select>
+                              <input
+                                type="search"
+                                value={orcamentoModeloBuscaPorLinha[index] ?? ''}
+                                onChange={(event) => {
+                                  const v = event.target.value;
+                                  setOrcamentoModeloBuscaPorLinha((prev) => {
+                                    const next = [...prev];
+                                    next[index] = v;
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Filtrar…"
+                                className="w-[6.5rem] shrink-0 rounded border border-slate-300 px-1.5 py-1 text-xs"
+                                autoComplete="off"
+                                title="Filtra as opções do select ao lado"
+                              />
+                            </div>
+                            <label className="min-w-[6.5rem] shrink-0 sm:w-[7.5rem]">
+                              <span className="mb-0.5 block text-[10px] font-medium text-slate-500">Cachê R$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="0,00"
+                                value={line.cache_modelo ?? ''}
+                                onChange={(event) =>
+                                  updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-[10px] text-slate-700 sm:ml-1">
                               <input
                                 type="checkbox"
                                 checked={Boolean(line.emite_nf_propria)}
@@ -4718,18 +4619,28 @@ function App({ authUser, onLogout = () => {} }) {
                             </label>
                             <button
                               type="button"
-                              className="justify-self-start text-[11px] text-red-700 sm:justify-self-end"
+                              className="text-[11px] text-red-700 sm:ml-auto"
                               onClick={() => removeOrcamentoLinha(index)}
                             >
                               remover
                             </button>
+                            {qLinha && modelosFiltradosLinha.length === 0 ? (
+                              <p className="w-full text-[10px] text-amber-800">Nenhum modelo neste filtro.</p>
+                            ) : null}
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    {orcamentoModeloBusca.trim() && modelosOrcamentoFiltrados.length === 0 ? (
-                      <p className="mt-1 text-[11px] text-amber-800">Nenhum modelo corresponde à busca.</p>
-                    ) : null}
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        className="rounded-md px-3 py-1.5 text-xs font-semibold text-white"
+                        style={{ backgroundColor: BRAND_ORANGE }}
+                        onClick={addOrcamentoLinhaCadastro}
+                      >
+                        + adicionar modelo
+                      </button>
+                    </div>
                   </div>
 
                   <label
@@ -4829,21 +4740,17 @@ function App({ authUser, onLogout = () => {} }) {
                       <label className="text-xs text-slate-600">
                         <span className="mb-0.5 block font-medium text-slate-700">
                           Cachê dos modelos (R$)
-                          {orcamentoTemModelosNoCalculo ? ' · soma automática' : ' · ou total manual'}
+                          {orcamentoCacheModelosAutomatico ? ' · soma automática' : ' · total manual'}
                         </span>
-                        {orcamentoTemModelosNoCalculo ? (
+                        {orcamentoCacheModelosAutomatico ? (
                           <input
                             type="text"
                             readOnly
+                            disabled
                             tabIndex={-1}
-                            value={String(
-                              orcamentoLinhasComModeloValido.reduce(
-                                (s, l) =>
-                                  s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0),
-                                0,
-                              ),
-                            )}
-                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800"
+                            aria-readonly="true"
+                            value={String(orcamentoTotalCacheModelosSomado)}
+                            className="w-full cursor-not-allowed rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-sm text-slate-800"
                           />
                         ) : (
                           <input
@@ -5224,10 +5131,12 @@ function App({ authUser, onLogout = () => {} }) {
 
           {module === 'jobs' && (
             <>
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
+              <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold">Ordens de serviço</h3>
-                  <span className="text-xs font-medium text-slate-500">Geradas ao aprovar orçamento</span>
+                  <span className="text-xs text-slate-500">
+                    Reflexo do orçamento aprovado — valores não são editados aqui
+                  </span>
                 </div>
                 {osLoading ? (
                   <p className="text-sm text-slate-500">Carregando...</p>
@@ -5236,45 +5145,61 @@ function App({ authUser, onLogout = () => {} }) {
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2 font-medium">O.S.</th>
-                          <th className="px-2 py-2 font-medium">Orçamento</th>
+                          <th className="px-2 py-2 font-medium whitespace-nowrap">O.S.</th>
                           <th className="px-2 py-2 font-medium">Cliente</th>
-                          <th className="px-2 py-2 font-medium">Total cliente</th>
-                          <th className="px-2 py-2 font-medium">Agência (resultado)</th>
+                          <th className="px-2 py-2 font-medium">Descrição</th>
+                          <th className="px-2 py-2 font-medium whitespace-nowrap">Valor total</th>
                           <th className="px-2 py-2 font-medium">Status</th>
-                          <th className="px-2 py-2 font-medium">Ação</th>
+                          <th className="px-2 py-2 font-medium">Ações</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {osList.map((row) => (
-                          <tr key={row.id} className="border-b border-slate-100">
-                            <td className="px-2 py-2 font-medium">#{row.id}</td>
-                            <td className="px-2 py-2">#{row.orcamento_numero ?? row.orcamento_id}</td>
-                            <td className="px-2 py-2">{row.nome_empresa || row.nome_fantasia}</td>
-                            <td className="px-2 py-2">{formatBRL(row.total_cliente)}</td>
-                            <td className="px-2 py-2">{formatBRL(row.resultado_agencia)}</td>
-                            <td className="px-2 py-2">{row.status}</td>
-                            <td className="px-2 py-2">
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                  onClick={() => loadOsDetail(row.id)}
-                                >
-                                  Abrir
-                                </button>
-                                <a
-                                  href={`${API_BASE}/ordens-servico/${row.id}/pdf`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700"
-                                >
-                                  PDF
-                                </a>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                        {osList.map((row) => {
+                          const desc = String(row.descricao || '');
+                          const descShort = desc.length > 72 ? `${desc.slice(0, 72)}…` : desc;
+                          const st = String(row.status || '').toLowerCase();
+                          const podeCancelar = st === 'ativa' || st === 'aberta';
+                          return (
+                            <tr key={row.id} className="border-b border-slate-100">
+                              <td className="px-2 py-2 font-medium whitespace-nowrap">#{row.id}</td>
+                              <td className="px-2 py-2">{row.nome_empresa || row.nome_fantasia}</td>
+                              <td className="max-w-[220px] px-2 py-2 text-slate-700 sm:max-w-md" title={desc}>
+                                {descShort || '—'}
+                              </td>
+                              <td className="px-2 py-2 whitespace-nowrap">{formatBRL(row.total_cliente)}</td>
+                              <td className="px-2 py-2">{labelOsStatus(row.status)}</td>
+                              <td className="px-2 py-2">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                                    onClick={() => loadOsDetail(row.id)}
+                                  >
+                                    Visualizar
+                                  </button>
+                                  <a
+                                    href={`${API_BASE}/ordens-servico/${row.id}/pdf`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700"
+                                  >
+                                    PDF
+                                  </a>
+                                  {podeCancelar && (
+                                    <button
+                                      type="button"
+                                      className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-800"
+                                      title="Admin: só com zero recebimentos e zero pagamentos a modelos"
+                                      onClick={() => cancelarOs(row.id)}
+                                    >
+                                      Cancelar O.S.
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -5282,24 +5207,37 @@ function App({ authUser, onLogout = () => {} }) {
                 {osError && !osDraft && <p className="mt-3 text-sm font-medium text-red-600">{osError}</p>}
               </section>
 
-              {osDraft && (
-                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold">
-                      Editar O.S. #{osDraft.id}
-                      {osDraft.status === 'recebida' && (
-                        <span className="ml-2 text-sm font-normal text-amber-700">(somente leitura — recebida)</span>
-                      )}
-                    </h3>
-                    <div className="flex flex-wrap items-center gap-2">
+              {osDraft && (() => {
+                const stOs = String(osDraft.status || '').toLowerCase();
+                const osOperacional = stOs !== 'cancelada';
+                return (
+                <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-semibold">O.S. #{osDraft.id}</h3>
+                      <p className="text-xs text-slate-500">
+                        Orçamento #{osDraft.orcamento_numero ?? osDraft.orcamento_id} · Status:{' '}
+                        <strong>{labelOsStatus(osDraft.status)}</strong>
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
                       <a
                         href={`${API_BASE}/ordens-servico/${osDraft.id}/pdf`}
                         target="_blank"
                         rel="noreferrer"
                         className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-sm font-medium text-slate-800"
                       >
-                        O.S. para PDF
+                        PDF da O.S.
                       </a>
+                      {(stOs === 'ativa' || stOs === 'aberta') && (
+                        <button
+                          type="button"
+                          className="rounded-lg border border-red-200 bg-red-50 px-3 py-1 text-sm font-medium text-red-800"
+                          onClick={() => cancelarOs(osDraft.id)}
+                        >
+                          Cancelar O.S.
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
@@ -5309,558 +5247,243 @@ function App({ authUser, onLogout = () => {} }) {
                       </button>
                     </div>
                   </div>
-                  <p className="mb-4 text-sm text-slate-600">
-                    Orçamento de origem:{' '}
-                    <strong>#{osDraft.orcamento_numero ?? osDraft.orcamento_id}</strong>
-                    <span className="ml-2 text-xs text-slate-500">
-                      (O.S. e orçamento têm numerações distintas; a O.S. permanece vinculada a este orçamento.)
-                    </span>
+
+                  <p className="mb-3 text-sm text-slate-600">
+                    <span className="font-medium">Cliente:</span>{' '}
+                    {osDraft.nome_empresa || osDraft.nome_fantasia}
                   </p>
 
-                  <form className="grid grid-cols-1 gap-3 md:grid-cols-2" onSubmit={saveOs}>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Tipo de O.S.</span>
-                      <select
-                        value={osDraft.tipo_os || 'com_modelo'}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setOsDraft((prev) => {
-                            if (!prev || prev.status === 'recebida') return prev;
-                            if (v === 'sem_modelo') {
-                              return { ...prev, tipo_os: v, linhas: [] };
-                            }
-                            if (v === 'com_modelo') {
-                              if (prev.linhas && prev.linhas.length > 0) return { ...prev, tipo_os: v };
-                              return {
-                                ...prev,
-                                tipo_os: v,
-                                linhas: [
-                                  {
-                                    modelo_id: '',
-                                    rotulo: 'Modelo 1',
-                                    cache_modelo: '',
-                                    emite_nf_propria: false,
-                                    data_prevista_pagamento: '',
-                                  },
-                                ],
-                              };
-                            }
-                            return { ...prev, tipo_os: v };
-                          });
-                        }}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      >
-                        <option value="com_modelo">Com modelo</option>
-                        <option value="sem_modelo">Sem modelo (serviço)</option>
-                      </select>
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Data do trabalho</span>
-                      <input
-                        type="date"
-                        autoComplete="off"
-                        value={toDateInputValue(osDraft.data_trabalho)}
-                        onChange={(e) => updateOsDraft('data_trabalho', e.target.value || null)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Vencimento (cliente — calendário)</span>
-                      <input
-                        type="date"
-                        autoComplete="off"
-                        value={toDateInputValue(osDraft.data_vencimento_cliente)}
-                        onChange={(e) => updateOsDraft('data_vencimento_cliente', e.target.value || null)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                      <span className="mt-0.5 block text-[11px] text-slate-500">
-                        Se vazio, o calendário usa a data do trabalho como referência para “à receber”.
-                      </span>
-                    </label>
-                    <label className="text-sm text-slate-600 md:col-span-2">
-                      <span className="mb-1 block">Descrição</span>
-                      <input
-                        value={osDraft.descricao ?? ''}
-                        onChange={(e) => updateOsDraft('descricao', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Uso de imagem</span>
-                      <input
-                        value={osDraft.uso_imagem ?? ''}
-                        onChange={(e) => updateOsDraft('uso_imagem', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Tipo de trabalho</span>
-                      <input
-                        value={osDraft.tipo_trabalho ?? ''}
-                        onChange={(e) => updateOsDraft('tipo_trabalho', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Prazo</span>
-                      <input
-                        value={osDraft.prazo ?? ''}
-                        onChange={(e) => updateOsDraft('prazo', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Território</span>
-                      <input
-                        value={osDraft.territorio ?? ''}
-                        onChange={(e) => updateOsDraft('territorio', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600 md:col-span-2">
-                      <span className="mb-1 block">Condições de pagamento</span>
-                      <input
-                        value={osDraft.condicoes_pagamento ?? ''}
-                        onChange={(e) => updateOsDraft('condicoes_pagamento', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    {osDraft.emitir_contrato && (
-                      <p className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950">
-                        <strong>Contrato:</strong> os quatro campos acima (uso de imagem, prazo, território e condições de
-                        pagamento) entram no texto jurídico — use descrições claras (ex.: prazo em meses; território Brasil
-                        ou lista de países; pagamento parcelado ou à vista). Com O.S. “com modelo”, cada modelo na linha
-                        precisa ter CPF no cadastro.
+                  <div className="mb-4 grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">Descrição do trabalho</p>
+                      <p className="text-slate-800">{osDraft.descricao || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Tipo de trabalho</p>
+                      <p className="text-slate-800">{osDraft.tipo_trabalho || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Tipo O.S.</p>
+                      <p className="text-slate-800">{osDraft.tipo_os === 'sem_modelo' ? 'Sem modelo' : 'Com modelo'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Data do trabalho</p>
+                      <p className="text-slate-800">
+                        {osDraft.data_trabalho ? String(osDraft.data_trabalho).slice(0, 10) : '—'}
                       </p>
-                    )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Vencimento (cliente)</p>
+                      <p className="text-slate-800">
+                        {osDraft.data_vencimento_cliente
+                          ? String(osDraft.data_vencimento_cliente).slice(0, 10)
+                          : '—'}
+                      </p>
+                    </div>
+                    <div className="md:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">Uso de imagem / prazo / território</p>
+                      <p className="text-slate-800">
+                        {[osDraft.uso_imagem, osDraft.prazo, osDraft.territorio].filter(Boolean).join(' · ') || '—'}
+                      </p>
+                    </div>
+                    <div className="md:col-span-2">
+                      <p className="text-xs font-medium text-slate-500">Condições de pagamento</p>
+                      <p className="text-slate-800">{osDraft.condicoes_pagamento || '—'}</p>
+                    </div>
+                  </div>
 
-                    {osDraft.tipo_os === 'sem_modelo' && (
-                      <label className="text-sm text-slate-600 md:col-span-2">
-                        <span className="mb-1 block">Valor do serviço (sem modelo)</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={osDraft.valor_servico ?? ''}
-                          onChange={(e) => updateOsDraft('valor_servico', e.target.value)}
-                          disabled={osDraft.status === 'recebida'}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                        />
-                      </label>
-                    )}
+                  {osDraft.tipo_os === 'com_modelo' && (osDraft.linhas || []).length > 0 && (
+                    <div className="mb-4 overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-500">
+                            <th className="px-2 py-2">Modelo</th>
+                            <th className="px-2 py-2">Cachê R$</th>
+                            <th className="px-2 py-2">NF própria</th>
+                            <th className="px-2 py-2">Prev. pagamento</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(osDraft.linhas || []).map((line) => (
+                            <tr key={line.id} className="border-b border-slate-100">
+                              <td className="px-2 py-2">{line.modelo_nome || line.rotulo || '—'}</td>
+                              <td className="px-2 py-2">{formatBRL(line.cache_modelo)}</td>
+                              <td className="px-2 py-2">{line.emite_nf_propria ? 'Sim' : 'Não'}</td>
+                              <td className="px-2 py-2">
+                                {line.data_prevista_pagamento
+                                  ? String(line.data_prevista_pagamento).slice(0, 10)
+                                  : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
 
-                    {osDraft.tipo_os === 'com_modelo' && (
-                      <div className="md:col-span-2 rounded-xl border-2 border-amber-200 bg-amber-50/50 p-4">
-                        <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <h4 className="text-sm font-semibold text-slate-900">Modelos do job</h4>
-                            <p className="mt-0.5 text-xs text-slate-600">
-                              Cachê e NF por linha. Pode haver vaga só com referência (sem cadastro); para contrato, vincule o
-                              modelo depois. Use “Adicionar modelo” para mais linhas.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={osDraft.status === 'recebida'}
-                            className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-white"
-                            style={{ backgroundColor: BRAND_ORANGE }}
-                            onClick={addOsLinha}
-                          >
-                            + Adicionar modelo
-                          </button>
-                        </div>
-                        {osDraft.linhas.length === 0 ? (
-                          <p className="text-sm text-red-700">
-                            Nenhum modelo na lista — clique em “Adicionar modelo” ou altere o tipo de O.S.
-                          </p>
-                        ) : (
-                          <div className="space-y-3">
-                            {osDraft.linhas.map((line, index) => (
-                              <div
-                                key={line.id ?? `new-${index}`}
-                                className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
-                              >
-                                <div className="mb-2 text-xs font-medium text-slate-500">Modelo {index + 1}</div>
-                                <div className="grid gap-3 md:grid-cols-[1fr_minmax(120px,1fr)_auto_auto] md:items-end">
-                                  <label className="text-sm text-slate-600">
-                                    <span className="mb-1 block">Modelo (cadastro)</span>
-                                    <select
-                                      value={line.modelo_id ?? ''}
-                                      onChange={(e) =>
-                                        updateOsLinha(index, {
-                                          modelo_id: e.target.value ? Number(e.target.value) : '',
-                                        })}
-                                      disabled={osDraft.status === 'recebida'}
-                                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
-                                    >
-                                      <option value="">A definir / selecione…</option>
-                                      {modelosParaSelecao.map((m) => (
-                                        <option key={m.id} value={m.id}>
-                                          {m.nome}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <label className="text-sm text-slate-600">
-                                    <span className="mb-1 block">Cachê (R$)</span>
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      min="0"
-                                      placeholder="0,00"
-                                      value={line.cache_modelo ?? ''}
-                                      onChange={(e) => updateOsLinha(index, { cache_modelo: e.target.value })}
-                                      disabled={osDraft.status === 'recebida'}
-                                      className="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
-                                    />
-                                  </label>
-                                  <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-                                    <input
-                                      type="checkbox"
-                                      className="h-4 w-4 rounded border-slate-300"
-                                      checked={Boolean(line.emite_nf_propria)}
-                                      onChange={(e) =>
-                                        updateOsLinha(index, { emite_nf_propria: e.target.checked })}
-                                      disabled={osDraft.status === 'recebida'}
-                                    />
-                                    Emite NF própria
-                                  </label>
-                                  <button
-                                    type="button"
-                                    disabled={osDraft.status === 'recebida' || osDraft.linhas.length <= 1}
-                                    className="rounded-md border border-red-200 px-2 py-2 text-xs text-red-700 disabled:opacity-40"
-                                    title={osDraft.linhas.length <= 1 ? 'Mínimo de uma linha em “Com modelo”' : 'Remover linha'}
-                                    onClick={() => removeOsLinha(index)}
-                                  >
-                                    Remover
-                                  </button>
-                                </div>
-                                <label className="mt-2 block text-xs text-slate-600">
-                                  <span className="mb-0.5 block">Referência da vaga (obrigatória se não houver modelo no cadastro)</span>
-                                  <input
-                                    value={line.rotulo ?? ''}
-                                    onChange={(e) => updateOsLinha(index, { rotulo: e.target.value })}
-                                    disabled={osDraft.status === 'recebida'}
-                                    placeholder="Ex.: Modelo 1"
-                                    className="w-full max-w-md rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-                                  />
-                                </label>
-                                <label className="mt-2 block text-xs text-slate-600">
-                                  <span className="mb-0.5 block">Previsão pagamento ao modelo</span>
-                                  <input
-                                    type="date"
-                                    autoComplete="off"
-                                    value={toDateInputValue(line.data_prevista_pagamento)}
-                                    onChange={(e) =>
-                                      updateOsLinha(index, { data_prevista_pagamento: e.target.value || '' })}
-                                    disabled={osDraft.status === 'recebida'}
-                                    className="w-full max-w-[220px] rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-                                  />
-                                </label>
-                              </div>
-                            ))}
-                          </div>
+                  {osDraft.tipo_os === 'sem_modelo' && (
+                    <p className="mb-4 text-sm text-slate-600">
+                      <span className="font-medium">Valor serviço (sem modelo):</span>{' '}
+                      {formatBRL(osDraft.valor_servico)}
+                    </p>
+                  )}
+
+                  <div className="mb-4 rounded-lg border-2 border-amber-200 bg-amber-50/90 p-3">
+                    <p className="text-xs font-medium text-amber-950">Total ao cliente</p>
+                    <p className="text-xl font-bold text-slate-900">{formatBRL(osDraft.total_cliente)}</p>
+                  </div>
+
+                  <div className="mb-4 grid gap-2 rounded-lg border border-amber-200/80 bg-amber-50/50 p-3 text-sm md:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <p className="text-xs text-slate-500">Taxa agência (R$)</p>
+                      <p className="font-semibold">{formatBRL(osDraft.taxa_agencia_valor)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Imposto</p>
+                      <p className="font-semibold">{formatBRL(osDraft.imposto_valor)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Líquido modelos</p>
+                      <p className="font-semibold">{formatBRL(osDraft.modelo_liquido_total)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Resultado agência</p>
+                      <p className="font-semibold">{formatBRL(osDraft.resultado_agencia)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Parceiro / booker (R$)</p>
+                      <p className="font-semibold">
+                        {formatBRL(osDraft.parceiro_valor)} / {formatBRL(osDraft.booker_valor)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {osDraft.emitir_contrato && osOperacional && (
+                    <div className="mb-4 rounded-lg border border-slate-200 p-3">
+                      <h4 className="text-sm font-semibold text-slate-800">Contrato com cliente</h4>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Status: <strong>{labelContratoStatus(osDraft.contrato_status)}</strong>
+                        {osDraft.contrato_assinado_em && (
+                          <span className="ml-2">
+                            — assinado em {String(osDraft.contrato_assinado_em).slice(0, 10)}
+                          </span>
                         )}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <a
+                          href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-preview`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-800"
+                        >
+                          Pré-visualizar HTML
+                        </a>
+                        <a
+                          href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-pdf`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-800"
+                        >
+                          PDF contrato
+                        </a>
                       </div>
-                    )}
-
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Taxa agência (%)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={osDraft.agencia_fee_percent ?? ''}
-                        onChange={(e) => updateOsDraft('agencia_fee_percent', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Imposto (%)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={osDraft.imposto_percent ?? ''}
-                        onChange={(e) => updateOsDraft('imposto_percent', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Extras agência (R$)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={osDraft.extras_agencia_valor ?? ''}
-                        onChange={(e) => updateOsDraft('extras_agencia_valor', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Extras despesa (R$)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={osDraft.extras_despesa_valor ?? ''}
-                        onChange={(e) => updateOsDraft('extras_despesa_valor', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600 md:col-span-2">
-                      <span className="mb-1 block">Descrição das despesas extras</span>
-                      <input
-                        value={osDraft.extras_despesa_descricao ?? ''}
-                        onChange={(e) => updateOsDraft('extras_despesa_descricao', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Parceiro</span>
-                      <select
-                        value={osDraft.parceiro_id != null ? String(osDraft.parceiro_id) : ''}
-                        onChange={(e) => updateOsDraft('parceiro_id', e.target.value ? Number(e.target.value) : null)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      >
-                        <option value="">Nenhum</option>
-                        {parceirosList.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.razao_social_ou_nome}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Parceiro (% sobre margem)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={osDraft.parceiro_percent ?? ''}
-                        onChange={(e) => updateOsDraft('parceiro_percent', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Booker</span>
-                      <select
-                        value={osDraft.booker_id != null ? String(osDraft.booker_id) : ''}
-                        onChange={(e) => updateOsDraft('booker_id', e.target.value ? Number(e.target.value) : null)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      >
-                        <option value="">Nenhum</option>
-                        {bookersList.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.nome}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-1 block">Booker (% sobre margem após parceiro)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={osDraft.booker_percent ?? ''}
-                        onChange={(e) => updateOsDraft('booker_percent', e.target.value)}
-                        disabled={osDraft.status === 'recebida'}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-
-                    <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <label className="flex items-start gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={Boolean(osDraft.emitir_contrato)}
-                          onChange={(e) => updateOsDraft('emitir_contrato', e.target.checked)}
-                          disabled={osDraft.status === 'recebida'}
-                        />
-                        <span>
-                          <strong>Contrato com cliente</strong> — o texto padrão é montado automaticamente com dados da
-                          O.S. e dos cadastros (cliente, modelos, valores calculados no job). Nada é digitado na hora de
-                          gerar. Envie por e-mail e arquive o PDF assinado nesta O.S.
-                        </span>
-                      </label>
-                      {osDraft.emitir_contrato && (
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
-                          <label className="text-sm text-slate-600">
-                            <span className="mb-1 block">Versão do template jurídico</span>
-                            <input
-                              value={osDraft.contrato_template_versao ?? ''}
-                              onChange={(e) => updateOsDraft('contrato_template_versao', e.target.value)}
-                              disabled={osDraft.status === 'recebida'}
-                              placeholder="ex: 2025.1"
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                            />
-                          </label>
-                          <label className="text-sm text-slate-600 md:col-span-2">
-                            <span className="mb-1 block">Observação interna (contrato)</span>
-                            <input
-                              value={osDraft.contrato_observacao ?? ''}
-                              onChange={(e) => updateOsDraft('contrato_observacao', e.target.value)}
-                              disabled={osDraft.status === 'recebida'}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                            />
-                          </label>
-                        </div>
-                      )}
-                      {osDraft.emitir_contrato && osDraft.id && (
-                        <div className="mt-3 space-y-3 text-sm">
-                          <p>
-                            <a
-                              href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-preview`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-medium text-amber-800 underline"
-                            >
-                              Visualizar contrato (HTML)
-                            </a>
-                            <span className="text-slate-500"> · </span>
-                            <a
-                              href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-pdf`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-medium text-amber-800 underline"
-                            >
-                              Gerar PDF
-                            </a>
-                            <span className="text-slate-500">
-                              {' '}
-                              — layout A4 profissional para impressão e envio.
-                            </span>
-                          </p>
-                          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-amber-100 bg-white p-3">
-                            <label className="min-w-[200px] flex-1 text-sm text-slate-600">
-                              <span className="mb-1 block text-xs">Enviar por e-mail (destinatário)</span>
-                              <input
-                                type="email"
-                                value={contratoEmailDest}
-                                onChange={(e) => setContratoEmailDest(e.target.value)}
-                                placeholder="e-mail do cliente"
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              disabled={contratoEmailLoading}
-                              className="rounded-xl px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                              style={{ backgroundColor: BRAND_ORANGE }}
-                              onClick={enviarContratoPorEmail}
-                            >
-                              {contratoEmailLoading ? 'Enviando...' : 'Enviar contrato por e-mail'}
-                            </button>
-                          </div>
-                          {contratoEmailMsg && (
-                            <p
-                              className={`text-xs ${contratoEmailMsg.includes('sucesso') ? 'text-emerald-700' : 'text-red-600'}`}
-                            >
-                              {contratoEmailMsg}
-                            </p>
-                          )}
-                          {contratoEmailFallbackLink && (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-                                onClick={copiarLinkAssinatura}
-                              >
-                                Copiar link de assinatura
-                              </button>
-                              <a
-                                href={contratoEmailFallbackLink}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-                              >
-                                Abrir link
-                              </a>
-                            </div>
-                          )}
-                          {contratoHtmlFallbackUrl && (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <a
-                                href={contratoHtmlFallbackUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-                              >
-                                Baixar HTML do contrato (fallback)
-                              </a>
-                            </div>
-                          )}
-                          {osDraft.contrato_enviado_em && (
-                            <p className="text-xs text-slate-500">
-                              Último envio registrado em: {String(osDraft.contrato_enviado_em).slice(0, 19).replace('T', ' ')}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                      {osDraft.contrato_status && (
-                        <p className="mt-2 text-xs text-slate-600">
-                          Status contrato: <strong>{osDraft.contrato_status}</strong>
-                          {osDraft.contrato_assinado_em && (
-                            <span className="ml-2">
-                              — assinado em {String(osDraft.contrato_assinado_em).slice(0, 10)}
-                            </span>
-                          )}
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label className="flex-1 text-xs text-slate-600">
+                          <span className="mb-0.5 block font-medium">E-mail destino</span>
+                          <input
+                            type="email"
+                            value={contratoEmailDest}
+                            onChange={(e) => setContratoEmailDest(e.target.value)}
+                            className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                            disabled={contratoEmailLoading}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={contratoEmailLoading}
+                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+                          style={{ backgroundColor: BRAND_ORANGE }}
+                          onClick={enviarContratoPorEmail}
+                        >
+                          {contratoEmailLoading ? 'Enviando...' : 'Enviar contrato por e-mail'}
+                        </button>
+                      </div>
+                      {contratoEmailMsg && (
+                        <p
+                          className={`mt-2 text-xs ${contratoEmailMsg.includes('sucesso') ? 'text-emerald-700' : 'text-red-600'}`}
+                        >
+                          {contratoEmailMsg}
                         </p>
                       )}
+                      {contratoEmailFallbackLink && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
+                            onClick={copiarLinkAssinatura}
+                          >
+                            Copiar link de assinatura
+                          </button>
+                          <a
+                            href={contratoEmailFallbackLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                          >
+                            Abrir link
+                          </a>
+                        </div>
+                      )}
+                      {contratoHtmlFallbackUrl && (
+                        <a
+                          href={contratoHtmlFallbackUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-block rounded-md border border-slate-300 px-2 py-1 text-xs"
+                        >
+                          Baixar HTML (fallback)
+                        </a>
+                      )}
                     </div>
+                  )}
 
-                    <div className="md:col-span-2 rounded-xl border border-slate-200 p-4">
-                      <h4 className="text-sm font-semibold text-slate-800">Documentos desta O.S.</h4>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Arquivos vinculados ao número da O.S. (contrato assinado, anexos).
-                      </p>
-                      <ul className="mt-3 space-y-2 text-sm">
-                        {(osDraft.documentos || []).length === 0 ? (
-                          <li className="text-slate-500">Nenhum arquivo ainda.</li>
-                        ) : (
-                          (osDraft.documentos || []).map((d) => (
-                            <li
-                              key={d.id}
-                              className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2 py-2"
+                  <div className="mb-4 rounded-lg border border-slate-200 p-3">
+                    <h4 className="text-sm font-semibold text-slate-800">Documentos</h4>
+                    <ul className="mt-2 space-y-2 text-sm">
+                      {(osDraft.documentos || []).length === 0 ? (
+                        <li className="text-slate-500">Nenhum arquivo.</li>
+                      ) : (
+                        (osDraft.documentos || []).map((d) => (
+                          <li
+                            key={d.id}
+                            className="flex flex-wrap items-center gap-2 rounded border border-slate-100 bg-slate-50 px-2 py-1.5"
+                          >
+                            <span className="text-xs uppercase text-slate-500">{d.tipo}</span>
+                            <span className="flex-1 truncate text-xs">{d.nome_arquivo}</span>
+                            <a
+                              href={`${API_BASE}/ordens-servico/${osDraft.id}/documentos/${d.id}/download`}
+                              className="text-xs text-amber-800 underline"
+                              target="_blank"
+                              rel="noreferrer"
                             >
-                              <span className="text-xs font-medium uppercase text-slate-500">{d.tipo}</span>
-                              <span className="flex-1 truncate">{d.nome_arquivo}</span>
-                              <a
-                                href={`${API_BASE}/ordens-servico/${osDraft.id}/documentos/${d.id}/download`}
-                                className="text-xs font-medium text-amber-700 underline"
-                                target="_blank"
-                                rel="noreferrer"
+                              Baixar
+                            </a>
+                            {osOperacional && (
+                              <button
+                                type="button"
+                                className="text-xs text-red-700"
+                                onClick={() => deleteOsDocumento(d.id)}
                               >
-                                Baixar
-                              </a>
-                              {osDraft.status !== 'recebida' && (
-                                <button
-                                  type="button"
-                                  className="text-xs text-red-700"
-                                  onClick={() => deleteOsDocumento(d.id)}
-                                >
-                                  Remover
-                                </button>
-                              )}
-                            </li>
-                          ))
-                        )}
-                      </ul>
-                      <label className="mt-3 block text-xs text-slate-600">
-                        <span className="mb-1 block font-medium text-slate-700">Enviar contrato assinado (PDF ou imagem)</span>
+                                Remover
+                              </button>
+                            )}
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                    {osOperacional && (
+                      <label className="mt-2 block text-xs text-slate-600">
+                        <span className="mb-1 block font-medium">Enviar contrato assinado (PDF ou imagem)</span>
                         <input
                           type="file"
                           accept=".pdf,image/*"
@@ -5872,105 +5495,26 @@ function App({ authUser, onLogout = () => {} }) {
                           }}
                         />
                       </label>
-                    </div>
-
-                    <div className="md:col-span-2 grid gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm md:grid-cols-2 lg:grid-cols-3">
-                      <div>
-                        <p className="text-xs text-slate-500">Total cliente</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.total_cliente)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Taxa agência (R$)</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.taxa_agencia_valor)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Imposto</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.imposto_valor)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Líquido modelos</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.modelo_liquido_total)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Agência parcial</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.agencia_parcial)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Parceiro</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.parceiro_valor)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Após parceiro</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.agencia_apos_parceiro)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Booker</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.booker_valor)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Agência final</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.agencia_final)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Resultado agência</p>
-                        <p className="font-semibold text-slate-900">{formatBRL(osDraft.resultado_agencia)}</p>
-                      </div>
-                    </div>
-
-                    <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <h4 className="text-sm font-semibold text-slate-800">Histórico de alterações</h4>
-                      <p className="text-xs text-slate-500">
-                        Alterações na O.S. ficam registradas com data, usuário e campos modificados.
-                      </p>
-                      {(osDraft.historico || []).length === 0 ? (
-                        <p className="mt-2 text-sm text-slate-500">Nenhum registro ainda.</p>
-                      ) : (
-                        <ul className="mt-2 max-h-52 space-y-2 overflow-y-auto text-xs">
-                          {(osDraft.historico || []).map((h) => (
-                            <li key={h.id} className="rounded border border-slate-100 bg-white p-2">
-                              <span className="font-medium text-slate-700">{h.campo}</span>
-                              <span className="text-slate-500">
-                                {' '}
-                                — {h.usuario} — {String(h.created_at || '').slice(0, 19).replace('T', ' ')}
-                              </span>
-                              <div className="mt-1 text-slate-600">Anterior: {h.valor_anterior ?? '—'}</div>
-                              <div>Novo: {h.valor_novo ?? '—'}</div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    {osDraft.status !== 'recebida' && (
-                      <label className="md:col-span-2 text-sm text-slate-600">
-                        <span className="mb-1 block font-medium">
-                          Usuário (obrigatório ao salvar alterações)
-                        </span>
-                        <input
-                          value={osUsuarioAlteracao}
-                          onChange={(e) => setOsUsuarioAlteracao(e.target.value)}
-                          placeholder="Nome de quem está alterando"
-                          className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2"
-                        />
-                      </label>
                     )}
+                  </div>
 
-                    {osDraft.status !== 'recebida' && (
-                      <div className="md:col-span-2">
-                        <button
-                          type="submit"
-                          disabled={osSaving}
-                          className="rounded-xl px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                          style={{ backgroundColor: BRAND_ORANGE }}
-                        >
-                          {osSaving ? 'Salvando...' : 'Salvar O.S.'}
-                        </button>
-                      </div>
-                    )}
-                  </form>
-                  {osError && osDraft && <p className="mt-3 text-sm font-medium text-red-600">{osError}</p>}
+                  {(osDraft.historico || []).length > 0 && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <h4 className="text-sm font-semibold text-slate-800">Histórico (legado)</h4>
+                      <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-slate-600">
+                        {(osDraft.historico || []).map((h) => (
+                          <li key={h.id}>
+                            {h.campo} — {h.usuario} — {String(h.created_at || '').slice(0, 19).replace('T', ' ')}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {osError && <p className="mt-3 text-sm font-medium text-red-600">{osError}</p>}
                 </section>
-              )}
+                );
+              })()}
             </>
           )}
         </main>

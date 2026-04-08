@@ -8,7 +8,7 @@ const router = express.Router();
 async function findOsByToken(token) {
   const r = await pool.query(
     `
-    SELECT id, emitir_contrato, contrato_status, contrato_assinado_em
+    SELECT id, status, emitir_contrato, contrato_status, contrato_assinado_em
     FROM ordens_servico
     WHERE contrato_assinatura_token = $1
     LIMIT 1
@@ -44,7 +44,9 @@ router.get('/public/contratos/documento', async (req, res, next) => {
     const token = String(req.query.token || '').trim();
     if (!token) return res.status(400).send('Token obrigatório.');
     const os = await findOsByToken(token);
-    if (!os || !os.emitir_contrato) return res.status(404).send('Link inválido.');
+    if (!os || !os.emitir_contrato || String(os.status || '') === 'cancelada') {
+      return res.status(404).send('Link inválido.');
+    }
     const ctx = await loadContratoContext(pool, os.id);
     if (!ctx) return res.status(404).send('O.S. não encontrada.');
     const html = buildContratoDocumentHtml(ctx);
@@ -64,7 +66,7 @@ router.post('/public/contratos/assinar', async (req, res, next) => {
     if (!nome) return res.status(400).json({ message: 'Nome do assinante obrigatório.' });
 
     const os = await findOsByToken(token);
-    if (!os || !os.emitir_contrato) {
+    if (!os || !os.emitir_contrato || String(os.status || '') === 'cancelada') {
       return res.status(404).json({ message: 'Link de assinatura inválido.' });
     }
     if (os.contrato_status === 'assinado' || os.contrato_status === 'recebido') {

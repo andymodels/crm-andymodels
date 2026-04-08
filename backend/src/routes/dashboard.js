@@ -30,6 +30,7 @@ const SQL_CONTRATOS_PENDENTES = `
   FROM ordens_servico os
   JOIN clientes c ON c.id = os.cliente_id
   WHERE os.emitir_contrato = TRUE
+    AND os.status IS DISTINCT FROM 'cancelada'
     AND COALESCE(os.contrato_status, '') = 'aguardando_assinatura'
   ORDER BY os.id DESC
   LIMIT 100
@@ -63,7 +64,8 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
           FROM recebimentos
           GROUP BY os_id
         ) r ON r.os_id = os.id
-        WHERE os.total_cliente - COALESCE(r.recebido, 0) > 0.01
+        WHERE os.status IS DISTINCT FROM 'cancelada'
+          AND os.total_cliente - COALESCE(r.recebido, 0) > 0.01
         ORDER BY os.id DESC
         LIMIT 40
       `),
@@ -88,6 +90,7 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
         om.os_id,
         om.cache_modelo,
         om.emite_nf_propria,
+        os.status,
         os.imposto_percent,
         os.agencia_fee_percent,
         COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
@@ -118,6 +121,7 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
 
     const pagamentosModeloPendentes = [];
     for (const row of omRows.rows) {
+      if (String(row.status || '') === 'cancelada') continue;
       const liquido = lineLiquido(
         row.cache_modelo,
         row.imposto_percent,
@@ -216,7 +220,8 @@ router.get('/dashboard/calendario', async (req, res, next) => {
           FROM recebimentos
           GROUP BY os_id
         ) r ON r.os_id = os.id
-        WHERE os.total_cliente - COALESCE(r.recebido, 0) > 0.01
+        WHERE os.status IS DISTINCT FROM 'cancelada'
+          AND os.total_cliente - COALESCE(r.recebido, 0) > 0.01
           AND COALESCE(os.data_vencimento_cliente, os.data_trabalho) IS NOT NULL
           AND COALESCE(os.data_vencimento_cliente, os.data_trabalho) >= $1::date
           AND COALESCE(os.data_vencimento_cliente, os.data_trabalho) <= $2::date
@@ -240,7 +245,8 @@ router.get('/dashboard/calendario', async (req, res, next) => {
         JOIN ordens_servico os ON os.id = om.os_id
         LEFT JOIN modelos m ON m.id = om.modelo_id
         JOIN clientes c ON c.id = os.cliente_id
-        WHERE om.data_prevista_pagamento IS NOT NULL
+        WHERE os.status IS DISTINCT FROM 'cancelada'
+          AND om.data_prevista_pagamento IS NOT NULL
           AND om.data_prevista_pagamento >= $1::date
           AND om.data_prevista_pagamento <= $2::date
         `,

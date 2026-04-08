@@ -45,8 +45,12 @@ router.post('/ordens-servico/:id/documentos', upload.single('arquivo'), async (r
     }
     if (!req.file) return res.status(400).json({ message: 'Arquivo obrigatorio (campo arquivo).' });
 
-    const osCheck = await pool.query('SELECT id FROM ordens_servico WHERE id = $1', [osId]);
+    const osCheck = await pool.query('SELECT id, status FROM ordens_servico WHERE id = $1', [osId]);
     if (osCheck.rows.length === 0) return res.status(404).json({ message: 'O.S. nao encontrada.' });
+    const st = String(osCheck.rows[0].status || '');
+    if (st === 'cancelada') {
+      return res.status(400).json({ message: 'O.S. cancelada nao aceita novos documentos.' });
+    }
 
     const relPath = `os/${osId}/${path.basename(req.file.path)}`;
     const buf = fs.readFileSync(req.file.path);

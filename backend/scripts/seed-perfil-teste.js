@@ -271,7 +271,7 @@ async function main() {
         booker_id, booker_percent, booker_valor, agencia_final, resultado_agencia
       )
       VALUES (
-        $1, $2, $3, 'com_modelo', $4, $5, 'aberta',
+        $1, $2, $3, 'com_modelo', $4, $5, 'ativa',
         $6, $7, $8, $9,
         0, $10, $11, $12, $13, 0, '',
         $14, $15, $16, $17, NULL, NULL, $18, $19, NULL, NULL, $20, $21, $22

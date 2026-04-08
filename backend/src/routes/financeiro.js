@@ -15,7 +15,7 @@ router.get('/financeiro/resumo', async (_req, res, next) => {
       pool.query(`
         SELECT COALESCE(SUM(total_cliente), 0) AS t
         FROM ordens_servico
-        WHERE status IS DISTINCT FROM 'recebida'
+        WHERE status = 'ativa'
       `),
       pool.query(`
         SELECT
@@ -126,6 +126,10 @@ router.post('/financeiro/recebimentos', async (req, res, next) => {
       [os_id],
     );
     if (osCheck.rows.length === 0) return res.status(404).json({ message: 'O.S. nao encontrada.' });
+    const st = String(osCheck.rows[0].status || '');
+    if (st === 'cancelada') {
+      return res.status(400).json({ message: 'O.S. cancelada nao aceita recebimentos.' });
+    }
     const totalCliente = n(osCheck.rows[0].total_cliente);
     const recBefore = await pool.query(
       `SELECT COALESCE(SUM(valor), 0) AS recebido FROM recebimentos WHERE os_id = $1`,
@@ -161,7 +165,7 @@ router.post('/financeiro/recebimentos', async (req, res, next) => {
       await pool.query(
         `
         UPDATE ordens_servico
-        SET status = 'recebida', updated_at = NOW()
+        SET status = 'finalizada', updated_at = NOW()
         WHERE id = $1
         `,
         [os_id],
@@ -208,8 +212,19 @@ router.post('/financeiro/pagamentos-modelo', async (req, res, next) => {
     if (os_modelo_id == null || valor == null || !data_pagamento) {
       return res.status(400).json({ message: 'os_modelo_id, valor e data_pagamento sao obrigatorios.' });
     }
-    const check = await pool.query('SELECT id FROM os_modelos WHERE id = $1', [os_modelo_id]);
+    const check = await pool.query(
+      `
+      SELECT om.id, os.status
+      FROM os_modelos om
+      JOIN ordens_servico os ON os.id = om.os_id
+      WHERE om.id = $1
+      `,
+      [os_modelo_id],
+    );
     if (check.rows.length === 0) return res.status(404).json({ message: 'Linha de modelo (os_modelo) nao encontrada.' });
+    if (String(check.rows[0].status || '') === 'cancelada') {
+      return res.status(400).json({ message: 'O.S. cancelada nao aceita novos pagamentos a modelos.' });
+    }
 
     const ins = await pool.query(
       `

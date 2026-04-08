@@ -591,6 +591,14 @@ const initDb = async () => {
     ADD COLUMN IF NOT EXISTS data_vencimento_cliente DATE;
   `);
 
+  await pool.query(`UPDATE ordens_servico SET status = 'ativa' WHERE status = 'aberta';`);
+  await pool.query(`UPDATE ordens_servico SET status = 'finalizada' WHERE status = 'recebida';`);
+  try {
+    await pool.query(`ALTER TABLE ordens_servico ALTER COLUMN status SET DEFAULT 'ativa';`);
+  } catch (e) {
+    if (!String(e.message || '').includes('already')) console.warn('[initDb] ordens_servico status default:', e.message);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS os_modelos (
       id SERIAL PRIMARY KEY,
