@@ -325,6 +325,7 @@ async function loadOrcamentoDoc(pool, id) {
     parceiro_percent: null,
     booker_percent: null,
     linhas: tipo === 'com_modelo' ? linhasFin : [],
+    job_sem_modelos: tipo === 'sem_modelo' ? o.job_sem_modelos : undefined,
   });
   return { orc: o, nums, linhasModelos: mod.rows };
 }

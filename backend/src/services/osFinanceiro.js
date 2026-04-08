@@ -6,6 +6,10 @@
  *
  * Distribuição interna (parceiro/booker sobre a fatia da agência):
  * - agencia_parcial = total_cliente - imposto_valor - modelo_liquido_total
+ *
+ * sem_modelo + job_sem_modelos explícito false (rascunho “virá ter modelos”): modelo_liquido_total = valor_servico
+ * para a comissão — parceiro/booker só sobre taxa da agência + extras (como com_modelo). Com true ou sem flag
+ * (legado): modelo_liquido_total = 0, comissão sobre o subtotal após imposto.
  */
 
 const n = (v) => Number(v || 0);
@@ -29,6 +33,7 @@ function computeOsFinancials({
   parceiro_percent,
   booker_percent,
   linhas,
+  job_sem_modelos,
 }) {
   const extrasAg = n(extras_agencia_valor);
   const extrasDesp = n(extras_despesa_valor);
@@ -47,7 +52,9 @@ function computeOsFinancials({
     taxaAgenciaValor = vs * (feePct / 100);
     subtotalCliente = vs + taxaAgenciaValor + extrasAg;
     cacheTotal = 0;
-    modeloLiquidoTotal = 0;
+    const semExplicito =
+      job_sem_modelos === false || job_sem_modelos === 'false' || job_sem_modelos === 0;
+    modeloLiquidoTotal = semExplicito ? vs : 0;
   } else {
     const linhasArr = Array.isArray(linhas) ? linhas : [];
     if (linhasArr.length > 0) {

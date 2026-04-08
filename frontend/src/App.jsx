@@ -187,7 +187,8 @@ function previewOrcamentoFinanceiro(form) {
     const subtotal = vs + taxaAgenciaValor + extrasAg;
     const impostoValor = subtotal * (impPct / 100);
     const totalCliente = subtotal + impostoValor;
-    const modeloLiquidoTotal = 0;
+    /** Com “JOB sem modelos”: comissão sobre tudo após imposto. Sem marcar: QE ainda é dos modelos → só taxa+extras. */
+    const modeloLiquidoTotal = form.job_sem_modelos ? 0 : vs;
     const agenciaParcial = totalCliente - impostoValor - modeloLiquidoTotal;
     const parceiroValor = agenciaParcial * pp;
     const agenciaAposParceiro = agenciaParcial - parceiroValor;

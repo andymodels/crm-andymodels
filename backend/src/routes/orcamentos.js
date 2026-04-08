@@ -585,6 +585,7 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         parceiro_percent: parceiroPctAprov,
         booker_percent: bookerPctAprov,
         linhas: linhasFin,
+        job_sem_modelos: tipoProp === 'sem_modelo' ? Boolean(budget.job_sem_modelos) : undefined,
       });
 
       osResult = await client.query(
