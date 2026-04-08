@@ -153,6 +153,7 @@ function createEmptyOrcamentoForm() {
     parceiro_percent: '',
     booker_id: '',
     booker_percent: '',
+    job_sem_modelos: false,
     linhas: [],
   };
 }
@@ -169,7 +170,7 @@ function previewOrcamentoFinanceiro(form) {
     form.parceiro_percent !== '' && form.parceiro_percent != null ? nPrev(form.parceiro_percent) / 100 : 0;
   const bp =
     form.booker_percent !== '' && form.booker_percent != null ? nPrev(form.booker_percent) / 100 : 0;
-  const linhas = (form.linhas || [])
+  const linhas = (form.job_sem_modelos ? [] : form.linhas || [])
     .filter((l) => {
       const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
       return Number.isFinite(mid) && mid > 0;
@@ -1855,18 +1856,21 @@ function App({ authUser, onLogout = () => {} }) {
   };
 
   const addOrcamentoLinhaCadastro = () => {
-    setOrcamentoForm((prev) => ({
-      ...prev,
-      linhas: [
-        ...(prev.linhas || []),
-        {
-          origemCadastro: true,
-          modelo_id: '',
-          cache_modelo: '',
-          emite_nf_propria: false,
-        },
-      ],
-    }));
+    setOrcamentoForm((prev) => {
+      if (prev.job_sem_modelos) return prev;
+      return {
+        ...prev,
+        linhas: [
+          ...(prev.linhas || []),
+          {
+            origemCadastro: true,
+            modelo_id: '',
+            cache_modelo: '',
+            emite_nf_propria: false,
+          },
+        ],
+      };
+    });
   };
 
   const updateOrcamentoLinha = (index, patch) => {
@@ -1881,6 +1885,15 @@ function App({ authUser, onLogout = () => {} }) {
       ...prev,
       linhas: (prev.linhas || []).filter((_, i) => i !== index),
     }));
+  };
+
+  const onChangeOrcamentoJobSemModelos = (checked) => {
+    setOrcamentoForm((prev) => ({
+      ...prev,
+      job_sem_modelos: checked,
+      linhas: checked ? [] : prev.linhas,
+    }));
+    if (checked) setOrcamentoModeloBuscaPorLinha([]);
   };
 
   const clearOrcamentoEdicao = () => {
@@ -1919,7 +1932,8 @@ function App({ authUser, onLogout = () => {} }) {
         ? `${API_BASE}/orcamentos/${orcamentoEditingId}`
         : `${API_BASE}/orcamentos`;
 
-      const linhasPayload = (orcamentoForm.linhas || [])
+      const jobSem = Boolean(orcamentoForm.job_sem_modelos);
+      let linhasPayload = (orcamentoForm.linhas || [])
         .filter((l) => {
           const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
           return Number.isFinite(mid) && mid > 0;
@@ -1930,7 +1944,8 @@ function App({ authUser, onLogout = () => {} }) {
           emite_nf_propria: Boolean(l.emite_nf_propria),
           rotulo: String(l.rotulo || '').trim() || undefined,
         }));
-      const tipoProp = linhasPayload.length > 0 ? 'com_modelo' : 'sem_modelo';
+      if (jobSem) linhasPayload = [];
+      const tipoProp = jobSem ? 'sem_modelo' : linhasPayload.length > 0 ? 'com_modelo' : 'sem_modelo';
       let cacheBase = Number(orcamentoForm.cache_base_estimado_total || 0);
       if (tipoProp === 'com_modelo' && linhasPayload.length > 0) {
         cacheBase = linhasPayload.reduce(
@@ -1952,6 +1967,7 @@ function App({ authUser, onLogout = () => {} }) {
       const bookerPctRaw = orcamentoForm.booker_percent;
       const payload = {
         ...orcamentoForm,
+        job_sem_modelos: jobSem,
         tipo_proposta_os: tipoProp,
         cliente_id: Number(orcamentoForm.cliente_id),
         cache_base_estimado_total: cacheBase,
@@ -2060,6 +2076,7 @@ function App({ authUser, onLogout = () => {} }) {
         booker_id: data.booker_id != null && data.booker_id !== '' ? String(data.booker_id) : '',
         booker_percent:
           data.booker_percent != null && data.booker_percent !== '' ? String(data.booker_percent) : '',
+        job_sem_modelos: Boolean(data.job_sem_modelos),
         linhas: mappedLinhas,
       });
       setOrcamentoEditingStatus(data.status ?? 'rascunho');
@@ -2153,13 +2170,18 @@ function App({ authUser, onLogout = () => {} }) {
       const checkRes = await fetch(`${API_BASE}/orcamentos/${id}`);
       const budget = await checkRes.json();
       if (!checkRes.ok) throw new Error(budget.message || 'Orçamento não encontrado.');
-      const tipo = budget.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
-      if (tipo === 'com_modelo') {
-        const linhas = Array.isArray(budget.linhas) ? budget.linhas : [];
-        const reais = linhas.filter((l) => l.modelo_id != null && Number(l.modelo_id) > 0);
+      const jobSem = Boolean(budget.job_sem_modelos);
+      const linhas = Array.isArray(budget.linhas) ? budget.linhas : [];
+      const reais = linhas.filter((l) => l.modelo_id != null && Number(l.modelo_id) > 0);
+      if (jobSem) {
+        if (!(Number(budget.valor_servico_sem_modelo) > 0)) {
+          setOrcamentoError('Para aprovar “sem modelo”, defina o valor do serviço no orçamento.');
+          return;
+        }
+      } else {
         if (reais.length === 0) {
           setOrcamentoError(
-            'Para aprovar com modelos, inclua pelo menos uma linha com modelo do cadastro e cachê definidos.',
+            'Adicione pelo menos um modelo ou marque que este trabalho não possui modelos.',
           );
           return;
         }
@@ -2168,9 +2190,6 @@ function App({ authUser, onLogout = () => {} }) {
           setOrcamentoError('Cada modelo do cadastro precisa de cachê válido (≥ 0) antes de aprovar.');
           return;
         }
-      } else if (!(Number(budget.valor_servico_sem_modelo) > 0)) {
-        setOrcamentoError('Para aprovar “sem modelo”, defina o valor do serviço no orçamento.');
-        return;
       }
 
       const response = await fetch(`${API_BASE}/orcamentos/${id}/aprovar`, { method: 'POST' });
@@ -2344,27 +2363,25 @@ function App({ authUser, onLogout = () => {} }) {
   const orcamentoFinanceiroPreview = previewOrcamentoFinanceiro(orcamentoForm);
 
   /** Pelo menos uma linha com modelo válido e cachê digitado → total do bloco Valores vem só da soma das linhas. */
-  const orcamentoCacheModelosAutomatico = useMemo(
-    () =>
-      (orcamentoForm.linhas || []).some((l) => {
-        const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
-        const okModel = Number.isFinite(mid) && mid > 0;
-        const c = String(l.cache_modelo ?? '').trim();
-        const okCache = c !== '' && Number.isFinite(Number(c));
-        return okModel && okCache;
-      }),
-    [orcamentoForm.linhas],
-  );
+  const orcamentoCacheModelosAutomatico = useMemo(() => {
+    if (orcamentoForm.job_sem_modelos) return false;
+    return (orcamentoForm.linhas || []).some((l) => {
+      const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+      const okModel = Number.isFinite(mid) && mid > 0;
+      const c = String(l.cache_modelo ?? '').trim();
+      const okCache = c !== '' && Number.isFinite(Number(c));
+      return okModel && okCache;
+    });
+  }, [orcamentoForm.linhas, orcamentoForm.job_sem_modelos]);
 
-  const orcamentoTotalCacheModelosSomado = useMemo(
-    () =>
-      (orcamentoForm.linhas || []).reduce((s, l) => {
-        const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
-        if (!Number.isFinite(mid) || mid <= 0) return s;
-        return s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0);
-      }, 0),
-    [orcamentoForm.linhas],
-  );
+  const orcamentoTotalCacheModelosSomado = useMemo(() => {
+    if (orcamentoForm.job_sem_modelos) return 0;
+    return (orcamentoForm.linhas || []).reduce((s, l) => {
+      const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+      if (!Number.isFinite(mid) || mid <= 0) return s;
+      return s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0);
+    }, 0);
+  }, [orcamentoForm.linhas, orcamentoForm.job_sem_modelos]);
 
   useEffect(() => {
     if (!orcamentoCacheModelosAutomatico) return;
@@ -4546,13 +4563,31 @@ function App({ authUser, onLogout = () => {} }) {
                     className={`md:col-span-2 rounded-lg border border-slate-200 bg-white p-2 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
                   >
                     <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Modelos</p>
-                    {(orcamentoForm.linhas || []).length === 0 ? (
+                    <label className="mb-2 flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-800">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={Boolean(orcamentoForm.job_sem_modelos)}
+                        disabled={orcamentoFormLocked}
+                        onChange={(event) => onChangeOrcamentoJobSemModelos(event.target.checked)}
+                      />
+                      <span>
+                        <span className="font-medium">JOB sem modelos</span>
+                        <span className="mt-0.5 block text-[11px] font-normal text-slate-600">
+                          Marque se o trabalho não inclui modelos (aprovação sem linhas). Desmarque para exigir pelo
+                          menos um modelo do cadastro.
+                        </span>
+                      </span>
+                    </label>
+                    {(orcamentoForm.linhas || []).length === 0 && !orcamentoForm.job_sem_modelos ? (
                       <p className="mb-2 text-[11px] text-slate-500">
-                        Opcional: sem linhas, use o cachê manual em Valores. Adicione linhas para informar modelo e
-                        cachê por pessoa.
+                        Adicione modelo(s) do cadastro ou marque “JOB sem modelos” acima. Sem linhas, use o cachê
+                        manual em Valores.
                       </p>
                     ) : null}
-                    <div className="space-y-1">
+                    <div
+                      className={`space-y-1 ${orcamentoForm.job_sem_modelos ? 'pointer-events-none opacity-50' : ''}`}
+                    >
                       {(orcamentoForm.linhas || []).map((line, index) => {
                         const qLinha = String(orcamentoModeloBuscaPorLinha[index] ?? '')
                           .trim()
@@ -4647,7 +4682,8 @@ function App({ authUser, onLogout = () => {} }) {
                     <div className="mt-2">
                       <button
                         type="button"
-                        className="rounded-md px-3 py-1.5 text-xs font-semibold text-white"
+                        disabled={orcamentoForm.job_sem_modelos}
+                        className="rounded-md px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                         style={{ backgroundColor: BRAND_ORANGE }}
                         onClick={addOrcamentoLinhaCadastro}
                       >

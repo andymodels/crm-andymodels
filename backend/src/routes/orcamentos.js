@@ -64,8 +64,21 @@ function parseDataSimples(rawValue) {
   return normalizeSqlDate(rawValue);
 }
 
-function parseTipoPropostaOs(body) {
-  return body?.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
+function parseJobSemModelos(body) {
+  const v = body?.job_sem_modelos;
+  return v === true || v === 'true' || v === 1 || v === '1';
+}
+
+/** tipo_proposta_os e linhas efetivas: “JOB sem modelos” força sem_modelo e sem linhas. */
+function resolveTipoOrcamentoFromBody(body) {
+  const linhasBody = Array.isArray(body.linhas) ? body.linhas : [];
+  const linhasReais = linhasBody.filter((l) => {
+    const mid = l.modelo_id != null && l.modelo_id !== '' ? Number(l.modelo_id) : NaN;
+    return Number.isFinite(mid) && mid > 0;
+  });
+  const jobSem = parseJobSemModelos(body);
+  const tipoProp = jobSem ? 'sem_modelo' : linhasReais.length > 0 ? 'com_modelo' : 'sem_modelo';
+  return { tipoProp, jobSem, linhasBody, linhasReais };
 }
 
 /** Derivado das linhas: há pelo menos um modelo do cadastro (IDs reais) */
@@ -263,8 +276,7 @@ router.post('/orcamentos', async (req, res, next) => {
       return res.status(400).json({ message: `Campos obrigatorios faltando: ${missing.join(', ')}` });
     }
 
-    const tipoProp = parseTipoPropostaOs(req.body);
-    const linhasBody = Array.isArray(req.body.linhas) ? req.body.linhas : [];
+    const { tipoProp, jobSem, linhasBody, linhasReais } = resolveTipoOrcamentoFromBody(req.body);
     const modDef = inferModelosDefinicao(linhasBody, tipoProp);
     const impostoPct = parseImpostoPercent(req.body);
     const parceiroId = parseOptionalFkId(req.body.parceiro_id);
@@ -273,17 +285,11 @@ router.post('/orcamentos', async (req, res, next) => {
     const bookerPct = parseOptionalPercent(req.body.booker_percent);
     const valorSem = req.body.valor_servico_sem_modelo != null ? Number(req.body.valor_servico_sem_modelo) : 0;
     let cacheBase = req.body.cache_base_estimado_total != null ? Number(req.body.cache_base_estimado_total) : 0;
-    if (tipoProp === 'com_modelo') {
-      const linhasReais = linhasBody.filter((l) => {
-        const mid = l.modelo_id != null && l.modelo_id !== '' ? Number(l.modelo_id) : NaN;
-        return Number.isFinite(mid) && mid > 0;
-      });
-      if (linhasReais.length > 0) {
-        cacheBase = linhasReais.reduce((s, l) => {
-          const c = l.cache_modelo != null && l.cache_modelo !== '' ? Number(l.cache_modelo) : 0;
-          return s + (Number.isFinite(c) ? c : 0);
-        }, 0);
-      }
+    if (tipoProp === 'com_modelo' && linhasReais.length > 0) {
+      cacheBase = linhasReais.reduce((s, l) => {
+        const c = l.cache_modelo != null && l.cache_modelo !== '' ? Number(l.cache_modelo) : 0;
+        return s + (Number.isFinite(c) ? c : 0);
+      }, 0);
     }
 
     const query = `
@@ -310,9 +316,10 @@ router.post('/orcamentos', async (req, res, next) => {
         parceiro_id,
         parceiro_percent,
         booker_id,
-        booker_percent
+        booker_percent,
+        job_sem_modelos
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NULL,$18,$19,$20,$21,$22)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NULL,$18,$19,$20,$21,$22,$23)
       RETURNING *
     `;
     const values = [
@@ -338,6 +345,7 @@ router.post('/orcamentos', async (req, res, next) => {
       parceiroPct,
       bookerId,
       bookerPct,
+      jobSem,
     ];
 
     await pool.query('BEGIN');
@@ -382,8 +390,7 @@ router.put('/orcamentos/:id', async (req, res, next) => {
       return res.status(400).json({ message: 'Somente orcamento em rascunho pode ser editado.' });
     }
 
-    const tipoProp = parseTipoPropostaOs(req.body);
-    const linhasBody = Array.isArray(req.body.linhas) ? req.body.linhas : [];
+    const { tipoProp, jobSem, linhasBody, linhasReais } = resolveTipoOrcamentoFromBody(req.body);
     const modDef = inferModelosDefinicao(linhasBody, tipoProp);
     const impostoPct = parseImpostoPercent(req.body);
     const parceiroId = parseOptionalFkId(req.body.parceiro_id);
@@ -392,17 +399,11 @@ router.put('/orcamentos/:id', async (req, res, next) => {
     const bookerPct = parseOptionalPercent(req.body.booker_percent);
     const valorSem = req.body.valor_servico_sem_modelo != null ? Number(req.body.valor_servico_sem_modelo) : 0;
     let cacheBase = req.body.cache_base_estimado_total != null ? Number(req.body.cache_base_estimado_total) : 0;
-    if (tipoProp === 'com_modelo') {
-      const linhasReais = linhasBody.filter((l) => {
-        const mid = l.modelo_id != null && l.modelo_id !== '' ? Number(l.modelo_id) : NaN;
-        return Number.isFinite(mid) && mid > 0;
-      });
-      if (linhasReais.length > 0) {
-        cacheBase = linhasReais.reduce((s, l) => {
-          const c = l.cache_modelo != null && l.cache_modelo !== '' ? Number(l.cache_modelo) : 0;
-          return s + (Number.isFinite(c) ? c : 0);
-        }, 0);
-      }
+    if (tipoProp === 'com_modelo' && linhasReais.length > 0) {
+      cacheBase = linhasReais.reduce((s, l) => {
+        const c = l.cache_modelo != null && l.cache_modelo !== '' ? Number(l.cache_modelo) : 0;
+        return s + (Number.isFinite(c) ? c : 0);
+      }, 0);
     }
 
     const query = `
@@ -431,8 +432,9 @@ router.put('/orcamentos/:id', async (req, res, next) => {
         parceiro_percent = $20,
         booker_id = $21,
         booker_percent = $22,
+        job_sem_modelos = $23,
         updated_at = NOW()
-      WHERE id = $23
+      WHERE id = $24
       RETURNING *
     `;
     const values = [
@@ -458,6 +460,7 @@ router.put('/orcamentos/:id', async (req, res, next) => {
       parceiroPct,
       bookerId,
       bookerPct,
+      jobSem,
       id,
     ];
 
@@ -523,17 +526,27 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         return res.status(400).json({ message: 'Este orcamento ja possui O.S. gerada.' });
       }
 
-      const tipoProp = budget.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
       const modRows = await loadOrcamentoModelos(client, id);
       const modRowsReais = modRows.filter((r) => r.modelo_id != null && Number(r.modelo_id) > 0);
+      const jobSem = Boolean(budget.job_sem_modelos);
 
-      if (tipoProp === 'com_modelo') {
+      let tipoProp;
+      if (jobSem) {
+        if (n(budget.valor_servico_sem_modelo) <= 0) {
+          await client.query('ROLLBACK');
+          client.release();
+          return res.status(400).json({
+            message: 'Aprovacao sem modelo: informe o valor do serviço no orçamento (campo valor serviço sem modelo).',
+          });
+        }
+        tipoProp = 'sem_modelo';
+      } else {
         if (modRowsReais.length === 0) {
           await client.query('ROLLBACK');
           client.release();
           return res.status(400).json({
             message:
-              'Aprovação: inclua pelo menos um modelo do cadastro com cachê definido.',
+              'Adicione pelo menos um modelo ou marque que este trabalho não possui modelos.',
           });
         }
         for (const row of modRowsReais) {
@@ -543,12 +556,7 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
             return res.status(400).json({ message: 'Aprovacao: cada modelo precisa de cachê válido (≥ 0).' });
           }
         }
-      } else if (n(budget.valor_servico_sem_modelo) <= 0) {
-        await client.query('ROLLBACK');
-        client.release();
-        return res.status(400).json({
-          message: 'Aprovacao sem modelo: informe o valor do serviço no orçamento (campo valor serviço sem modelo).',
-        });
+        tipoProp = 'com_modelo';
       }
 
       let impostoPct = n(budget.imposto_percent);
