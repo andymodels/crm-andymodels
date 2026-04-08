@@ -135,7 +135,21 @@ app.use((error, _req, res, _next) => {
       message: error.detail || error.message || 'Erro de validacao no banco de dados.',
     });
   }
-  res.status(500).json({ message: 'Erro interno no servidor.' });
+  /** Erros PostgreSQL (ex.: 22P02, 42P01, 42703) — antes caíam no 500 genérico e impossibilitavam diagnóstico. */
+  if (error.code && /^[0-9]{2}[0-9A-Z]{3}$/.test(String(error.code))) {
+    return res.status(400).json({
+      message: String(error.detail || error.message || 'Erro na base de dados.'),
+      codigo_bd: error.code,
+    });
+  }
+  const mostrarDetalhe =
+    process.env.NODE_ENV !== 'production' || String(process.env.RENDER || '').toLowerCase() === 'true';
+  res.status(500).json({
+    message: 'Erro interno no servidor.',
+    ...(mostrarDetalhe && error?.message
+      ? { detalhe_tecnico: String(error.message).slice(0, 800) }
+      : {}),
+  });
 });
 
 module.exports = app;

@@ -2259,7 +2259,12 @@ function App({ authUser, onLogout = () => {} }) {
 
       const response = await fetch(`${API_BASE}/orcamentos/${id}/aprovar`, { method: 'POST' });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Erro ao aprovar orçamento.');
+      if (!response.ok) {
+        const extra = [data.codigo_bd && `Código BD: ${data.codigo_bd}`, data.detalhe_tecnico].filter(Boolean).join(' — ');
+        throw new Error(
+          [data.message || 'Erro ao aprovar orçamento.', extra].filter(Boolean).join(' ').trim(),
+        );
+      }
       if (orcamentoEditingId === id) {
         setOrcamentoEditingStatus('aprovado');
         const oid = data.os?.id;
