@@ -4,7 +4,7 @@ import OperacaoCalendar from './components/OperacaoCalendar';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
-import { toDateInputValue } from './utils/dateInput';
+import { toDateInputValue, toTimeInputValue } from './utils/dateInput';
 
 const rawApi = import.meta.env.VITE_API_URL;
 const trimmed =
@@ -95,6 +95,15 @@ const labelContratoStatus = (s) => {
 };
 
 const nPrev = (v) => Number(v || 0);
+
+/** Cachê/QE sem linhas de modelo: mesmo critério do input (valor manual ou total estimado). */
+function orcamentoValorBaseSemModelo(form) {
+  const vs = String(form.valor_servico_sem_modelo ?? '').trim();
+  const cb = String(form.cache_base_estimado_total ?? '').trim();
+  if (vs !== '') return nPrev(vs);
+  if (cb !== '') return nPrev(cb);
+  return 0;
+}
 const medidaCamposFeminino = [
   'medida_altura',
   'medida_busto',
@@ -172,8 +181,9 @@ function previewOrcamentoFinanceiro(form) {
   const tipo = linhas.length > 0 ? 'com_modelo' : 'sem_modelo';
 
   if (tipo === 'sem_modelo') {
-    const vs = nPrev(form.valor_servico_sem_modelo);
-    const subtotal = vs + extrasAg;
+    const vs = orcamentoValorBaseSemModelo(form);
+    const taxaAgenciaValor = vs * (feePct / 100);
+    const subtotal = vs + taxaAgenciaValor + extrasAg;
     const impostoValor = subtotal * (impPct / 100);
     const totalCliente = subtotal + impostoValor;
     const modeloLiquidoTotal = 0;
@@ -185,7 +195,7 @@ function previewOrcamentoFinanceiro(form) {
     return {
       totalCliente,
       subtotal,
-      taxa_agencia_valor: 0,
+      taxa_agencia_valor: taxaAgenciaValor,
       impostoValor,
       parceiroValor,
       bookerValor,
@@ -1835,7 +1845,7 @@ function App({ authUser, onLogout = () => {} }) {
     setOrcamentoForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  /** Sem modelos no cálculo: o preview usa `valor_servico_sem_modelo`; o save usa também `cache_base_estimado_total`. */
+  /** Sem modelos no cálculo: atualiza os dois campos; preview/salvamento usam `orcamentoValorBaseSemModelo`. */
   const onChangeOrcamentoValorManualSemModelos = (value) => {
     setOrcamentoForm((prev) => ({
       ...prev,
@@ -1945,7 +1955,10 @@ function App({ authUser, onLogout = () => {} }) {
         tipo_proposta_os: tipoProp,
         cliente_id: Number(orcamentoForm.cliente_id),
         cache_base_estimado_total: cacheBase,
-        valor_servico_sem_modelo: Number(orcamentoForm.valor_servico_sem_modelo || 0),
+        valor_servico_sem_modelo:
+          tipoProp === 'sem_modelo'
+            ? orcamentoValorBaseSemModelo(orcamentoForm)
+            : Number(orcamentoForm.valor_servico_sem_modelo || 0),
         taxa_agencia_percent: Number(orcamentoForm.taxa_agencia_percent),
         extras_agencia_valor: Number(orcamentoForm.extras_agencia_valor),
         imposto_percent: Number.isFinite(ip) && ip >= 0 && ip <= 100 ? ip : 10,
@@ -4682,11 +4695,15 @@ function App({ authUser, onLogout = () => {} }) {
                       <label className="text-xs text-slate-600">
                         <span className="mb-0.5 block font-medium text-slate-700">Horário</span>
                         <input
-                          value={orcamentoForm.horario_trabalho}
+                          type="time"
+                          autoComplete="off"
+                          value={toTimeInputValue(orcamentoForm.horario_trabalho)}
                           onChange={(event) => onChangeOrcamento('horario_trabalho', event.target.value)}
-                          placeholder="Ex.: 09h–18h"
                           className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         />
+                        <span className="mt-0.5 block text-[10px] text-slate-500">
+                          Intervalo (ex.: 9h–18h) pode ir na descrição do trabalho.
+                        </span>
                       </label>
                       <label className="text-xs text-slate-600 sm:col-span-2 lg:col-span-2">
                         <span className="mb-0.5 block font-medium text-slate-700">Local</span>
@@ -4802,18 +4819,16 @@ function App({ authUser, onLogout = () => {} }) {
                           placeholder="10"
                         />
                         <span className="mt-0.5 block text-[10px] text-slate-500">
-                          ≈ {formatBRL(orcamentoFinanceiroPreview.impostoValor)} subtotal
+                          ≈ {formatBRL(orcamentoFinanceiroPreview.impostoValor)} sobre a base (antes do imposto)
                         </span>
                       </label>
                     </div>
                     <div className="mt-1.5 flex flex-wrap items-baseline justify-between gap-2 rounded-md border-2 border-amber-300/90 bg-amber-50/90 px-2.5 py-1.5">
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-950/90">
-                          Resultado ao cliente
+                          Valor total do trabalho
                         </p>
-                        <p className="text-[10px] text-slate-600">
-                          Subtotal {formatBRL(orcamentoFinanceiroPreview.subtotal)}
-                        </p>
+                        <p className="text-[10px] text-slate-600">Proposta ao cliente e valor da nota.</p>
                       </div>
                       <p className="text-lg font-bold tabular-nums text-slate-900 sm:text-xl">
                         {formatBRL(orcamentoFinanceiroPreview.totalCliente)}

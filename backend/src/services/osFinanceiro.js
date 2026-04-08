@@ -1,14 +1,11 @@
 /**
- * Regra de fechamento ao cliente (com modelo):
- * - valor_modelos = soma dos cachês (líquidos ao modelo, sem desconto automático)
- * - valor_agência = percentual sobre valor_modelos
- * - subtotal = valor_modelos + valor_agência + extras agência
- * - imposto/NF = percentual sobre o subtotal
- * - total_cliente = subtotal + imposto
+ * Regra de fechamento ao cliente:
+ * - com modelo: base = soma dos cachês; taxa % sobre a base; subtotal = base + taxa + extras.
+ * - sem modelo: base = valor_servico; mesma fórmula de taxa e subtotal.
+ * - imposto/NF = percentual sobre o subtotal; total_cliente = subtotal + imposto.
  *
  * Distribuição interna (parceiro/booker sobre a fatia da agência):
- * - agencia_parcial = total_cliente - imposto_valor - modelo_liquido_total  (= taxa agência + extras no subtotal)
- * - demais passos inalterados na ordem
+ * - agencia_parcial = total_cliente - imposto_valor - modelo_liquido_total
  */
 
 const n = (v) => Number(v || 0);
@@ -47,8 +44,8 @@ function computeOsFinancials({
 
   if (tipo_os === 'sem_modelo') {
     const vs = n(valor_servico);
-    subtotalCliente = vs + extrasAg;
-    taxaAgenciaValor = 0;
+    taxaAgenciaValor = vs * (feePct / 100);
+    subtotalCliente = vs + taxaAgenciaValor + extrasAg;
     cacheTotal = 0;
     modeloLiquidoTotal = 0;
   } else {

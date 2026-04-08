@@ -31,21 +31,37 @@ function parseImpostoPercent(body) {
   return v;
 }
 
-function parseDataTrabalho(body) {
-  const raw = body?.data_trabalho;
-  if (raw === undefined || raw === null || raw === '') return null;
-  const s = String(raw).trim();
+/**
+ * Data calendário para colunas DATE (YYYY-MM-DD). Nunca usar slice(0,10) em strings tipo
+ * "Thu Apr 09 2026 ..." — os primeiros 10 chars não são ISO e o Postgres rejeita (22007).
+ */
+function normalizeSqlDate(rawValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+  if (rawValue instanceof Date) {
+    if (Number.isNaN(rawValue.getTime())) return null;
+    const y = rawValue.getFullYear();
+    const m = String(rawValue.getMonth() + 1).padStart(2, '0');
+    const day = String(rawValue.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  const s = String(rawValue).trim();
   if (!s) return null;
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
   const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : s.slice(0, 10);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseDataTrabalho(body) {
+  return normalizeSqlDate(body?.data_trabalho);
 }
 
 function parseDataSimples(rawValue) {
-  if (rawValue === undefined || rawValue === null || rawValue === '') return null;
-  const s = String(rawValue).trim();
-  if (!s) return null;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : s.slice(0, 10);
+  return normalizeSqlDate(rawValue);
 }
 
 function parseTipoPropostaOs(body) {
@@ -613,7 +629,7 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         budget.cliente_id,
         budget.descricao,
         tipoProp,
-        budget.data_trabalho || null,
+        parseDataSimples(budget.data_trabalho),
         budget.uso_imagem,
         nums.total_cliente,
         budget.tipo_trabalho,
