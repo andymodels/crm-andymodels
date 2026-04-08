@@ -478,78 +478,92 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
       return res.status(400).json({ message: 'ID invalido.' });
     }
 
-    await pool.query('BEGIN');
+    /**
+     * Transação tem de correr na MESMA conexão (pool.query usa cliente diferente por chamada).
+     * Sem isto, BEGIN/COMMIT não envolvem o INSERT e o fluxo quebra ou fica inconsistente.
+     */
+    const client = await pool.connect();
+    let budget;
+    let osResult;
+    try {
+      await client.query('BEGIN');
 
-    const budgetResult = await pool.query('SELECT * FROM orcamentos WHERE id = $1 FOR UPDATE', [id]);
-    if (budgetResult.rows.length === 0) {
-      await pool.query('ROLLBACK');
-      return res.status(404).json({ message: 'Orcamento nao encontrado.' });
-    }
+      const budgetResult = await client.query('SELECT * FROM orcamentos WHERE id = $1 FOR UPDATE', [id]);
+      if (budgetResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(404).json({ message: 'Orcamento nao encontrado.' });
+      }
 
-    const budget = budgetResult.rows[0];
-    if (budget.status !== 'rascunho') {
-      await pool.query('ROLLBACK');
-      return res.status(400).json({ message: 'Orcamento ja foi aprovado ou cancelado.' });
-    }
-    if (budget.os_id_gerada != null) {
-      await pool.query('ROLLBACK');
-      return res.status(400).json({ message: 'Este orcamento ja possui O.S. gerada.' });
-    }
+      budget = budgetResult.rows[0];
+      if (budget.status !== 'rascunho') {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(400).json({ message: 'Orcamento ja foi aprovado ou cancelado.' });
+      }
+      if (budget.os_id_gerada != null) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(400).json({ message: 'Este orcamento ja possui O.S. gerada.' });
+      }
 
-    const tipoProp = budget.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
-    const modRows = await loadOrcamentoModelos(pool, id);
-    const modRowsReais = modRows.filter((r) => r.modelo_id != null && Number(r.modelo_id) > 0);
+      const tipoProp = budget.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo';
+      const modRows = await loadOrcamentoModelos(client, id);
+      const modRowsReais = modRows.filter((r) => r.modelo_id != null && Number(r.modelo_id) > 0);
 
-    if (tipoProp === 'com_modelo') {
-      if (modRowsReais.length === 0) {
-        await pool.query('ROLLBACK');
+      if (tipoProp === 'com_modelo') {
+        if (modRowsReais.length === 0) {
+          await client.query('ROLLBACK');
+          client.release();
+          return res.status(400).json({
+            message:
+              'Aprovação: inclua pelo menos um modelo do cadastro com cachê definido.',
+          });
+        }
+        for (const row of modRowsReais) {
+          if (!Number.isFinite(n(row.cache_modelo)) || n(row.cache_modelo) < 0) {
+            await client.query('ROLLBACK');
+            client.release();
+            return res.status(400).json({ message: 'Aprovacao: cada modelo precisa de cachê válido (≥ 0).' });
+          }
+        }
+      } else if (n(budget.valor_servico_sem_modelo) <= 0) {
+        await client.query('ROLLBACK');
+        client.release();
         return res.status(400).json({
-          message:
-            'Aprovação: inclua pelo menos um modelo do cadastro com cachê definido.',
+          message: 'Aprovacao sem modelo: informe o valor do serviço no orçamento (campo valor serviço sem modelo).',
         });
       }
-      for (const row of modRowsReais) {
-        if (!Number.isFinite(n(row.cache_modelo)) || n(row.cache_modelo) < 0) {
-          await pool.query('ROLLBACK');
-          return res.status(400).json({ message: 'Aprovacao: cada modelo precisa de cachê válido (≥ 0).' });
-        }
-      }
-    } else if (n(budget.valor_servico_sem_modelo) <= 0) {
-      await pool.query('ROLLBACK');
-      return res.status(400).json({
-        message: 'Aprovacao sem modelo: informe o valor do serviço no orçamento (campo valor serviço sem modelo).',
+
+      let impostoPct = n(budget.imposto_percent);
+      if (!Number.isFinite(impostoPct) || impostoPct < 0 || impostoPct > 100) impostoPct = 10;
+
+      const linhasFin =
+        tipoProp === 'com_modelo'
+          ? modRowsReais.map((r) => ({
+              cache_modelo: r.cache_modelo,
+              emite_nf_propria: r.emite_nf_propria,
+            }))
+          : [];
+
+      const parceiroPctAprov = parseOptionalPercent(budget.parceiro_percent);
+      const bookerPctAprov = parseOptionalPercent(budget.booker_percent);
+
+      const nums = computeOsFinancials({
+        tipo_os: tipoProp,
+        valor_servico: tipoProp === 'sem_modelo' ? n(budget.valor_servico_sem_modelo) : 0,
+        cache_modelo_total:
+          tipoProp === 'com_modelo' ? sumCacheFromOrcamentoModelos(modRowsReais) : n(budget.cache_base_estimado_total),
+        agencia_fee_percent: budget.taxa_agencia_percent,
+        extras_agencia_valor: budget.extras_agencia_valor,
+        extras_despesa_valor: 0,
+        imposto_percent: impostoPct,
+        parceiro_percent: parceiroPctAprov,
+        booker_percent: bookerPctAprov,
+        linhas: linhasFin,
       });
-    }
 
-    let impostoPct = n(budget.imposto_percent);
-    if (!Number.isFinite(impostoPct) || impostoPct < 0 || impostoPct > 100) impostoPct = 10;
-
-    const linhasFin =
-      tipoProp === 'com_modelo'
-        ? modRowsReais.map((r) => ({
-            cache_modelo: r.cache_modelo,
-            emite_nf_propria: r.emite_nf_propria,
-          }))
-        : [];
-
-    const parceiroPctAprov = parseOptionalPercent(budget.parceiro_percent);
-    const bookerPctAprov = parseOptionalPercent(budget.booker_percent);
-
-    const nums = computeOsFinancials({
-      tipo_os: tipoProp,
-      valor_servico: tipoProp === 'sem_modelo' ? n(budget.valor_servico_sem_modelo) : 0,
-      cache_modelo_total:
-        tipoProp === 'com_modelo' ? sumCacheFromOrcamentoModelos(modRowsReais) : n(budget.cache_base_estimado_total),
-      agencia_fee_percent: budget.taxa_agencia_percent,
-      extras_agencia_valor: budget.extras_agencia_valor,
-      extras_despesa_valor: 0,
-      imposto_percent: impostoPct,
-      parceiro_percent: parceiroPctAprov,
-      booker_percent: bookerPctAprov,
-      linhas: linhasFin,
-    });
-
-    const osResult = await pool.query(
+      osResult = await client.query(
       `
       INSERT INTO ordens_servico (
         orcamento_id,
@@ -630,63 +644,104 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
       ],
     );
 
+      const osIdTx = osResult.rows[0].id;
+
+      if (tipoProp === 'com_modelo') {
+        for (const row of modRowsReais) {
+          const rotulo = String(row.rotulo || '').trim() || String(row.modelo_nome || 'Modelo');
+          await client.query(
+            `
+            INSERT INTO os_modelos (os_id, modelo_id, cache_modelo, emite_nf_propria, rotulo)
+            VALUES ($1, $2, $3, $4, $5)
+            `,
+            [osIdTx, row.modelo_id, row.cache_modelo, Boolean(row.emite_nf_propria), rotulo],
+          );
+        }
+      }
+
+      await client.query(
+        `
+        UPDATE orcamentos
+        SET status = 'aprovado', os_id_gerada = $2, updated_at = NOW()
+        WHERE id = $1
+        `,
+        [id, osIdTx],
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rbErr) {
+        if (rbErr?.code !== '25P01' && !/no active sql transaction/i.test(String(rbErr.message || ''))) {
+          console.warn('[orcamentos/aprovar] rollback:', rbErr);
+        }
+      }
+      client.release();
+      return next(txErr);
+    }
+    client.release();
+
     const osId = osResult.rows[0].id;
 
-    if (tipoProp === 'com_modelo') {
-      for (const row of modRowsReais) {
-        const rotulo = String(row.rotulo || '').trim() || String(row.modelo_nome || 'Modelo');
-        await pool.query(
-          `
-          INSERT INTO os_modelos (os_id, modelo_id, cache_modelo, emite_nf_propria, rotulo)
-          VALUES ($1, $2, $3, $4, $5)
-          `,
-          [osId, row.modelo_id, row.cache_modelo, Boolean(row.emite_nf_propria), rotulo],
-        );
-      }
+    /**
+     * Pós-commit: geração de PDF/e-mail não pode falhar a resposta nem disparar ROLLBACK
+     * (a O.S. já foi persistida). Antes, um erro aqui + ROLLBACK repetido gerava 500 genérico.
+     */
+    let contrato = { ok: false, message: '', assinatura_link: null, code: '' };
+    try {
+      contrato = await generateContratoForOs(pool, osId);
+    } catch (e) {
+      console.error('[orcamentos/aprovar] generateContratoForOs (pós-commit)', e);
+      contrato = {
+        ok: false,
+        message: e?.message || 'Falha ao gerar contrato.',
+        assinatura_link: null,
+        code: e?.code ? String(e.code) : '',
+      };
     }
 
-    await pool.query(
-      `
-      UPDATE orcamentos
-      SET status = 'aprovado', os_id_gerada = $2, updated_at = NOW()
-      WHERE id = $1
-      `,
-      [id, osId],
-    );
-
-    await pool.query('COMMIT');
-
-    const contrato = await generateContratoForOs(pool, osId);
     let envio = { contrato_enviado: false, motivo: '' };
     if (contrato.ok) {
-      const clienteR = await pool.query(`SELECT email FROM clientes WHERE id = $1`, [budget.cliente_id]);
-      const clienteEmail = clienteR.rows[0]?.email || null;
-      if (clienteEmail) {
-        try {
-          await sendContratoAssinaturaEmail(pool, osId, clienteEmail);
-          envio = { contrato_enviado: true, motivo: '' };
-        } catch (mailErr) {
-          envio = { contrato_enviado: false, motivo: mailErr?.message || 'Falha ao enviar e-mail.' };
+      try {
+        const clienteR = await pool.query(`SELECT email FROM clientes WHERE id = $1`, [budget.cliente_id]);
+        const clienteEmail = clienteR.rows[0]?.email || null;
+        if (clienteEmail) {
+          try {
+            await sendContratoAssinaturaEmail(pool, osId, clienteEmail);
+            envio = { contrato_enviado: true, motivo: '' };
+          } catch (mailErr) {
+            envio = { contrato_enviado: false, motivo: mailErr?.message || 'Falha ao enviar e-mail.' };
+          }
+        } else {
+          envio = { contrato_enviado: false, motivo: 'Cliente sem e-mail cadastrado. Use o link de assinatura.' };
         }
-      } else {
-        envio = { contrato_enviado: false, motivo: 'Cliente sem e-mail cadastrado. Use o link de assinatura.' };
+      } catch (envErr) {
+        console.error('[orcamentos/aprovar] envio contrato (pós-commit)', envErr);
+        envio = { contrato_enviado: false, motivo: envErr?.message || 'Falha ao preparar envio do contrato.' };
       }
     } else {
       envio = { contrato_enviado: false, motivo: contrato.message || 'Falha ao gerar contrato automático.' };
     }
 
+    const msgOk = 'Orcamento aprovado e O.S. criada com sucesso.';
+    const msgAviso =
+      !contrato.ok || !envio.contrato_enviado
+        ? ' O.S. criada; verifique contrato/PDF ou e-mail se houver aviso abaixo.'
+        : '';
+
     return res.json({
-      message: 'Orcamento aprovado e O.S. criada com sucesso.',
+      message: msgOk + msgAviso,
       os: osResult.rows[0],
       contrato: {
         gerado: Boolean(contrato.ok),
         assinatura_link: contrato.assinatura_link || null,
         contrato_enviado: envio.contrato_enviado,
         envio_erro: envio.motivo || null,
+        erro_codigo: contrato.code || null,
       },
     });
   } catch (error) {
-    await pool.query('ROLLBACK');
     next(error);
   }
 });
