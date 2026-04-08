@@ -210,6 +210,23 @@ function previewOrcamentoFinanceiro(form) {
   };
 }
 
+/** Garante que o valor já escolhido no `<select>` continue nas opções após filtrar a lista. */
+function clientesOrcamentoComSelecao(clienteId, filtrados, todos) {
+  const id = clienteId !== '' && clienteId != null ? String(clienteId) : '';
+  if (!id) return filtrados;
+  if (filtrados.some((c) => String(c.id) === id)) return filtrados;
+  const c = todos.find((x) => String(x.id) === id);
+  return c ? [c, ...filtrados] : filtrados;
+}
+
+function modelosOrcamentoComSelecao(linha, filtrados, listaAtiva) {
+  const sel = linha.modelo_id !== '' && linha.modelo_id != null ? Number(linha.modelo_id) : NaN;
+  if (!Number.isFinite(sel) || sel <= 0) return filtrados;
+  if (filtrados.some((m) => Number(m.id) === sel)) return filtrados;
+  const escolhido = listaAtiva.find((m) => Number(m.id) === sel);
+  return escolhido ? [escolhido, ...filtrados] : filtrados;
+}
+
 const CADASTROS_COM_MULTI_PAGAMENTO = ['modelos', 'bookers', 'parceiros'];
 const BRAND_ORANGE = '#F59E0B';
 /** Menu principal: ativo — laranja marca; inativo — neutro com bom contraste */
@@ -589,6 +606,9 @@ function App({ authUser, onLogout = () => {} }) {
   const [orcamentoEditingOsId, setOrcamentoEditingOsId] = useState(null);
   const [orcamentoError, setOrcamentoError] = useState('');
   const [orcamentoLoading, setOrcamentoLoading] = useState(false);
+  /** Filtros rápidos no formulário de orçamento (não vão para a API). */
+  const [orcamentoClienteBusca, setOrcamentoClienteBusca] = useState('');
+  const [orcamentoModeloBusca, setOrcamentoModeloBusca] = useState('');
   const [contratosList, setContratosList] = useState([]);
   const [contratosLoading, setContratosLoading] = useState(false);
   const [contratosError, setContratosError] = useState('');
@@ -1947,6 +1967,15 @@ function App({ authUser, onLogout = () => {} }) {
     setOrcamentoForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  /** Sem modelos no cálculo: o preview usa `valor_servico_sem_modelo`; o save usa também `cache_base_estimado_total`. */
+  const onChangeOrcamentoValorManualSemModelos = (value) => {
+    setOrcamentoForm((prev) => ({
+      ...prev,
+      valor_servico_sem_modelo: value,
+      cache_base_estimado_total: value,
+    }));
+  };
+
   const addOrcamentoLinhaCadastro = () => {
     setOrcamentoForm((prev) => ({
       ...prev,
@@ -1981,6 +2010,8 @@ function App({ authUser, onLogout = () => {} }) {
     setOrcamentoEditingStatus(null);
     setOrcamentoEditingOsId(null);
     setOrcamentoForm(createEmptyOrcamentoForm());
+    setOrcamentoClienteBusca('');
+    setOrcamentoModeloBusca('');
   };
 
   const voltarParaGestaoOrcamentos = () => {
@@ -2113,6 +2144,11 @@ function App({ authUser, onLogout = () => {} }) {
               origemCadastro: true,
             }))
         : [];
+      const vsSm =
+        data.valor_servico_sem_modelo != null && String(data.valor_servico_sem_modelo).trim() !== ''
+          ? String(data.valor_servico_sem_modelo)
+          : '';
+      const cb = data.cache_base_estimado_total != null ? String(data.cache_base_estimado_total) : '';
       setOrcamentoForm({
         cliente_id: String(data.cliente_id),
         tipo_proposta_os: data.tipo_proposta_os === 'sem_modelo' ? 'sem_modelo' : 'com_modelo',
@@ -2121,9 +2157,8 @@ function App({ authUser, onLogout = () => {} }) {
         data_trabalho: dataInput,
         horario_trabalho: data.horario_trabalho ?? '',
         local_trabalho: data.local_trabalho ?? '',
-        cache_base_estimado_total: data.cache_base_estimado_total,
-        valor_servico_sem_modelo:
-          data.valor_servico_sem_modelo != null ? String(data.valor_servico_sem_modelo) : '',
+        cache_base_estimado_total: mappedLinhas.length > 0 ? cb : vsSm || cb,
+        valor_servico_sem_modelo: mappedLinhas.length > 0 ? vsSm : vsSm || cb,
         taxa_agencia_percent: data.taxa_agencia_percent,
         extras_agencia_valor: data.extras_agencia_valor,
         imposto_percent:
@@ -2427,6 +2462,35 @@ function App({ authUser, onLogout = () => {} }) {
 
   const orcamentoFinanceiroPreview = previewOrcamentoFinanceiro(orcamentoForm);
 
+  const orcamentoLinhasComModeloValido = useMemo(
+    () =>
+      (orcamentoForm.linhas || []).filter((l) => {
+        const mid = l.modelo_id !== '' && l.modelo_id != null ? Number(l.modelo_id) : NaN;
+        return Number.isFinite(mid) && mid > 0;
+      }),
+    [orcamentoForm.linhas],
+  );
+  const orcamentoTemModelosNoCalculo = orcamentoLinhasComModeloValido.length > 0;
+
+  const clientesOrcamentoFiltrados = useMemo(() => {
+    const q = String(orcamentoClienteBusca || '').trim().toLowerCase();
+    const qDigits = onlyDigits(q);
+    if (!q) return clients;
+    return clients.filter((c) => {
+      const nome = String(c.nome_empresa || c.nome_fantasia || '').toLowerCase();
+      const doc = onlyDigits(String(c.documento || c.cnpj || c.cnpj_ou_cpf || ''));
+      if (nome.includes(q)) return true;
+      if (qDigits && doc.includes(qDigits)) return true;
+      return false;
+    });
+  }, [clients, orcamentoClienteBusca]);
+
+  const modelosOrcamentoFiltrados = useMemo(() => {
+    const q = String(orcamentoModeloBusca || '').trim().toLowerCase();
+    if (!q) return modelosParaSelecao;
+    return modelosParaSelecao.filter((m) => String(m.nome || '').toLowerCase().includes(q));
+  }, [modelosParaSelecao, orcamentoModeloBusca]);
+
   return (
     <div className="min-h-screen bg-[#F7F7F7] text-slate-900">
       <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-5 p-5 lg:grid-cols-[260px_1fr]">
@@ -2582,7 +2646,7 @@ function App({ authUser, onLogout = () => {} }) {
                           ? orcamentoEditingId
                             ? `Orçamento #${orcamentoEditingId}`
                             : 'Novo orçamento'
-                          : 'Gestão de orçamentos'
+                          : 'Orçamentos'
                       : module === 'inicio'
                         ? 'Dashboard'
                         : module === 'contratos'
@@ -2604,7 +2668,7 @@ function App({ authUser, onLogout = () => {} }) {
                       ? orcamentosSubView === 'lista'
                         ? 'Listagem completa com filtros e paginação.'
                         : orcamentosSubView === 'formulario'
-                          ? 'Preencha o rascunho, salve e use “Aprovar Orçamento” no topo para gerar a O.S.'
+                          ? 'Salve antes de aprovar; o botão “Aprovar Orçamento” fica no topo quando aplicável.'
                           : 'Busque orçamentos, abra para revisar ou aprovar, ou crie um novo.'
                       : module === 'inicio'
                         ? 'Caixa, resultado da agência e pendências (contrato, receber, pagar modelos).'
@@ -2652,6 +2716,7 @@ function App({ authUser, onLogout = () => {} }) {
                           : `${osList.length} O.S.`}
               </span>
             </div>
+            {module !== 'orcamentos' && (
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Modulo atual</p>
@@ -2710,6 +2775,7 @@ function App({ authUser, onLogout = () => {} }) {
                 </p>
               </div>
             </div>
+            )}
           </section>
 
           {module === 'inicio' && (
@@ -4374,11 +4440,10 @@ function App({ authUser, onLogout = () => {} }) {
 
               {orcamentosSubView === 'gestao' && (
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <h3 className="text-lg font-semibold text-slate-900">Gestão de orçamentos</h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Busque, abra um orçamento para revisar ou aprove, ou crie um novo.
+                    <p className="text-sm text-slate-600">
+                      Busque, abra um orçamento ou crie um novo.
                     </p>
                   </div>
                   <button
@@ -4463,25 +4528,25 @@ function App({ authUser, onLogout = () => {} }) {
               )}
 
               {orcamentosSubView === 'formulario' && (
-              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex flex-col gap-2 rounded-xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+              <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="mb-2 flex flex-col gap-2 rounded-lg border border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-white p-2 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                     <button
                       type="button"
-                      className="shrink-0 self-start rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                      className="shrink-0 self-start rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700"
                       onClick={voltarParaGestaoOrcamentos}
                     >
-                      ← Gestão de orçamentos
+                      ← Voltar
                     </button>
                     <div className="min-w-0">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         {orcamentoEditingId ? `Orçamento #${orcamentoEditingId}` : 'Novo orçamento'}
                       </p>
-                      <p className="mt-0.5 text-sm text-slate-600">
-                        {orcamentoEditingId
-                          ? labelOrcamentoStatus(orcamentoEditingStatus)
-                          : 'Salve como rascunho antes de aprovar.'}
-                      </p>
+                      {orcamentoEditingId ? (
+                        <p className="mt-0.5 text-sm text-slate-600">
+                          {labelOrcamentoStatus(orcamentoEditingStatus)}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
@@ -4490,7 +4555,7 @@ function App({ authUser, onLogout = () => {} }) {
                       !orcamentoFormLocked && (
                         <button
                           type="button"
-                          className="w-full rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-sm sm:min-w-[200px]"
+                          className="w-full rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm sm:min-w-[180px]"
                           style={{ backgroundColor: BRAND_ORANGE }}
                           onClick={() => aprovarOrcamento(orcamentoEditingId)}
                         >
@@ -4502,7 +4567,7 @@ function App({ authUser, onLogout = () => {} }) {
                       orcamentoEditingOsId != null && (
                         <button
                           type="button"
-                          className="w-full rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 sm:min-w-[200px]"
+                          className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 sm:min-w-[180px]"
                           onClick={() => abrirOsGerada(orcamentoEditingOsId)}
                         >
                           Ver O.S. #{orcamentoEditingOsId}
@@ -4510,16 +4575,16 @@ function App({ authUser, onLogout = () => {} }) {
                       )}
                   </div>
                 </div>
-                <form className="grid grid-cols-1 gap-2 md:grid-cols-2 md:gap-x-4 md:gap-y-2" onSubmit={saveOrcamento}>
+                <form className="grid grid-cols-1 gap-1.5 md:grid-cols-2 md:gap-x-3 md:gap-y-1.5" onSubmit={saveOrcamento}>
                   {orcamentoFormLocked && (
-                    <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                    <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
                       <p className="font-medium">
                         Este orçamento está {labelOrcamentoStatus(orcamentoEditingStatus)} — a edição está bloqueada.
                       </p>
                       {orcamentoEditingStatus === 'aprovado' && orcamentoEditingOsId != null && (
                         <button
                           type="button"
-                          className="mt-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800"
+                          className="mt-2 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-800"
                           onClick={() => abrirOsGerada(orcamentoEditingOsId)}
                         >
                           Ver O.S. #{orcamentoEditingOsId}
@@ -4529,93 +4594,105 @@ function App({ authUser, onLogout = () => {} }) {
                   )}
                   <fieldset
                     disabled={orcamentoFormLocked}
-                    className="md:col-span-2 grid min-w-0 grid-cols-1 gap-2 border-0 p-0 md:grid-cols-2 [&:disabled]:opacity-60"
+                    className="md:col-span-2 grid min-w-0 grid-cols-1 gap-1.5 border-0 p-0 md:grid-cols-2 [&:disabled]:opacity-60"
                   >
-                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cliente</p>
-                    <label className="text-sm text-slate-600">
-                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Nome</span>
-                      <select
-                        value={orcamentoForm.cliente_id}
-                        onChange={(event) => onChangeOrcamento('cliente_id', event.target.value)}
-                        className="w-full max-w-xl rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
-                      >
-                        <option value="">Selecione o cliente</option>
-                        {clients.map((client) => (
-                          <option key={client.id} value={client.id}>
-                            {client.nome_empresa}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cliente</p>
+                    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-end">
+                      <label className="min-w-0 flex-1 text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Buscar (nome ou CNPJ)</span>
+                        <input
+                          type="search"
+                          value={orcamentoClienteBusca}
+                          onChange={(event) => setOrcamentoClienteBusca(event.target.value)}
+                          placeholder="Filtra a lista ao lado"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label className="min-w-0 flex-1 text-xs text-slate-600 sm:min-w-[220px]">
+                        <span className="mb-0.5 block font-medium text-slate-700">Cliente</span>
+                        <select
+                          required
+                          value={orcamentoForm.cliente_id}
+                          onChange={(event) => onChangeOrcamento('cliente_id', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
+                        >
+                          <option value="">Selecione o cliente</option>
+                          {clientesOrcamentoComSelecao(
+                            orcamentoForm.cliente_id,
+                            clientesOrcamentoFiltrados,
+                            clients,
+                          ).map((client) => (
+                            <option key={client.id} value={client.id}>
+                              {client.nome_empresa}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {orcamentoClienteBusca.trim() && clientesOrcamentoFiltrados.length === 0 ? (
+                      <p className="mt-1 text-[11px] text-amber-800">Nenhum cliente corresponde à busca.</p>
+                    ) : null}
                   </div>
-
-                  <div className="grid grid-cols-1 gap-2 md:col-span-2 md:grid-cols-2">
-                  <label
-                    className={`text-sm text-slate-600 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
-                  >
-                    <span className="mb-0.5 block text-xs font-medium text-slate-700">Tipo de trabalho</span>
-                    <input
-                      value={orcamentoForm.tipo_trabalho}
-                      onChange={(event) => onChangeOrcamento('tipo_trabalho', event.target.value)}
-                      disabled={!orcamentoForm.cliente_id}
-                      className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
-                    />
-                  </label>
-
-                  <div className="hidden md:block" />
-                  </div>
-
-                  <label className="text-sm text-slate-600 md:col-span-2">
-                    <span className="mb-0.5 block text-xs font-medium text-slate-700">Valor base do serviço (sem modelos)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={orcamentoForm.valor_servico_sem_modelo}
-                      onChange={(event) => onChangeOrcamento('valor_servico_sem_modelo', event.target.value)}
-                      disabled={!orcamentoForm.cliente_id}
-                      className="w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm disabled:bg-slate-100"
-                    />
-                    <span className="mt-0.5 block text-[11px] text-slate-500">
-                      Usado automaticamente quando não houver modelos adicionados.
-                    </span>
-                  </label>
 
                   <div
-                    className={`md:col-span-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
+                    className={`md:col-span-2 rounded-lg border border-slate-200 bg-white p-2 ${!orcamentoForm.cliente_id ? 'pointer-events-none opacity-50' : ''}`}
                   >
-                      <p className="mb-1.5 text-xs font-medium text-slate-800">Modelos do cadastro</p>
-                      {(orcamentoForm.linhas || []).length === 0 ? (
-                        <p className="text-xs text-slate-600">
-                          Inclua modelos e cachês quando souber o elenco. Mínimo uma linha para aprovar.
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {(orcamentoForm.linhas || []).map((line, index) => (
-                            <div
-                              key={line.id ?? `ol-${index}`}
-                              className="grid gap-1.5 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_minmax(100px,1fr)_auto_auto]"
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Modelos</p>
+                    <div className="mb-1 flex flex-col gap-1.5 sm:flex-row sm:items-end">
+                      <label className="min-w-0 flex-1 text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Buscar modelo</span>
+                        <input
+                          type="search"
+                          value={orcamentoModeloBusca}
+                          onChange={(event) => setOrcamentoModeloBusca(event.target.value)}
+                          placeholder="Filtra a lista nos selects"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                          autoComplete="off"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold text-white"
+                        style={{ backgroundColor: BRAND_ORANGE }}
+                        onClick={addOrcamentoLinhaCadastro}
+                      >
+                        + adicionar modelo
+                      </button>
+                    </div>
+                    {(orcamentoForm.linhas || []).length === 0 ? (
+                      <p className="text-[11px] text-slate-500">
+                        Opcional na estimativa: sem modelos, use o valor manual em Valores (mantém o total ao definir o elenco depois).
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {(orcamentoForm.linhas || []).map((line, index) => (
+                          <div
+                            key={line.id ?? `ol-${index}`}
+                            className="grid gap-1 rounded-md border border-slate-200 bg-slate-50/60 p-1.5 sm:grid-cols-[minmax(0,1.3fr)_minmax(96px,0.85fr)_auto_auto] sm:items-end"
+                          >
+                            <select
+                              value={line.modelo_id ?? ''}
+                              onChange={(event) =>
+                                updateOrcamentoLinha(index, {
+                                  modelo_id: event.target.value ? Number(event.target.value) : '',
+                                  origemCadastro: true,
+                                })}
+                              className="rounded border border-slate-300 px-2 py-1 text-sm"
                             >
-                              <select
-                                value={line.modelo_id ?? ''}
-                                onChange={(event) =>
-                                  updateOrcamentoLinha(index, {
-                                    modelo_id: event.target.value ? Number(event.target.value) : '',
-                                    origemCadastro: true,
-                                  })}
-                                className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-                              >
-                                <option value="">Modelo…</option>
-                                {modelosParaSelecao.map((m) => (
+                              <option value="">Modelo…</option>
+                              {modelosOrcamentoComSelecao(line, modelosOrcamentoFiltrados, modelosParaSelecao).map(
+                                (m) => (
                                   <option key={m.id} value={m.id}>
                                     {m.nome}
                                   </option>
-                                ))}
-                              </select>
+                                ),
+                              )}
+                            </select>
+                            {line.modelo_id !== '' && line.modelo_id != null ? (
                               <label className="min-w-0">
-                                <span className="mb-0.5 block text-[10px] font-medium text-slate-500">
-                                  Cachê R$ (líquido ao modelo)
-                                </span>
+                                <span className="mb-0.5 block text-[10px] font-medium text-slate-500">Cachê R$</span>
                                 <input
                                   type="number"
                                   step="0.01"
@@ -4624,144 +4701,189 @@ function App({ authUser, onLogout = () => {} }) {
                                   value={line.cache_modelo ?? ''}
                                   onChange={(event) =>
                                     updateOrcamentoLinha(index, { cache_modelo: event.target.value })}
-                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                                 />
                               </label>
-                              <label className="flex items-center gap-1.5 text-[11px] text-slate-700">
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(line.emite_nf_propria)}
-                                  onChange={(event) =>
-                                    updateOrcamentoLinha(index, { emite_nf_propria: event.target.checked })}
-                                />
-                                NF própria
-                              </label>
-                              <button
-                                type="button"
-                                className="text-xs text-red-700"
-                                onClick={() => removeOrcamentoLinha(index)}
-                              >
-                                remover
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="mt-2">
-                        <button
-                          type="button"
-                          className="rounded-md px-2.5 py-1 text-xs font-medium text-white"
-                          style={{ backgroundColor: BRAND_ORANGE }}
-                          onClick={addOrcamentoLinhaCadastro}
-                        >
-                          + Modelo
-                        </button>
+                            ) : (
+                              <div className="pb-1 text-[10px] text-slate-400 sm:pb-2">Escolha o modelo</div>
+                            )}
+                            <label className="flex items-center gap-1 text-[10px] text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(line.emite_nf_propria)}
+                                onChange={(event) =>
+                                  updateOrcamentoLinha(index, { emite_nf_propria: event.target.checked })}
+                              />
+                              NF própria
+                            </label>
+                            <button
+                              type="button"
+                              className="justify-self-start text-[11px] text-red-700 sm:justify-self-end"
+                              onClick={() => removeOrcamentoLinha(index)}
+                            >
+                              remover
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    )}
+                    {orcamentoModeloBusca.trim() && modelosOrcamentoFiltrados.length === 0 ? (
+                      <p className="mt-1 text-[11px] text-amber-800">Nenhum modelo corresponde à busca.</p>
+                    ) : null}
+                  </div>
+
+                  <label
+                    className={`text-xs text-slate-600 md:col-span-2 ${!orcamentoForm.cliente_id ? 'opacity-50' : ''}`}
+                  >
+                    <span className="mb-0.5 block font-medium text-slate-700">Tipo de trabalho (obrigatório)</span>
+                    <input
+                      required
+                      value={orcamentoForm.tipo_trabalho}
+                      onChange={(event) => onChangeOrcamento('tipo_trabalho', event.target.value)}
+                      disabled={!orcamentoForm.cliente_id}
+                      className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-100"
+                    />
+                  </label>
+
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                       Descrição e agenda
                     </p>
-                    <label className="mb-2 block text-sm text-slate-600">
-                      <span className="mb-0.5 block text-xs font-medium text-slate-700">Descrição do trabalho</span>
+                    <label className="mb-1.5 block text-xs text-slate-600">
+                      <span className="mb-0.5 block font-medium text-slate-700">Descrição do trabalho</span>
                       <input
                         value={orcamentoForm.descricao}
                         onChange={(event) => onChangeOrcamento('descricao', event.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                        className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                       />
                     </label>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Data</span>
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Data</span>
                         <input
                           type="date"
                           autoComplete="off"
                           value={toDateInputValue(orcamentoForm.data_trabalho)}
                           onChange={(event) => onChangeOrcamento('data_trabalho', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         />
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Horário</span>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Horário</span>
                         <input
                           value={orcamentoForm.horario_trabalho}
                           onChange={(event) => onChangeOrcamento('horario_trabalho', event.target.value)}
                           placeholder="Ex.: 09h–18h"
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         />
                       </label>
-                      <label className="text-sm text-slate-600 sm:col-span-2 lg:col-span-2">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Local</span>
+                      <label className="text-xs text-slate-600 sm:col-span-2 lg:col-span-2">
+                        <span className="mb-0.5 block font-medium text-slate-700">Local</span>
                         <input
                           value={orcamentoForm.local_trabalho}
                           onChange={(event) => onChangeOrcamento('local_trabalho', event.target.value)}
                           placeholder="Estúdio / endereço"
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         />
                       </label>
                     </div>
                   </div>
 
-                  <div className="md:col-span-2 rounded-lg border border-slate-300 bg-slate-50/90 p-3">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Uso de imagem
+                    </p>
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Mídias</span>
+                        <input
+                          value={orcamentoForm.uso_imagem}
+                          onChange={(event) => onChangeOrcamento('uso_imagem', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Tempo de uso</span>
+                        <input
+                          value={orcamentoForm.prazo}
+                          onChange={(event) => onChangeOrcamento('prazo', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Território</span>
+                        <input
+                          value={orcamentoForm.territorio}
+                          onChange={(event) => onChangeOrcamento('territorio', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 rounded-lg border border-slate-300 bg-slate-50/90 p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
                       Valores — fechamento ao cliente
                     </p>
-                    <p className="mb-2 text-[11px] text-slate-500">
-                      Ordem: cachê (líquido ao modelo, sem desconto) → taxa agência → extras → imposto → total ao
-                      cliente. PDF: total ao cliente.
-                    </p>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">
-                          1. Cachê dos modelos (R$)
-                          {(orcamentoForm.linhas || []).length > 0 &&
-                            ' · soma'}
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">
+                          Cachê dos modelos (R$)
+                          {orcamentoTemModelosNoCalculo ? ' · soma automática' : ' · ou total manual'}
                         </span>
-                        {(orcamentoForm.linhas || []).length > 0 ? (
+                        {orcamentoTemModelosNoCalculo ? (
                           <input
                             type="text"
                             readOnly
+                            tabIndex={-1}
                             value={String(
-                              (orcamentoForm.linhas || []).reduce(
-                                (s, l) => s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0),
+                              orcamentoLinhasComModeloValido.reduce(
+                                (s, l) =>
+                                  s + (Number.isFinite(Number(l.cache_modelo)) ? Number(l.cache_modelo) : 0),
                                 0,
                               ),
                             )}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-800"
+                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800"
                           />
                         ) : (
                           <input
                             type="number"
-                            value={orcamentoForm.cache_base_estimado_total}
-                            onChange={(event) => onChangeOrcamento('cache_base_estimado_total', event.target.value)}
-                            className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                            step="0.01"
+                            min="0"
+                            value={
+                              orcamentoForm.valor_servico_sem_modelo !== '' &&
+                              orcamentoForm.valor_servico_sem_modelo != null
+                                ? orcamentoForm.valor_servico_sem_modelo
+                                : orcamentoForm.cache_base_estimado_total
+                            }
+                            onChange={(event) => onChangeOrcamentoValorManualSemModelos(event.target.value)}
+                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
                           />
                         )}
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">2. Taxa da agência (%)</span>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Taxa da agência (%)</span>
                         <input
                           type="number"
                           value={orcamentoForm.taxa_agencia_percent}
                           onChange={(event) => onChangeOrcamento('taxa_agencia_percent', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
                         />
-                        <span className="mt-0.5 block text-[11px] text-slate-500">
+                        <span className="mt-0.5 block text-[10px] text-slate-500">
                           ≈ {formatBRL(orcamentoFinanceiroPreview.taxa_agencia_valor)}
                         </span>
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">3. Extras agência (R$)</span>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Extras (R$)</span>
                         <input
                           type="number"
                           value={orcamentoForm.extras_agencia_valor}
                           onChange={(event) => onChangeOrcamento('extras_agencia_valor', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
                         />
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">4. Imposto / NF (%)</span>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Imposto (%)</span>
                         <input
                           type="number"
                           step="0.01"
@@ -4769,44 +4891,69 @@ function App({ authUser, onLogout = () => {} }) {
                           max="100"
                           value={orcamentoForm.imposto_percent}
                           onChange={(event) => onChangeOrcamento('imposto_percent', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
                           placeholder="10"
                         />
-                        <span className="mt-0.5 block text-[11px] text-slate-500">
-                          ≈ {formatBRL(orcamentoFinanceiroPreview.impostoValor)} sobre subtotal
+                        <span className="mt-0.5 block text-[10px] text-slate-500">
+                          ≈ {formatBRL(orcamentoFinanceiroPreview.impostoValor)} subtotal
                         </span>
                       </label>
                     </div>
-                    <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-amber-200/90 bg-amber-50/80 px-3 py-2">
+                    <div className="mt-1.5 flex flex-wrap items-baseline justify-between gap-2 rounded-md border-2 border-amber-300/90 bg-amber-50/90 px-2.5 py-1.5">
                       <div>
-                        <p className="text-[11px] font-medium uppercase tracking-wide text-amber-950/90">5. Resultado</p>
-                        <p className="text-[11px] text-slate-600">
-                          Subtotal {formatBRL(orcamentoFinanceiroPreview.subtotal)} · Total ao cliente
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-950/90">
+                          Resultado ao cliente
+                        </p>
+                        <p className="text-[10px] text-slate-600">
+                          Subtotal {formatBRL(orcamentoFinanceiroPreview.subtotal)}
                         </p>
                       </div>
-                      <p className="text-xl font-bold tabular-nums text-slate-900">
+                      <p className="text-lg font-bold tabular-nums text-slate-900 sm:text-xl">
                         {formatBRL(orcamentoFinanceiroPreview.totalCliente)}
                       </p>
                     </div>
                   </div>
 
-                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      Parceiro e booker
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Condições de pagamento
                     </p>
-                    <p className="mb-2 text-[11px] leading-snug text-slate-500">
-                      Parceiros/fornecedores e booker entram como custo do projeto. Percentuais aplicam sobre a margem da
-                      agência (após modelo e imposto), como na O.S. Na aprovação, o booker segue vinculado à comissão e
-                      ao financeiro.
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      <label className="text-xs text-slate-600 sm:col-span-2">
+                        <span className="mb-0.5 block font-medium text-slate-700">Condições de pagamento</span>
+                        <input
+                          value={orcamentoForm.condicoes_pagamento}
+                          onChange={(event) => onChangeOrcamento('condicoes_pagamento', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Data de vencimento</span>
+                        <input
+                          type="date"
+                          autoComplete="off"
+                          value={toDateInputValue(orcamentoForm.data_vencimento)}
+                          onChange={(event) => onChangeOrcamento('data_vencimento', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      Parceiros e booker
                     </p>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Parceiro / fornecedor</span>
+                    <p className="mb-1.5 text-[10px] leading-snug text-slate-500">
+                      Percentuais sobre a margem da agência (após modelo e imposto), como na O.S.
+                    </p>
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Parceiro / fornecedor</span>
                         <select
                           value={orcamentoForm.parceiro_id !== '' && orcamentoForm.parceiro_id != null ? String(orcamentoForm.parceiro_id) : ''}
-                          onChange={(event) =>
-                            onChangeOrcamento('parceiro_id', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          onChange={(event) => onChangeOrcamento('parceiro_id', event.target.value)}
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         >
                           <option value="">Nenhum</option>
                           {parceirosList.map((p) => (
@@ -4816,22 +4963,22 @@ function App({ authUser, onLogout = () => {} }) {
                           ))}
                         </select>
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Parceiro (% sobre margem)</span>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Parceiro (% sobre margem)</span>
                         <input
                           type="number"
                           step="0.01"
                           value={orcamentoForm.parceiro_percent ?? ''}
                           onChange={(event) => onChangeOrcamento('parceiro_percent', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         />
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Booker</span>
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">Booker</span>
                         <select
                           value={orcamentoForm.booker_id !== '' && orcamentoForm.booker_id != null ? String(orcamentoForm.booker_id) : ''}
                           onChange={(event) => onChangeOrcamento('booker_id', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         >
                           <option value="">Nenhum</option>
                           {bookersList.map((b) => (
@@ -4841,8 +4988,8 @@ function App({ authUser, onLogout = () => {} }) {
                           ))}
                         </select>
                       </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">
+                      <label className="text-xs text-slate-600">
+                        <span className="mb-0.5 block font-medium text-slate-700">
                           Booker (% sobre margem após parceiro)
                         </span>
                         <input
@@ -4850,65 +4997,15 @@ function App({ authUser, onLogout = () => {} }) {
                           step="0.01"
                           value={orcamentoForm.booker_percent ?? ''}
                           onChange={(event) => onChangeOrcamento('booker_percent', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                          className="w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
                         />
                       </label>
                     </div>
-                    <p className="mt-2 text-[11px] leading-snug text-slate-600">
+                    <p className="mt-1.5 text-[10px] leading-snug text-slate-600">
                       Estimativa interna: parceiro {formatBRL(orcamentoFinanceiroPreview.parceiroValor)} · booker{' '}
                       {formatBRL(orcamentoFinanceiroPreview.bookerValor)} · resultado agência{' '}
                       {formatBRL(orcamentoFinanceiroPreview.resultadoAgencia)}
                     </p>
-                  </div>
-
-                  <div className="md:col-span-2 rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      Pagamento e uso de imagem
-                    </p>
-                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                      <label className="text-sm text-slate-600 md:col-span-2">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Condições de pagamento</span>
-                        <input
-                          value={orcamentoForm.condicoes_pagamento}
-                          onChange={(event) => onChangeOrcamento('condicoes_pagamento', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-                        />
-                      </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Data de vencimento</span>
-                        <input
-                          type="date"
-                          autoComplete="off"
-                          value={toDateInputValue(orcamentoForm.data_vencimento)}
-                          onChange={(event) => onChangeOrcamento('data_vencimento', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-                        />
-                      </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Mídias — uso de imagem</span>
-                        <input
-                          value={orcamentoForm.uso_imagem}
-                          onChange={(event) => onChangeOrcamento('uso_imagem', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-                        />
-                      </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Tempo de uso de imagem</span>
-                        <input
-                          value={orcamentoForm.prazo}
-                          onChange={(event) => onChangeOrcamento('prazo', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-                        />
-                      </label>
-                      <label className="text-sm text-slate-600 md:col-span-2">
-                        <span className="mb-0.5 block text-xs font-medium text-slate-700">Território</span>
-                        <input
-                          value={orcamentoForm.territorio}
-                          onChange={(event) => onChangeOrcamento('territorio', event.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-                        />
-                      </label>
-                    </div>
                   </div>
                   </fieldset>
                   <div className="md:col-span-2 flex flex-wrap items-center gap-3">
