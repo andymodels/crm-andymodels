@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../config/db');
-const { sendContratoEmail } = require('../services/contratoEmail');
+const { sendAgendaConvocacaoEmail } = require('../services/contratoEmail');
 
 const router = express.Router();
 
@@ -101,6 +101,60 @@ function montarEmailAgenda({
   `;
 }
 
+/** Base pública usada só nos links do e-mail de convocação (produção: Render). */
+function agendaEmailLinkBase() {
+  return String(
+    process.env.AGENDA_EMAIL_PUBLIC_URL || process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com',
+  ).replace(/\/$/, '');
+}
+
+/** Texto simples com os mesmos URLs do HTML — muitos clientes mostram links diretos sem reescrita Brevo no bloco text/plain. */
+function montarTextoAgenda({
+  modeloNome,
+  tipoTrabalho,
+  dataStr,
+  horario,
+  local,
+  mapUrl,
+  obsExtras,
+  urlConfirmar,
+  urlRecusar,
+  urlPagina,
+}) {
+  const obs = String(obsExtras || '').trim();
+  const nome = modeloNome ? `, ${modeloNome}` : '';
+  const linhas = [
+    'Convocação — Andy Models CRM',
+    '',
+    `Olá${nome}!`,
+    '',
+    'Você foi convocado(a) para um job.',
+    '',
+    `Tipo: ${tipoTrabalho || '—'}`,
+    `Data: ${dataStr || '—'}`,
+    `Horário: ${horario || '—'}`,
+    `Local: ${local || '—'}`,
+  ];
+  if (mapUrl) linhas.push(`Mapa: ${mapUrl}`);
+  if (obs) linhas.push('', `Observações: ${obs}`);
+  linhas.push(
+    '',
+    'Use os links abaixo (endereços diretos do sistema, sem redirecionamento):',
+    '',
+    'Confirmar presença:',
+    urlConfirmar,
+    '',
+    'Não posso ir:',
+    urlRecusar,
+    '',
+    'Ver detalhes na página:',
+    urlPagina,
+    '',
+    'Se os botões no HTML abrirem outro domínio, copie e cole uma das linhas acima no navegador.',
+  );
+  return linhas.join('\n');
+}
+
 async function loadPresencaForSend(eventId, presencaId) {
   const row = await pool.query(
     `
@@ -157,7 +211,7 @@ async function doSendModeloEmail({ eventId, presencaId }) {
   const local = ev.local_trabalho || '—';
   const mapUrl = String(ev.link_mapa || '').trim() || mapsSearchUrl(local);
   const newToken = crypto.randomBytes(24).toString('hex');
-  const base = publicBase();
+  const base = agendaEmailLinkBase();
   const enc = encodeURIComponent(newToken);
   const urlPagina = `${base}/agenda/confirmar?token=${enc}`;
   const urlConfirmar = `${base}/agenda/confirmar?token=${enc}&acao=confirmar`;
@@ -175,11 +229,24 @@ async function doSendModeloEmail({ eventId, presencaId }) {
     urlRecusar,
     urlPagina,
   });
+  const text = montarTextoAgenda({
+    modeloNome: ev.modelo_nome,
+    tipoTrabalho: ev.tipo_trabalho,
+    dataStr,
+    horario,
+    local,
+    mapUrl,
+    obsExtras: ev.observacoes_extras,
+    urlConfirmar,
+    urlRecusar,
+    urlPagina,
+  });
 
-  const smtp = await sendContratoEmail({
+  const smtp = await sendAgendaConvocacaoEmail({
     to: ev.modelo_email,
     subject,
     html,
+    text,
   });
 
   await pool.query(
@@ -512,10 +579,6 @@ router.delete('/agenda/eventos/:id', async (req, res, next) => {
     next(e);
   }
 });
-
-/** Mesmo default que cadastroLinks / contratoEmail — produção Render sem depender de .env. */
-const DEFAULT_PUBLIC_APP_URL = 'https://crm-andymodels.onrender.com';
-const publicBase = () => String(process.env.PUBLIC_APP_URL || DEFAULT_PUBLIC_APP_URL).replace(/\/$/, '');
 
 /** POST /agenda/eventos/:id/presenca/:presencaId/enviar */
 router.post('/agenda/eventos/:id/presenca/:presencaId/enviar', async (req, res, next) => {

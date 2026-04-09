@@ -5,6 +5,19 @@ function isValidEmail(raw) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
 
+/** Extrai e-mail (e nome opcional) de MAIL_FROM estilo "Nome <a@b.com>" ou só o e-mail. */
+function parseSenderAddress(raw) {
+  const s = String(raw || '').trim();
+  const m = s.match(/<([^>\s]+@[^>\s]+)>/);
+  if (m) {
+    const email = m[1].trim();
+    const name = s.replace(m[0], '').replace(/^["'\s]+|["'\s]+$/g, '').trim();
+    return { email, name: name || undefined };
+  }
+  if (isValidEmail(s)) return { email: s, name: undefined };
+  return { email: null, name: undefined };
+}
+
 function classifySmtpError(error) {
   const code = String(error?.code || '').toUpperCase();
   const msg = String(error?.message || '').toLowerCase();
@@ -74,9 +87,96 @@ function createTransport() {
 }
 
 /**
- * Envia HTML por SMTP. Requer SMTP_HOST (e credenciais conforme servidor).
+ * Cabeçalhos pedidos ao relay Brevo (SMTP) para tentar evitar reescrita de links (sendibt3.com).
+ * Não é garantido em todos os planos; com BREVO_API_KEY o envio da convocação usa a API REST.
  */
-async function sendContratoEmail({ to, subject, html, attachments }) {
+function brevoAgendaSmtpHeaders() {
+  return {
+    'X-Sib-Options': '{"trackClicks":false,"trackOpens":false}',
+  };
+}
+
+/**
+ * Envia convocação da agenda: prefere API REST do Brevo (links diretos) se BREVO_API_KEY estiver definida;
+ * caso contrário SMTP com corpo texto + cabeçalhos anti-tracking.
+ */
+async function sendAgendaConvocacaoEmail({ to, subject, html, text }) {
+  const apiKey = String(process.env.BREVO_API_KEY || process.env.BREVO_TRANSACTIONAL_API_KEY || '').trim();
+  const senderRaw = process.env.MAIL_FROM || process.env.SMTP_USER || '';
+  const parsed = parseSenderAddress(senderRaw);
+
+  if (apiKey) {
+    if (!parsed.email || !isValidEmail(parsed.email)) {
+      const err = new Error(
+        'Com BREVO_API_KEY é obrigatório MAIL_FROM (ou SMTP_USER) com um e-mail válido e autorizado no Brevo.',
+      );
+      err.code = 'SMTP_CONFIG_INVALID';
+      throw err;
+    }
+    const body = {
+      sender: {
+        email: parsed.email,
+        name: parsed.name || 'Andy Models CRM',
+      },
+      to: [{ email: String(to || '').trim() }],
+      subject: String(subject || '').trim(),
+      htmlContent: html,
+      /** Texto alternativo: Brevo gera multipart; links aqui ficam literais no cliente. */
+      textContent: String(text || '').trim() || undefined,
+      tags: ['crm-agenda-convocacao'],
+    };
+    if (!body.to[0].email) {
+      const err = new Error('Destinatário inválido.');
+      err.code = 'SMTP_CONFIG_INVALID';
+      throw err;
+    }
+    let res;
+    try {
+      res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'api-key': apiKey,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      const err = new Error(`Falha ao contactar API Brevo: ${e?.message || 'rede'}`);
+      err.code = 'SMTP_SEND_FAILED';
+      throw err;
+    }
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      /* ignore */
+    }
+    if (!res.ok) {
+      const err = new Error(data?.message || `Brevo API rejeitou o envio (HTTP ${res.status}).`);
+      err.code = 'SMTP_SEND_FAILED';
+      err.brevo_code = data?.code || null;
+      throw err;
+    }
+    const messageId = data?.messageId != null ? String(data.messageId) : null;
+    if (messageId) console.info('[brevo-api] convocação agenda', { to: body.to[0].email, messageId: messageId.slice(0, 200) });
+    return { messageId, accepted: [body.to[0].email], rejected: [] };
+  }
+
+  return sendContratoEmail({
+    to,
+    subject,
+    html,
+    text,
+    headers: brevoAgendaSmtpHeaders(),
+  });
+}
+
+/**
+ * Envia HTML por SMTP. Requer SMTP_HOST (e credenciais conforme servidor).
+ * `text` gera multipart/alternative (URLs em texto simples costumam não ser reescritas pelo Brevo).
+ */
+async function sendContratoEmail({ to, subject, html, attachments, text, headers }) {
   const { missing, invalid } = validateContratoEmailEnv();
   if (missing.length > 0 || invalid.length > 0) {
     const detail = [
@@ -104,6 +204,8 @@ async function sendContratoEmail({ to, subject, html, attachments }) {
       to,
       subject,
       html,
+      text: text != null && String(text).trim() ? String(text) : undefined,
+      headers: headers && typeof headers === 'object' ? headers : undefined,
       attachments: Array.isArray(attachments) ? attachments : undefined,
     });
     const messageId = info?.messageId || info?.response || null;
@@ -124,4 +226,5 @@ async function sendContratoEmail({ to, subject, html, attachments }) {
 module.exports = {
   validateContratoEmailEnv,
   sendContratoEmail,
+  sendAgendaConvocacaoEmail,
 };
