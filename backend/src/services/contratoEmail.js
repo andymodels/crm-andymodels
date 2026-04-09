@@ -87,20 +87,98 @@ function createTransport() {
 }
 
 /**
- * Cabeçalhos pedidos ao relay Brevo (SMTP) para tentar evitar reescrita de links (sendibt3.com).
- * Não é garantido em todos os planos; com BREVO_API_KEY o envio da convocação usa a API REST.
+ * Cabeçalhos no relay Brevo (SMTP) para pedir desativação de tracking de cliques/aberturas.
  */
 function brevoAgendaSmtpHeaders() {
   return {
-    'X-Sib-Options': '{"trackClicks":false,"trackOpens":false}',
+    'X-Sib-Options': JSON.stringify({ trackClicks: false, trackOpens: false }),
   };
 }
 
+/** SMTP dedicado à convocação da agenda (ex.: SES, Mailgun) — sem reescrita sendibt. */
+function createAgendaDedicatedTransport() {
+  const host = String(process.env.AGENDA_SMTP_HOST || '').trim();
+  if (!host) return null;
+  const port = Number(process.env.AGENDA_SMTP_PORT || 587);
+  const secure = process.env.AGENDA_SMTP_SECURE === 'true' || port === 465;
+  const user = process.env.AGENDA_SMTP_USER;
+  const pass = process.env.AGENDA_SMTP_PASS;
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: user && pass ? { user, pass } : undefined,
+  });
+}
+
+async function sendAgendaViaDedicatedSmtp({ to, subject, html, text }) {
+  const transport = createAgendaDedicatedTransport();
+  if (!transport) {
+    const err = new Error('AGENDA_SMTP_HOST inválido.');
+    err.code = 'SMTP_CONFIG_INVALID';
+    throw err;
+  }
+  const from =
+    String(process.env.AGENDA_MAIL_FROM || process.env.MAIL_FROM || process.env.SMTP_USER || '').trim() ||
+    'noreply@localhost';
+  const info = await transport.sendMail({
+    from,
+    to,
+    subject,
+    html,
+    text: text != null && String(text).trim() ? String(text) : undefined,
+  });
+  const messageId = info?.messageId || null;
+  if (messageId) {
+    console.info('[agenda-smtp] convocação via AGENDA_SMTP_* (sem Brevo)', {
+      to,
+      messageId: String(messageId).slice(0, 200),
+    });
+  }
+  return { messageId: messageId ? String(messageId) : null, accepted: info?.accepted, rejected: info?.rejected };
+}
+
 /**
- * Envia convocação da agenda: prefere API REST do Brevo (links diretos) se BREVO_API_KEY estiver definida;
- * caso contrário SMTP com corpo texto + cabeçalhos anti-tracking.
+ * POST /v3/smtp/email com tracking desativado no payload (quando a API aceitar o campo).
+ * @see https://developers.brevo.com/reference/send-transac-email — campo `headers` suportado
+ */
+async function postBrevoTransactionalSend(apiKey, body) {
+  return fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Envia convocação da agenda. Ordem:
+ * 1) AGENDA_SMTP_HOST — relay próprio (sem Brevo / sem sendibt);
+ * 2) BREVO_API_KEY — API REST com tracking desativado no JSON + headers;
+ * 3) SMTP global (sou Brevo) + X-Sib-Options + multipart texto.
  */
 async function sendAgendaConvocacaoEmail({ to, subject, html, text }) {
+  const toAddr = String(to || '').trim();
+  if (!toAddr) {
+    const err = new Error('Destinatário inválido.');
+    err.code = 'SMTP_CONFIG_INVALID';
+    throw err;
+  }
+
+  if (createAgendaDedicatedTransport()) {
+    try {
+      return await sendAgendaViaDedicatedSmtp({ to: toAddr, subject, html, text });
+    } catch (e) {
+      console.warn('[agenda-smtp] falha no SMTP dedicado, a tentar Brevo/SMTP global:', e?.message || e);
+      if (process.env.AGENDA_SMTP_FAIL_CLOSED === 'true') {
+        throw e;
+      }
+    }
+  }
+
   const apiKey = String(process.env.BREVO_API_KEY || process.env.BREVO_TRANSACTIONAL_API_KEY || '').trim();
   const senderRaw = process.env.MAIL_FROM || process.env.SMTP_USER || '';
   const parsed = parseSenderAddress(senderRaw);
@@ -113,45 +191,45 @@ async function sendAgendaConvocacaoEmail({ to, subject, html, text }) {
       err.code = 'SMTP_CONFIG_INVALID';
       throw err;
     }
-    const body = {
+    let body = {
       sender: {
         email: parsed.email,
         name: parsed.name || 'Andy Models CRM',
       },
-      to: [{ email: String(to || '').trim() }],
+      to: [{ email: toAddr }],
       subject: String(subject || '').trim(),
       htmlContent: html,
-      /** Texto alternativo: Brevo gera multipart; links aqui ficam literais no cliente. */
       textContent: String(text || '').trim() || undefined,
       tags: ['crm-agenda-convocacao'],
+      /** Pedido explícito ao Brevo para não reescrever links (sendibt). */
+      tracking: {
+        clicks: false,
+        opens: false,
+      },
+      headers: {
+        'X-Sib-Options': JSON.stringify({ trackClicks: false, trackOpens: false }),
+      },
     };
-    if (!body.to[0].email) {
-      const err = new Error('Destinatário inválido.');
-      err.code = 'SMTP_CONFIG_INVALID';
-      throw err;
-    }
-    let res;
-    try {
-      res = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          'content-type': 'application/json',
-          'api-key': apiKey,
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (e) {
-      const err = new Error(`Falha ao contactar API Brevo: ${e?.message || 'rede'}`);
-      err.code = 'SMTP_SEND_FAILED';
-      throw err;
-    }
+
+    let res = await postBrevoTransactionalSend(apiKey, body);
     let data = {};
     try {
       data = await res.json();
     } catch {
       /* ignore */
     }
+
+    if (!res.ok && res.status === 400 && body.tracking) {
+      const { tracking: _drop, ...withoutTracking } = body;
+      console.warn('[brevo-api] HTTP 400: a reenviar sem o campo tracking (versão antiga da API?)');
+      res = await postBrevoTransactionalSend(apiKey, withoutTracking);
+      try {
+        data = await res.json();
+      } catch {
+        /* ignore */
+      }
+    }
+
     if (!res.ok) {
       const err = new Error(data?.message || `Brevo API rejeitou o envio (HTTP ${res.status}).`);
       err.code = 'SMTP_SEND_FAILED';
@@ -159,12 +237,17 @@ async function sendAgendaConvocacaoEmail({ to, subject, html, text }) {
       throw err;
     }
     const messageId = data?.messageId != null ? String(data.messageId) : null;
-    if (messageId) console.info('[brevo-api] convocação agenda', { to: body.to[0].email, messageId: messageId.slice(0, 200) });
-    return { messageId, accepted: [body.to[0].email], rejected: [] };
+    if (messageId) {
+      console.info('[brevo-api] convocação agenda (tracking off no payload)', {
+        to: toAddr,
+        messageId: messageId.slice(0, 200),
+      });
+    }
+    return { messageId, accepted: [toAddr], rejected: [] };
   }
 
   return sendContratoEmail({
-    to,
+    to: toAddr,
     subject,
     html,
     text,
