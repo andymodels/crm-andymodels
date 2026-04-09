@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../config/db');
+const { sendContratoEmail } = require('../services/contratoEmail');
 
 const router = express.Router();
 
@@ -8,6 +9,15 @@ function mapsSearchUrl(local) {
   const t = String(local || '').trim();
   if (!t) return '';
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t)}`;
+}
+
+function escapeHtml(raw) {
+  return String(raw || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function ensureAgendaForOsMissing(client = pool) {
@@ -56,6 +66,124 @@ function montarMensagemModelo({
   if (mapUrl) linhas.push(`Mapa: ${mapUrl}`);
   if (String(obsExtras || '').trim()) linhas.push('', `Obs.: ${obsExtras.trim()}`);
   return linhas.join('\n');
+}
+
+function montarEmailAgenda({ modeloNome, tipoTrabalho, dataStr, horario, local, mapUrl, obsExtras, confirmUrl }) {
+  const obs = String(obsExtras || '').trim();
+  return `
+    <div style="font-family:Arial,sans-serif;line-height:1.45;color:#111;">
+      <p>Olá${modeloNome ? `, ${escapeHtml(modeloNome)}` : ''}!</p>
+      <p>Você foi convocado(a) para um job. Confira os dados:</p>
+      <ul>
+        <li><strong>Tipo:</strong> ${escapeHtml(tipoTrabalho || '—')}</li>
+        <li><strong>Data:</strong> ${escapeHtml(dataStr || '—')}</li>
+        <li><strong>Horário:</strong> ${escapeHtml(horario || '—')}</li>
+        <li><strong>Local:</strong> ${escapeHtml(local || '—')}</li>
+        ${mapUrl ? `<li><strong>Mapa:</strong> <a href="${escapeHtml(mapUrl)}" target="_blank" rel="noreferrer">Abrir</a></li>` : ''}
+      </ul>
+      ${obs ? `<p><strong>Observações:</strong><br/>${escapeHtml(obs).replace(/\n/g, '<br/>')}</p>` : ''}
+      <p><a href="${escapeHtml(confirmUrl)}" target="_blank" rel="noreferrer"><strong>Confirmar presença / Não posso ir</strong></a></p>
+      <p style="color:#666;font-size:12px">Mensagem automática enviada pelo CRM Andy Models.</p>
+    </div>
+  `;
+}
+
+async function loadPresencaForSend(eventId, presencaId) {
+  const row = await pool.query(
+    `
+    SELECT
+      p.id,
+      p.token,
+      p.enviado_em,
+      p.status,
+      p.agenda_evento_id,
+      p.os_modelo_id,
+      ae.source,
+      ae.os_id,
+      ae.observacoes_extras,
+      ae.link_mapa,
+      os.data_trabalho,
+      os.tipo_trabalho,
+      os.horario_trabalho,
+      os.local_trabalho,
+      COALESCE(NULLIF(TRIM(c.nome_fantasia), ''), NULLIF(TRIM(c.nome_empresa), ''), '') AS cliente_nome,
+      COALESCE(NULLIF(TRIM(m.nome), ''), 'Modelo') AS modelo_nome,
+      NULLIF(TRIM(m.email), '') AS modelo_email
+    FROM agenda_modelo_presenca p
+    JOIN agenda_eventos ae ON ae.id = p.agenda_evento_id
+    LEFT JOIN ordens_servico os ON os.id = ae.os_id
+    LEFT JOIN clientes c ON c.id = os.cliente_id
+    LEFT JOIN modelos m ON m.id = p.modelo_id
+    WHERE p.id = $1 AND p.agenda_evento_id = $2
+    `,
+    [presencaId, eventId],
+  );
+  return row.rows[0] || null;
+}
+
+async function doSendModeloEmail({ eventId, presencaId }) {
+  const ev = await loadPresencaForSend(eventId, presencaId);
+  if (!ev) {
+    const err = new Error('Registro nao encontrado.');
+    err.status = 404;
+    throw err;
+  }
+  if (ev.source !== 'os') {
+    const err = new Error('Envio por modelo so para eventos ligados a O.S.');
+    err.status = 400;
+    throw err;
+  }
+  if (!ev.modelo_email) {
+    const err = new Error(`Modelo ${ev.modelo_nome || ''} sem e-mail cadastrado.`);
+    err.status = 400;
+    throw err;
+  }
+
+  const dataStr = ev.data_trabalho ? String(ev.data_trabalho).slice(0, 10) : '—';
+  const horario = ev.horario_trabalho || '—';
+  const local = ev.local_trabalho || '—';
+  const mapUrl = String(ev.link_mapa || '').trim() || mapsSearchUrl(local);
+  const confirmUrl = `${publicBase()}/agenda-confirmar?token=${encodeURIComponent(ev.token)}`;
+  const subject = `Convocação de job - ${ev.cliente_nome || 'Andy Models'} - ${dataStr}`;
+  const html = montarEmailAgenda({
+    modeloNome: ev.modelo_nome,
+    tipoTrabalho: ev.tipo_trabalho,
+    dataStr,
+    horario,
+    local,
+    mapUrl,
+    obsExtras: ev.observacoes_extras,
+    confirmUrl,
+  });
+
+  const smtp = await sendContratoEmail({
+    to: ev.modelo_email,
+    subject,
+    html,
+  });
+
+  await pool.query(
+    `
+    UPDATE agenda_modelo_presenca
+    SET enviado_em = NOW(), status = 'enviado'
+    WHERE id = $1
+    `,
+    [presencaId],
+  );
+  await pool.query(
+    `
+    INSERT INTO agenda_presenca_historico (presenca_id, tipo, detalhe)
+    VALUES ($1, 'envio', $2)
+    `,
+    [presencaId, `E-mail enviado para ${ev.modelo_email}`],
+  );
+
+  return {
+    to: ev.modelo_email,
+    modelo_nome: ev.modelo_nome,
+    message_id: smtp?.messageId || null,
+    confirm_url: confirmUrl,
+  };
 }
 
 /** GET /agenda — eventos entre datas (YYYY-MM-DD). */
@@ -133,7 +261,8 @@ router.get('/agenda', async (req, res, next) => {
           p.status,
           p.enviado_em,
           p.respondido_em,
-          COALESCE(NULLIF(TRIM(m.nome), ''), 'Modelo') AS modelo_nome
+          COALESCE(NULLIF(TRIM(m.nome), ''), 'Modelo') AS modelo_nome,
+          NULLIF(TRIM(m.email), '') AS modelo_email
         FROM agenda_modelo_presenca p
         LEFT JOIN modelos m ON m.id = p.modelo_id
         WHERE p.agenda_evento_id = ANY($1::int[])
@@ -214,7 +343,8 @@ router.get('/agenda/eventos/:id', async (req, res, next) => {
       `
       SELECT
         p.*,
-        COALESCE(NULLIF(TRIM(m.nome), ''), 'Modelo') AS modelo_nome
+        COALESCE(NULLIF(TRIM(m.nome), ''), 'Modelo') AS modelo_nome,
+        NULLIF(TRIM(m.email), '') AS modelo_email
       FROM agenda_modelo_presenca p
       LEFT JOIN modelos m ON m.id = p.modelo_id
       WHERE p.agenda_evento_id = $1
@@ -366,71 +496,132 @@ router.post('/agenda/eventos/:id/presenca/:presencaId/enviar', async (req, res, 
     if (Number.isNaN(eventId) || Number.isNaN(presencaId)) {
       return res.status(400).json({ message: 'IDs invalidos.' });
     }
-    const row = await pool.query(
-      `
-      SELECT
-        p.id,
-        p.token,
-        p.enviado_em,
-        ae.source,
-        ae.observacoes_extras,
-        ae.link_mapa,
-        os.data_trabalho,
-        os.tipo_trabalho,
-        os.horario_trabalho,
-        os.local_trabalho,
-        ae.hora_evento,
-        ae.local_evento,
-        ae.manual_tipo,
-        ae.data_evento,
-        COALESCE(NULLIF(TRIM(m.nome), ''), 'Modelo') AS modelo_nome
-      FROM agenda_modelo_presenca p
-      JOIN agenda_eventos ae ON ae.id = p.agenda_evento_id
-      LEFT JOIN ordens_servico os ON os.id = ae.os_id
-      LEFT JOIN modelos m ON m.id = p.modelo_id
-      WHERE p.id = $1 AND p.agenda_evento_id = $2
-      `,
-      [presencaId, eventId],
-    );
-    if (row.rows.length === 0) return res.status(404).json({ message: 'Registro nao encontrado.' });
-    const ev = row.rows[0];
-    if (ev.source !== 'os') {
-      return res.status(400).json({ message: 'Envio por modelo so para eventos ligados a O.S.' });
-    }
-    const dataStr = ev.data_trabalho ? String(ev.data_trabalho).slice(0, 10) : '—';
-    const horario = ev.horario_trabalho || '—';
-    const local = ev.local_trabalho || '—';
-    const mapUrl = String(ev.link_mapa || '').trim() || mapsSearchUrl(local);
-    const mensagem = montarMensagemModelo({
-      tipoTrabalho: ev.tipo_trabalho,
-      dataStr,
-      horario,
-      local,
-      mapUrl,
-      obsExtras: ev.observacoes_extras,
-      modeloNome: ev.modelo_nome,
+    const out = await doSendModeloEmail({ eventId, presencaId });
+    res.json({
+      ok: true,
+      message: 'E-mail enviado ao modelo.',
+      ...out,
     });
-    const confirmUrl = `${publicBase()}/agenda-confirmar?token=${encodeURIComponent(ev.token)}`;
-    const mensagemCompleta = `${mensagem}\n\nConfirme sua presença:\n${confirmUrl}`;
-    await pool.query(
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ message: e.message });
+    if (e.code === 'SMTP_DISABLED' || e.code === 'SMTP_CONFIG_INVALID' || e.code === 'SMTP_SEND_FAILED') {
+      return res.status(500).json({
+        message: `Falha no envio de e-mail: ${e.message || 'erro SMTP'}`,
+        error_code: e.code || null,
+      });
+    }
+    next(e);
+  }
+});
+
+/** POST /agenda/enviar-modelo */
+router.post('/agenda/enviar-modelo', async (req, res, next) => {
+  try {
+    const eventId = Number(req.body?.event_id);
+    const presencaId = Number(req.body?.presenca_id);
+    if (Number.isNaN(eventId) || Number.isNaN(presencaId)) {
+      return res.status(400).json({ message: 'event_id e presenca_id são obrigatórios.' });
+    }
+    const out = await doSendModeloEmail({ eventId, presencaId });
+    res.json({
+      ok: true,
+      message: 'E-mail enviado ao modelo.',
+      ...out,
+    });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ message: e.message });
+    if (e.code === 'SMTP_DISABLED' || e.code === 'SMTP_CONFIG_INVALID' || e.code === 'SMTP_SEND_FAILED') {
+      return res.status(500).json({
+        message: `Falha no envio de e-mail: ${e.message || 'erro SMTP'}`,
+        error_code: e.code || null,
+      });
+    }
+    next(e);
+  }
+});
+
+/** POST /agenda/presenca/:id/confirmar-manual */
+router.post('/agenda/presenca/:id/confirmar-manual', async (req, res, next) => {
+  try {
+    const presencaId = Number(req.params.id);
+    if (Number.isNaN(presencaId)) return res.status(400).json({ message: 'ID inválido.' });
+    const upd = await pool.query(
       `
-      UPDATE agenda_modelo_presenca SET enviado_em = NOW() WHERE id = $1
+      UPDATE agenda_modelo_presenca
+      SET status = 'confirmado', respondido_em = NOW()
+      WHERE id = $1
+      RETURNING id
       `,
       [presencaId],
     );
+    if (upd.rows.length === 0) return res.status(404).json({ message: 'Presença não encontrada.' });
     await pool.query(
       `
       INSERT INTO agenda_presenca_historico (presenca_id, tipo, detalhe)
-      VALUES ($1, 'envio', 'Mensagem gerada no CRM')
+      VALUES ($1, 'resposta', 'Confirmação manual no CRM')
       `,
       [presencaId],
     );
-    res.json({
-      mensagem: mensagemCompleta,
-      link_confirmacao: confirmUrl,
-    });
+    res.json({ ok: true, status: 'confirmado' });
   } catch (e) {
     next(e);
+  }
+});
+
+/** POST /agenda/presenca/:id/substituir-modelo */
+router.post('/agenda/presenca/:id/substituir-modelo', async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    const presencaId = Number(req.params.id);
+    const novoModeloId = Number(req.body?.modelo_id);
+    if (Number.isNaN(presencaId) || Number.isNaN(novoModeloId)) {
+      return res.status(400).json({ message: 'IDs inválidos.' });
+    }
+
+    await client.query('BEGIN');
+    const cur = await client.query(
+      `
+      SELECT p.id, p.os_modelo_id, p.modelo_id, p.status
+      FROM agenda_modelo_presenca p
+      WHERE p.id = $1
+      FOR UPDATE
+      `,
+      [presencaId],
+    );
+    if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Presença não encontrada.' });
+    }
+    const nomeNovo = await client.query(`SELECT nome FROM modelos WHERE id = $1`, [novoModeloId]);
+    if (nomeNovo.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Novo modelo não encontrado.' });
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    await client.query(`UPDATE os_modelos SET modelo_id = $2 WHERE id = $1`, [cur.rows[0].os_modelo_id, novoModeloId]);
+    await client.query(
+      `
+      UPDATE agenda_modelo_presenca
+      SET modelo_id = $2, status = 'pendente', enviado_em = NULL, respondido_em = NULL, token = $3
+      WHERE id = $1
+      `,
+      [presencaId, novoModeloId, token],
+    );
+    await client.query(
+      `
+      INSERT INTO agenda_presenca_historico (presenca_id, tipo, detalhe)
+      VALUES ($1, 'ajuste', $2)
+      `,
+      [presencaId, `Modelo substituído para ${nomeNovo.rows[0].nome || `#${novoModeloId}`}`],
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, status: 'pendente' });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    next(e);
+  } finally {
+    client.release();
   }
 });
 

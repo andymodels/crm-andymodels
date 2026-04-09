@@ -748,7 +748,7 @@ const initDb = async () => {
       enviado_em TIMESTAMP,
       respondido_em TIMESTAMP,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      CONSTRAINT agenda_presenca_status_chk CHECK (status IN ('pendente', 'confirmado', 'recusado')),
+      CONSTRAINT agenda_presenca_status_chk CHECK (status IN ('pendente', 'enviado', 'confirmado', 'recusado')),
       UNIQUE(agenda_evento_id, os_modelo_id)
     );
   `);
@@ -795,6 +795,19 @@ const initDb = async () => {
     `);
   } catch (e) {
     console.warn('[initDb] agenda_modelo_presenca backfill:', e.message);
+  }
+
+  try {
+    await pool.query(`ALTER TABLE agenda_modelo_presenca DROP CONSTRAINT IF EXISTS agenda_presenca_status_chk`);
+    await pool.query(`
+      ALTER TABLE agenda_modelo_presenca
+      ADD CONSTRAINT agenda_presenca_status_chk
+      CHECK (status IN ('pendente', 'enviado', 'confirmado', 'recusado'))
+    `);
+  } catch (e) {
+    if (!String(e.message || '').includes('already exists')) {
+      console.warn('[initDb] agenda_presenca_status_chk:', e.message);
+    }
   }
 
   try {
