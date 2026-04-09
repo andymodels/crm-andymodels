@@ -17,6 +17,8 @@ const authRouter = require('./routes/auth');
 const { requireAdminAuth } = require('./middleware/requireAdminAuth');
 const modeloPortalRouter = require('./routes/modeloPortal');
 const publicContratoAssinaturaRouter = require('./routes/publicContratoAssinatura');
+const publicAgendaPresencaRouter = require('./routes/publicAgendaPresenca');
+const agendaRouter = require('./routes/agenda');
 
 const app = express();
 
@@ -71,6 +73,7 @@ app.use('/api', publicCadastroClienteRouter);
 app.use('/api', authRouter);
 app.use('/api', modeloPortalRouter);
 app.use('/api', publicContratoAssinaturaRouter);
+app.use('/api', publicAgendaPresencaRouter);
 
 // Restante da API exige sessão admin
 app.use('/api', requireAdminAuth);
@@ -82,6 +85,7 @@ app.use('/api', dashboardRouter);
 app.use('/api', extratoModeloRouter);
 app.use('/api', financeiroRouter);
 app.use('/api', cadastroLinksRouter);
+app.use('/api', agendaRouter);
 
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {

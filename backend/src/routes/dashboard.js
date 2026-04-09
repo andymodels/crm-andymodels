@@ -93,6 +93,8 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
         os.status,
         os.imposto_percent,
         os.agencia_fee_percent,
+        os.emitir_contrato,
+        os.contrato_status,
         COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
         c.nome_empresa,
         c.nome_fantasia
@@ -139,6 +141,8 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
           liquido,
           pago,
           saldo,
+          emitir_contrato: row.emitir_contrato,
+          contrato_status: row.contrato_status,
         });
       }
       if (pagamentosModeloPendentes.length >= 25) break;

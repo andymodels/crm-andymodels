@@ -705,6 +705,112 @@ const initDb = async () => {
     CREATE INDEX IF NOT EXISTS idx_despesas_os ON despesas (os_id);
   `);
 
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS horario_trabalho TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS local_trabalho TEXT NOT NULL DEFAULT '';`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agenda_eventos (
+      id SERIAL PRIMARY KEY,
+      source TEXT NOT NULL,
+      os_id INTEGER REFERENCES ordens_servico(id) ON DELETE CASCADE,
+      observacoes_extras TEXT NOT NULL DEFAULT '',
+      manual_tipo TEXT,
+      data_evento DATE,
+      hora_evento TEXT NOT NULL DEFAULT '',
+      local_evento TEXT NOT NULL DEFAULT '',
+      observacoes_manual TEXT NOT NULL DEFAULT '',
+      link_mapa TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT agenda_eventos_source_chk CHECK (source IN ('os', 'manual')),
+      CONSTRAINT agenda_eventos_shape_chk CHECK (
+        (source = 'os' AND os_id IS NOT NULL AND manual_tipo IS NULL AND data_evento IS NULL)
+        OR
+        (source = 'manual' AND os_id IS NULL AND manual_tipo IS NOT NULL AND data_evento IS NOT NULL)
+      )
+    );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agenda_eventos_os_id ON agenda_eventos(os_id) WHERE os_id IS NOT NULL;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_agenda_eventos_manual_data ON agenda_eventos(data_evento) WHERE source = 'manual';
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agenda_modelo_presenca (
+      id SERIAL PRIMARY KEY,
+      agenda_evento_id INTEGER NOT NULL REFERENCES agenda_eventos(id) ON DELETE CASCADE,
+      os_modelo_id INTEGER NOT NULL REFERENCES os_modelos(id) ON DELETE CASCADE,
+      modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL,
+      token TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      enviado_em TIMESTAMP,
+      respondido_em TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT agenda_presenca_status_chk CHECK (status IN ('pendente', 'confirmado', 'recusado')),
+      UNIQUE(agenda_evento_id, os_modelo_id)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_agenda_presenca_token ON agenda_modelo_presenca(token);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agenda_presenca_historico (
+      id SERIAL PRIMARY KEY,
+      presenca_id INTEGER NOT NULL REFERENCES agenda_modelo_presenca(id) ON DELETE CASCADE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      tipo TEXT NOT NULL,
+      detalhe TEXT
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_agenda_presenca_hist_presenca ON agenda_presenca_historico(presenca_id);
+  `);
+
+  try {
+    await pool.query(`
+      INSERT INTO agenda_eventos (source, os_id, observacoes_extras, manual_tipo, data_evento)
+      SELECT 'os', os.id, '', NULL, NULL
+      FROM ordens_servico os
+      WHERE os.status IS DISTINCT FROM 'cancelada'
+        AND NOT EXISTS (SELECT 1 FROM agenda_eventos ae WHERE ae.os_id = os.id)
+    `);
+  } catch (e) {
+    console.warn('[initDb] agenda_eventos backfill:', e.message);
+  }
+  try {
+    await pool.query(`
+      INSERT INTO agenda_modelo_presenca (agenda_evento_id, os_modelo_id, modelo_id, token, status)
+      SELECT
+        ae.id,
+        om.id,
+        om.modelo_id,
+        substr(md5(random()::text || clock_timestamp()::text || om.id::text), 1, 48),
+        'pendente'
+      FROM os_modelos om
+      JOIN agenda_eventos ae ON ae.os_id = om.os_id AND ae.source = 'os'
+      WHERE NOT EXISTS (SELECT 1 FROM agenda_modelo_presenca p WHERE p.os_modelo_id = om.id)
+    `);
+  } catch (e) {
+    console.warn('[initDb] agenda_modelo_presenca backfill:', e.message);
+  }
+
+  try {
+    await pool.query(`
+      UPDATE ordens_servico os
+      SET
+        horario_trabalho = COALESCE(NULLIF(TRIM(o.horario_trabalho), ''), os.horario_trabalho),
+        local_trabalho = COALESCE(NULLIF(TRIM(o.local_trabalho), ''), os.local_trabalho)
+      FROM orcamentos o
+      WHERE o.id = os.orcamento_id
+        AND (os.horario_trabalho = '' OR os.local_trabalho = '')
+    `);
+  } catch (e) {
+    console.warn('[initDb] ordens_servico horario/local from orcamento:', e.message);
+  }
+
   try {
     await pool.query(`
       UPDATE despesas SET categoria = 'outros'

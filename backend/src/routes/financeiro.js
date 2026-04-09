@@ -214,7 +214,7 @@ router.post('/financeiro/pagamentos-modelo', async (req, res, next) => {
     }
     const check = await pool.query(
       `
-      SELECT om.id, os.status
+      SELECT om.id, os.status, os.emitir_contrato, os.contrato_status
       FROM os_modelos om
       JOIN ordens_servico os ON os.id = om.os_id
       WHERE om.id = $1
@@ -224,6 +224,15 @@ router.post('/financeiro/pagamentos-modelo', async (req, res, next) => {
     if (check.rows.length === 0) return res.status(404).json({ message: 'Linha de modelo (os_modelo) nao encontrada.' });
     if (String(check.rows[0].status || '') === 'cancelada') {
       return res.status(400).json({ message: 'O.S. cancelada nao aceita novos pagamentos a modelos.' });
+    }
+    const rowOs = check.rows[0];
+    if (rowOs.emitir_contrato === true) {
+      const cs = String(rowOs.contrato_status || '').toLowerCase();
+      if (cs !== 'assinado' && cs !== 'recebido') {
+        return res.status(400).json({
+          message: 'Pagamento bloqueado: contrato ainda não assinado.',
+        });
+      }
     }
 
     const ins = await pool.query(

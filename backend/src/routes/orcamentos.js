@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { pool } = require('../config/db');
 const { computeOsFinancials } = require('../services/osFinanceiro');
 const { buildOrcamentoDocumentHtml } = require('../services/documentoOrcamentoOsHtml');
@@ -624,12 +625,14 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         booker_valor,
         agencia_final,
         resultado_agencia,
+        horario_trabalho,
+        local_trabalho,
         emitir_contrato
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, 'ativa',
         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-        $24, $25, $26, $27, $28, $29, $30, $31, $32, TRUE
+        $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, TRUE
       )
       RETURNING *
       `,
@@ -666,6 +669,8 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
         nums.booker_valor,
         nums.agencia_final,
         nums.resultado_agencia,
+        String(budget.horario_trabalho || '').trim(),
+        String(budget.local_trabalho || '').trim(),
       ],
     );
 
@@ -680,6 +685,32 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
             VALUES ($1, $2, $3, $4, $5)
             `,
             [osIdTx, row.modelo_id, row.cache_modelo, Boolean(row.emite_nf_propria), rotulo],
+          );
+        }
+      }
+
+      const evIns = await client.query(
+        `
+        INSERT INTO agenda_eventos (source, os_id, observacoes_extras, manual_tipo, data_evento)
+        VALUES ('os', $1, '', NULL, NULL)
+        RETURNING id
+        `,
+        [osIdTx],
+      );
+      const agendaEventId = evIns.rows[0].id;
+      if (tipoProp === 'com_modelo') {
+        const omRowsIns = await client.query(
+          `SELECT id, modelo_id FROM os_modelos WHERE os_id = $1`,
+          [osIdTx],
+        );
+        for (const om of omRowsIns.rows) {
+          const token = crypto.randomBytes(24).toString('hex');
+          await client.query(
+            `
+            INSERT INTO agenda_modelo_presenca (agenda_evento_id, os_modelo_id, modelo_id, token, status)
+            VALUES ($1, $2, $3, $4, 'pendente')
+            `,
+            [agendaEventId, om.id, om.modelo_id, token],
           );
         }
       }

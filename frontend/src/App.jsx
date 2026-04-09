@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './components/DynamicTextListField';
-import OperacaoCalendar from './components/OperacaoCalendar';
+import OperacaoAgenda from './components/OperacaoAgenda';
+import AgendaCentral from './components/AgendaCentral';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
@@ -93,6 +94,14 @@ const labelContratoStatus = (s) => {
   if (s === 'cancelado') return 'Cancelado';
   return s ? String(s) : '—';
 };
+
+/** Com `emitir_contrato`, só libera pagamento a modelo com contrato assinado ou recebido (scan). */
+function pagamentoModeloLiberadoContrato(row) {
+  const emitir = row?.emitir_contrato === true || row?.emitir_contrato === 't' || row?.emitir_contrato === 1;
+  if (!emitir) return true;
+  const s = String(row?.contrato_status || '').toLowerCase();
+  return s === 'assinado' || s === 'recebido';
+}
 
 const nPrev = (v) => Number(v || 0);
 
@@ -735,15 +744,6 @@ function App({ authUser, onLogout = () => {} }) {
     setCadastrosSubView('entrada');
     setCadastroBuscaInput('');
   }, [module, tab]);
-  const saldoAbertoClienteDashboard = useMemo(
-    () =>
-      (alertasOperacionais?.contas_receber ?? []).reduce(
-        (acc, row) => acc + Number(row.saldo ?? 0),
-        0,
-      ),
-    [alertasOperacionais],
-  );
-
   /** O.S. com saldo a receber do cliente — bloqueia pagar modelo na mesma O.S. */
   const osIdsComSaldoCliente = useMemo(() => {
     const s = new Set();
@@ -752,6 +752,15 @@ function App({ authUser, onLogout = () => {} }) {
     }
     return s;
   }, [alertasOperacionais]);
+
+  /** Exibição apenas: recebido − pagamento modelos − comissões (mesmos totais do resumo da API). */
+  const finResultadoOperacionalJob = useMemo(() => {
+    if (!finResumo) return null;
+    const rec = Number(finResumo.total_recebido_cliente ?? 0);
+    const pag = Number(finResumo.total_pago_modelos ?? 0);
+    const com = Number(finResumo.total_comissoes_os ?? 0);
+    return rec - pag - com;
+  }, [finResumo]);
 
   useEffect(() => {
     setForm(cadastroConfig[tab].form);
@@ -2475,6 +2484,13 @@ function App({ authUser, onLogout = () => {} }) {
             </button>
             <button
               type="button"
+              onClick={() => setModule('agenda')}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'agenda')}`}
+            >
+              Agenda
+            </button>
+            <button
+              type="button"
               onClick={() => setModule('contratos')}
               className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'contratos')}`}
             >
@@ -2553,15 +2569,17 @@ function App({ authUser, onLogout = () => {} }) {
                           : 'Orçamentos'
                       : module === 'inicio'
                         ? 'Dashboard'
-                        : module === 'contratos'
-                          ? 'Contratos'
-                        : module === 'seguranca'
-                          ? 'Minha conta e segurança'
-                        : module === 'financeiro'
-                          ? 'Financeiro'
-                          : module === 'extrato'
-                            ? 'Extrato modelo'
-                            : 'Jobs / O.S.'}
+                        : module === 'agenda'
+                          ? 'Agenda'
+                          : module === 'contratos'
+                            ? 'Contratos'
+                            : module === 'seguranca'
+                              ? 'Minha conta e segurança'
+                              : module === 'financeiro'
+                                ? 'Financeiro'
+                                : module === 'extrato'
+                                  ? 'Extrato modelo'
+                                  : 'Jobs / O.S.'}
                 </h2>
                 {module !== 'financeiro' ? (
                 <p className="text-sm text-slate-500">
@@ -2576,14 +2594,16 @@ function App({ authUser, onLogout = () => {} }) {
                           ? 'Salve antes de aprovar; o botão “Aprovar Orçamento” fica no topo quando aplicável.'
                           : 'Busque orçamentos, abra para revisar ou aprovar, ou crie um novo.'
                       : module === 'inicio'
-                        ? 'Caixa, resultado da agência e pendências (contrato, receber, pagar modelos).'
-                        : module === 'contratos'
-                          ? 'Central de contratos por O.S.: status, visualização e reenvio para assinatura.'
-                        : module === 'seguranca'
-                          ? 'Altere sua senha de administrador em uma tela dedicada.'
-                          : module === 'extrato'
-                            ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
-                            : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
+                        ? 'Resumo operacional e financeiro do momento.'
+                        : module === 'agenda'
+                          ? 'Calendário dos jobs e eventos manuais; envio de link e confirmação de presença por modelo.'
+                          : module === 'contratos'
+                            ? 'Central de contratos por O.S.: status, visualização e reenvio para assinatura.'
+                            : module === 'seguranca'
+                              ? 'Altere sua senha de administrador em uma tela dedicada.'
+                              : module === 'extrato'
+                                ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
+                                : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
                 </p>
                 ) : null}
               </div>
@@ -2607,358 +2627,202 @@ function App({ authUser, onLogout = () => {} }) {
                       ? dashboardResumo
                         ? `${formatBRL(dashboardResumo.resultado_final ?? 0)} resultado`
                         : '—'
-                      : module === 'contratos'
-                        ? `${contratosList.length} contrato(s)`
-                      : module === 'seguranca'
-                        ? 'Administrador'
-                      : module === 'financeiro'
-                        ? finResumo
-                          ? `${formatBRL(finResumo.total_recebido_cliente)} rec.`
-                          : '—'
-                        : module === 'extrato'
-                          ? `${extratoRows.length} linha(s)`
-                          : `${osList.length} O.S.`}
-              </span>
-            </div>
-            {module !== 'orcamentos' && module !== 'jobs' && module !== 'financeiro' && (
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Modulo atual</p>
-                <p className="text-lg font-semibold text-slate-800">
-                  {module === 'cadastros'
-                    ? 'Cadastros'
-                    : module === 'orcamentos'
-                      ? 'Orçamentos'
-                      : module === 'inicio'
-                        ? 'Visão geral'
-                      : module === 'contratos'
-                        ? 'Contratos'
-                      : module === 'seguranca'
-                        ? 'Conta'
-                        : module === 'financeiro'
-                          ? 'Caixa'
-                          : module === 'extrato'
-                            ? 'Modelos'
-                            : 'Jobs'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Tipo selecionado</p>
-                <p className="text-lg font-semibold text-slate-800">
-                  {module === 'cadastros'
-                    ? current.label
-                    : module === 'orcamentos'
-                      ? orcamentosSubView === 'lista'
-                        ? 'Lista completa'
-                        : orcamentosSubView === 'formulario'
-                          ? 'Formulário'
-                          : 'Painel'
-                      : module === 'inicio'
+                      : module === 'agenda'
                         ? 'Operação'
                         : module === 'contratos'
-                          ? 'Assinaturas'
-                        : module === 'seguranca'
-                          ? 'Acesso'
-                        : module === 'financeiro'
-                          ? 'Financeiro'
-                          : module === 'extrato'
-                            ? 'Por O.S. / modelo'
-                            : 'Operacional'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Status</p>
-                <p
-                  className={`text-lg font-semibold ${module === 'cadastros' ? 'text-slate-800' : 'text-emerald-600'}`}
-                >
-                  {module === 'cadastros'
-                    ? cadastrosSubView === 'entrada'
-                      ? 'Painel'
-                      : 'Formulário'
-                    : 'Ativo'}
-                </p>
-              </div>
+                          ? `${contratosList.length} contrato(s)`
+                          : module === 'seguranca'
+                            ? 'Administrador'
+                            : module === 'financeiro'
+                              ? finResumo
+                                ? `${formatBRL(finResumo.total_recebido_cliente)} rec.`
+                                : '—'
+                              : module === 'extrato'
+                                ? `${extratoRows.length} linha(s)`
+                                : `${osList.length} O.S.`}
+              </span>
             </div>
-            )}
           </section>
 
           {module === 'inicio' && (
             <>
-              <OperacaoCalendar
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Resumo financeiro</h3>
+                {dashboardResumoLoading ? (
+                  <p className="mt-4 text-sm text-slate-500">Carregando…</p>
+                ) : dashboardResumo ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">Recebido total</p>
+                      <p className="text-lg font-semibold text-slate-900">
+                        {formatBRL(dashboardResumo.total_recebido_cliente)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">Pago modelos</p>
+                      <p className="text-lg font-semibold text-slate-900">
+                        {formatBRL(dashboardResumo.total_pago_modelos)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">Comissões</p>
+                      <p className="text-lg font-semibold text-slate-900">
+                        {formatBRL(dashboardResumo.total_comissoes_os ?? 0)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500">Despesas</p>
+                      <p className="text-lg font-semibold text-slate-900">
+                        {formatBRL(dashboardResumo.total_despesas ?? 0)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 sm:col-span-2 lg:col-span-1">
+                      <p className="text-xs text-emerald-900">Resultado final</p>
+                      <p className="text-lg font-semibold text-emerald-950">
+                        {formatBRL(dashboardResumo.resultado_final ?? 0)}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-amber-800">Não foi possível carregar o resumo.</p>
+                )}
+              </section>
+
+              <OperacaoAgenda
                 apiUrl={API_BASE}
                 onOpenOs={(osId) => {
                   setModule('jobs');
                   loadOsDetail(osId);
                 }}
               />
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-800">Resumo financeiro</h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Totais globais (mesma base da aba <strong>Financeiro</strong>).
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700"
-                      onClick={() => setModule('financeiro')}
-                    >
-                      Ir para Financeiro
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700"
-                      onClick={() => setModule('extrato')}
-                    >
-                      Ir para Extrato modelo
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700"
-                      onClick={() => {
-                        setModule('jobs');
-                        setOsDraft(null);
-                      }}
-                    >
-                      Ir para Jobs / O.S.
-                    </button>
-                  </div>
-                </div>
-                {dashboardResumoLoading ? (
-                  <p className="mt-4 text-sm text-slate-500">Carregando resumo...</p>
-                ) : dashboardResumo ? (
-                  <>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total recebido (cliente)</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.total_recebido_cliente)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total pago a modelos</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.total_pago_modelos)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-slate-500">Soma dos pagamentos na O.S. / extrato</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total comissões (O.S.)</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.total_comissoes_os ?? 0)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-slate-500">Σ parceiro + booker (valores do job)</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total despesas (agência)</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.total_despesas ?? 0)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          Impostos, operacional, outros — lançamentos manuais
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                        <p className="text-xs text-emerald-900">Resultado final (caixa)</p>
-                        <p className="text-lg font-semibold text-emerald-950">
-                          {formatBRL(dashboardResumo.resultado_final ?? 0)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-emerald-900/90">
-                          Único saldo: recebido − modelos − comissões − despesas
-                        </p>
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xs text-slate-600">
-                      Faturado em O.S. ainda não recebidas:{' '}
-                      <strong>{formatBRL(dashboardResumo.total_faturado_os_abertas)}</strong>
-                    </p>
-                    <p className="mt-4 text-xs font-medium text-slate-600">
-                      Referência — somas de colunas nas O.S. (não substituem o <strong>Resultado final</strong> de caixa
-                      acima).
-                    </p>
-                    <div className="mt-2 grid gap-3 grid-cols-2 md:grid-cols-4">
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Total cliente (todas as O.S.)</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.soma_total_cliente_os)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Líquido modelos</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.soma_modelo_liquido_os)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Parceiro</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.soma_parceiro_valor_os)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Σ Booker</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(dashboardResumo.soma_booker_valor_os)}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-amber-100 bg-amber-50/80 p-3">
-                        <p className="text-xs text-amber-900">Saldo a receber (lista abaixo)</p>
-                        <p className="text-lg font-semibold text-amber-950">{formatBRL(saldoAbertoClienteDashboard)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Contratos sem assinatura</p>
-                        <p className="text-lg font-semibold text-slate-900">{contratosPendentes.count}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3">
-                        <p className="text-xs text-slate-500">Linhas c/ pag. modelo pendente</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {alertasOperacionais?.pagamentos_modelo_pendentes?.length ?? 0}
-                        </p>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-4 text-sm text-amber-800">Não foi possível carregar o resumo — verifique a API.</p>
-                )}
-              </section>
 
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Contratos aguardando assinatura</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  O.S. com contrato ativo e sem arquivo de contrato assinado — dados vêm do job.
-                </p>
-                {contratosPendentes.count === 0 ? (
-                  <p className="mt-4 text-sm text-slate-600">Nenhuma pendência neste critério.</p>
-                ) : (
-                  <ul className="mt-4 space-y-2">
-                    {contratosPendentes.items.map((row) => (
-                      <li
-                        key={row.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
-                      >
-                        <span>
-                          O.S. <strong>#{row.id}</strong> — {row.nome_empresa || row.nome_fantasia}
-                          {row.contrato_status && (
-                            <span className="ml-2 text-xs text-slate-500">({row.contrato_status})</span>
-                          )}
-                        </span>
-                        <button
-                          type="button"
-                          className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium"
-                          onClick={() => {
-                            setModule('jobs');
-                            loadOsDetail(row.id);
-                          }}
-                        >
-                          Abrir O.S.
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-800">Contas a receber (cliente)</h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Saldo em aberto por O.S. O registro de entrada é feito no módulo <strong>Financeiro</strong>.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-white"
-                    style={{ backgroundColor: BRAND_ORANGE }}
-                    onClick={() => setModule('financeiro')}
-                  >
-                    Ir para Financeiro
-                  </button>
-                </div>
-                {!alertasOperacionais?.contas_receber?.length ? (
-                  <p className="mt-4 text-sm text-slate-600">Nenhuma O.S. com saldo a receber.</p>
-                ) : (
-                  <div className="mt-4 overflow-x-auto">
+              {alertasOperacionais?.contas_receber?.length ? (
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-base font-semibold text-slate-800">Contas a receber</h3>
+                  <div className="mt-3 overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2">O.S.</th>
                           <th className="px-2 py-2">Cliente</th>
-                          <th className="px-2 py-2">Total (job)</th>
-                          <th className="px-2 py-2">Recebido</th>
-                          <th className="px-2 py-2">Saldo</th>
-                          <th className="px-2 py-2">Status</th>
+                          <th className="px-2 py-2">Valor</th>
+                          <th className="px-2 py-2" />
                         </tr>
                       </thead>
                       <tbody>
                         {alertasOperacionais.contas_receber.map((row) => (
                           <tr key={row.os_id} className="border-b border-slate-100">
-                            <td className="px-2 py-2 font-medium">#{row.os_id}</td>
                             <td className="px-2 py-2">{row.cliente}</td>
-                            <td className="px-2 py-2">{formatBRL(row.total_cliente)}</td>
-                            <td className="px-2 py-2">{formatBRL(row.recebido)}</td>
                             <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
-                            <td className="px-2 py-2">{row.status}</td>
+                            <td className="px-2 py-2 text-right">
+                              <button
+                                type="button"
+                                className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                style={{ backgroundColor: BRAND_ORANGE }}
+                                onClick={() => {
+                                  setModule('financeiro');
+                                  setFinModal('receber');
+                                  setFinReceberOsId(row.os_id);
+                                  setFinReceberDraft({
+                                    valor:
+                                      Number(row.saldo) > 0
+                                        ? String(Number(row.saldo).toFixed(2))
+                                        : '',
+                                    data_recebimento: new Date().toISOString().slice(0, 10),
+                                    observacao: '',
+                                  });
+                                }}
+                              >
+                                Receber
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                )}
-              </section>
+                </section>
+              ) : null}
 
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-800">Pagamentos a modelos (pendências)</h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {alertasOperacionais?.meta?.nota_prazos ||
-                        'Linhas com saldo em aberto (líquido da O.S. − pagamentos registrados).'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-white"
-                    style={{ backgroundColor: BRAND_ORANGE }}
-                    onClick={() => setModule('financeiro')}
-                  >
-                    Ir para Financeiro
-                  </button>
-                </div>
-                {!alertasOperacionais?.pagamentos_modelo_pendentes?.length ? (
-                  <p className="mt-4 text-sm text-slate-600">Nenhuma linha com saldo pendente.</p>
-                ) : (
-                  <div className="mt-4 overflow-x-auto">
+              {alertasOperacionais?.pagamentos_modelo_pendentes?.length ? (
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-base font-semibold text-slate-800">Pagamento de modelos</h3>
+                  <div className="mt-3 overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2">Job</th>
-                          <th className="px-2 py-2">Modelo</th>
                           <th className="px-2 py-2">Cliente</th>
-                          <th className="px-2 py-2">Líquido</th>
-                          <th className="px-2 py-2">Pago</th>
-                          <th className="px-2 py-2">Saldo</th>
+                          <th className="px-2 py-2">Valor</th>
+                          <th className="px-2 py-2" />
                         </tr>
                       </thead>
                       <tbody>
-                        {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => (
-                          <tr key={row.os_modelo_id} className="border-b border-slate-100">
-                            <td className="px-2 py-2">#{row.job_id}</td>
-                            <td className="px-2 py-2">{row.modelo_nome}</td>
-                            <td className="px-2 py-2">{row.cliente}</td>
-                            <td className="px-2 py-2">{formatBRL(row.liquido)}</td>
-                            <td className="px-2 py-2">{formatBRL(row.pago)}</td>
-                            <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
-                          </tr>
-                        ))}
+                        {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => {
+                          const bloqueadoCliente = osIdsComSaldoCliente.has(Number(row.job_id));
+                          const bloqueadoContrato = !pagamentoModeloLiberadoContrato(row);
+                          return (
+                            <tr key={row.os_modelo_id} className="border-b border-slate-100">
+                              <td className="px-2 py-2">
+                                <span className="block font-medium">{row.cliente}</span>
+                                <span className="text-xs text-slate-500">
+                                  #{row.job_id} · {row.modelo_nome}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
+                              <td className="px-2 py-2 text-right">
+                                {bloqueadoCliente ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="max-w-[16rem] cursor-not-allowed rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-left text-xs font-medium text-amber-900"
+                                  >
+                                    Aguardando recebimento do cliente
+                                  </button>
+                                ) : bloqueadoContrato ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="max-w-[16rem] cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-left text-xs font-medium text-slate-700"
+                                  >
+                                    Pagamento bloqueado: contrato ainda não assinado.
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                    style={{ backgroundColor: BRAND_ORANGE }}
+                                    onClick={() => {
+                                      setModule('financeiro');
+                                      setFinModal('pagar');
+                                      setFinPagarLinha(row);
+                                      setFinPagarDraft({
+                                        valor:
+                                          Number(row.saldo) > 0
+                                            ? String(Number(row.saldo).toFixed(2))
+                                            : '',
+                                        data_pagamento: new Date().toISOString().slice(0, 10),
+                                        observacao: '',
+                                      });
+                                    }}
+                                  >
+                                    Pagar
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
-                )}
-              </section>
+                </section>
+              ) : null}
             </>
+          )}
+
+          {module === 'agenda' && (
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <AgendaCentral apiBase={API_BASE} />
+            </section>
           )}
 
           {module === 'financeiro' && (
@@ -3147,20 +3011,29 @@ function App({ authUser, onLogout = () => {} }) {
                                   </thead>
                                   <tbody>
                                     {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => {
-                                      const bloqueado = osIdsComSaldoCliente.has(Number(row.job_id));
+                                      const bloqueadoCliente = osIdsComSaldoCliente.has(Number(row.job_id));
+                                      const bloqueadoContrato = !pagamentoModeloLiberadoContrato(row);
                                       return (
                                         <tr key={row.os_modelo_id} className="border-b border-slate-100">
                                           <td className="px-2 py-2">#{row.job_id}</td>
                                           <td className="px-2 py-2">{row.modelo_nome}</td>
                                           <td className="px-2 py-2">{formatBRL(row.saldo)}</td>
                                           <td className="px-2 py-2 text-right">
-                                            {bloqueado ? (
+                                            {bloqueadoCliente ? (
                                               <button
                                                 type="button"
                                                 disabled
                                                 className="max-w-[14rem] cursor-not-allowed rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-left text-xs font-medium text-amber-900 disabled:opacity-100"
                                               >
                                                 Aguardando recebimento do cliente
+                                              </button>
+                                            ) : bloqueadoContrato ? (
+                                              <button
+                                                type="button"
+                                                disabled
+                                                className="max-w-[16rem] cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-left text-xs font-medium text-slate-700 disabled:opacity-100"
+                                              >
+                                                Pagamento bloqueado: contrato ainda não assinado.
                                               </button>
                                             ) : (
                                               <button
@@ -3415,58 +3288,96 @@ function App({ authUser, onLogout = () => {} }) {
                   <p className="mt-3 text-sm text-slate-500">Carregando...</p>
                 ) : finResumo ? (
                   <div className="mt-4 space-y-6">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Valor realizado (caixa)</p>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Recebido total</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      Resultado do período
+                    </p>
+
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                        Resultado do job
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Entradas e saídas ligadas às O.S. (recebido, modelos e comissões).
+                      </p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <p className="text-xs text-slate-500">Recebido total (cliente)</p>
                           <p className="text-lg font-semibold text-slate-900">
                             {formatBRL(finResumo.total_recebido_cliente)}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Pago modelos</p>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <p className="text-xs text-slate-500">Pagamento de modelos</p>
                           <p className="text-lg font-semibold text-slate-900">
                             {formatBRL(finResumo.total_pago_modelos)}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Comissões</p>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <p className="text-xs text-slate-500">Comissões (booker/parceiros)</p>
                           <p className="text-lg font-semibold text-slate-900">
                             {formatBRL(finResumo.total_comissoes_os ?? 0)}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">Despesas</p>
-                          <p className="text-lg font-semibold text-slate-900">
-                            {formatBRL(finResumo.total_despesas ?? 0)}
+                        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
+                          <p className="text-xs text-sky-900">Resultado operacional do job</p>
+                          <p className="text-lg font-semibold text-sky-950">
+                            {formatBRL(finResultadoOperacionalJob ?? 0)}
                           </p>
-                        </div>
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 sm:col-span-2 lg:col-span-1">
-                          <p className="text-xs text-emerald-900">Resultado real (caixa)</p>
-                          <p className="text-lg font-semibold text-emerald-950">
-                            {formatBRL(finResumo.resultado_final ?? 0)}
+                          <p className="mt-1 text-[10px] leading-tight text-sky-800/90">
+                            Recebido − pagamento de modelos − comissões
                           </p>
                         </div>
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Valor previsto</p>
-                      <p className="mt-2 text-sm text-amber-950">
-                        Faturado em O.S. ainda não recebidas:{' '}
-                        <strong>{formatBRL(finResumo.total_faturado_os_abertas)}</strong>
+
+                    <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-violet-900">
+                        Despesas da empresa
+                      </p>
+                      <p className="mt-1 text-[11px] text-violet-800/90">
+                        Custos da agência (operacional, impostos lançados manualmente, etc.), fora do cálculo por O.S.
+                      </p>
+                      <div className="mt-3 max-w-md">
+                        <div className="rounded-xl border border-violet-200 bg-white p-3">
+                          <p className="text-xs text-violet-800">Total de despesas</p>
+                          <p className="text-lg font-semibold text-violet-950">
+                            {formatBRL(finResumo.total_despesas ?? 0)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                        Resultado final
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-emerald-950">
+                        {formatBRL(finResumo.resultado_final ?? 0)}
+                      </p>
+                      <p className="mt-1 text-xs text-emerald-900/90">
+                        Resultado do job após descontar despesas da empresa (mesmo total já calculado no sistema).
                       </p>
                     </div>
+
+                    {Number(finResumo.total_faturado_os_abertas) > 0.005 ? (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/90 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-950">
+                          Previsão (não entrou no caixa)
+                        </p>
+                        <p className="mt-2 text-sm text-amber-950">
+                          Faturado em O.S. ainda não recebidas:{' '}
+                          <strong>{formatBRL(finResumo.total_faturado_os_abertas)}</strong>
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {finError && <p className="mt-3 text-sm text-red-600">{finError}</p>}
               </section>
 
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Contas a receber</h3>
-                {!alertasOperacionais?.contas_receber?.length ? (
-                  <p className="mt-3 text-sm text-slate-600">Nenhuma O.S. com saldo a receber.</p>
-                ) : (
+              {alertasOperacionais?.contas_receber?.length ? (
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-base font-semibold text-slate-800">Contas a receber</h3>
                   <div className="mt-3 overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
@@ -3513,8 +3424,8 @@ function App({ authUser, onLogout = () => {} }) {
                       </tbody>
                     </table>
                   </div>
-                )}
-              </section>
+                </section>
+              ) : null}
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800">Pagamento de modelos</h3>
@@ -3536,7 +3447,8 @@ function App({ authUser, onLogout = () => {} }) {
                       </thead>
                       <tbody>
                         {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => {
-                          const bloqueado = osIdsComSaldoCliente.has(Number(row.job_id));
+                          const bloqueadoCliente = osIdsComSaldoCliente.has(Number(row.job_id));
+                          const bloqueadoContrato = !pagamentoModeloLiberadoContrato(row);
                           return (
                             <tr key={row.os_modelo_id} className="border-b border-slate-100">
                               <td className="px-2 py-2">#{row.job_id}</td>
@@ -3546,13 +3458,21 @@ function App({ authUser, onLogout = () => {} }) {
                               <td className="px-2 py-2">{formatBRL(row.pago)}</td>
                               <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
                               <td className="px-2 py-2 text-right">
-                                {bloqueado ? (
+                                {bloqueadoCliente ? (
                                   <button
                                     type="button"
                                     disabled
                                     className="max-w-[14rem] cursor-not-allowed rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-left text-xs font-medium text-amber-900"
                                   >
                                     Aguardando recebimento do cliente
+                                  </button>
+                                ) : bloqueadoContrato ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="max-w-[16rem] cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-left text-xs font-medium text-slate-700"
+                                  >
+                                    Pagamento bloqueado: contrato ainda não assinado.
                                   </button>
                                 ) : (
                                   <button
@@ -3586,7 +3506,7 @@ function App({ authUser, onLogout = () => {} }) {
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Despesas da agência</h3>
+                <h3 className="text-base font-semibold text-slate-800">Despesas da empresa</h3>
                 <p className="mt-1 text-sm text-slate-500">
                   Lista filtrada. Novo lançamento pelo botão <strong>Registrar despesa</strong>.
                 </p>
