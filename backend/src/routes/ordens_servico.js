@@ -182,6 +182,7 @@ router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) 
       assinatura_link: sent.assinatura_link || generated.assinatura_link,
       preview_link: sent.preview_link || null,
       pdf_link: sent.pdf_link || null,
+      smtp_message_id: sent.smtp_message_id || null,
     });
   } catch (e) {
     if (

@@ -151,7 +151,7 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
       throw cfgErr;
     }
 
-    await sendContratoEmail({
+    const smtpResult = await sendContratoEmail({
       to,
       subject,
       html,
@@ -166,9 +166,25 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
       INSERT INTO os_historico (os_id, usuario, campo, valor_anterior, valor_novo)
       VALUES ($1, $2, $3, $4, $5)
       `,
-      [osId, 'sistema', 'contrato_email_envio', '', JSON.stringify({ destinatario: to, status: 'enviado' })],
+      [
+        osId,
+        'sistema',
+        'contrato_email_envio',
+        '',
+        JSON.stringify({
+          destinatario: to,
+          status: 'enviado',
+          smtp_message_id: smtpResult?.messageId || null,
+        }),
+      ],
     );
-    return { ok: true, assinatura_link: link, preview_link: previewLink, pdf_link: pdfLink };
+    return {
+      ok: true,
+      assinatura_link: link,
+      preview_link: previewLink,
+      pdf_link: pdfLink,
+      smtp_message_id: smtpResult?.messageId || null,
+    };
   } catch (error) {
     const errPayload = {
       destinatario: to,

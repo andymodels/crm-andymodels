@@ -13,6 +13,9 @@ function classifySmtpError(error) {
   return 'envio';
 }
 
+/** Mesmo default que `contratoWorkflow.appBaseUrl` e rotas públicas — evita exigir env no Render. */
+const DEFAULT_PUBLIC_APP_URL = 'https://crm-andymodels.onrender.com';
+
 function validateContratoEmailEnv() {
   const missing = [];
   const invalid = [];
@@ -20,7 +23,8 @@ function validateContratoEmailEnv() {
   const user = String(process.env.SMTP_USER || '').trim();
   const pass = String(process.env.SMTP_PASS || '').trim();
   const mailFrom = String(process.env.MAIL_FROM || '').trim();
-  const appUrl = String(process.env.PUBLIC_APP_URL || '').trim();
+  const appUrlRaw = String(process.env.PUBLIC_APP_URL || '').trim();
+  const appUrl = appUrlRaw || DEFAULT_PUBLIC_APP_URL;
   const portRaw = String(process.env.SMTP_PORT || '').trim();
   const secureRaw = String(process.env.SMTP_SECURE || '').trim().toLowerCase();
 
@@ -28,8 +32,9 @@ function validateContratoEmailEnv() {
   if (!portRaw) missing.push('SMTP_PORT');
   if (!user) missing.push('SMTP_USER');
   if (!pass) missing.push('SMTP_PASS');
-  if (!mailFrom) missing.push('MAIL_FROM');
-  if (!appUrl) missing.push('PUBLIC_APP_URL');
+  const remetente = mailFrom || user;
+  if (!remetente) missing.push('MAIL_FROM ou SMTP_USER (remetente)');
+  else if (!isValidEmail(remetente)) invalid.push('MAIL_FROM / SMTP_USER (remetente inválido)');
 
   const port = Number(portRaw || 0);
   if (portRaw && (!Number.isFinite(port) || port <= 0)) invalid.push('SMTP_PORT (deve ser número válido)');
@@ -43,14 +48,11 @@ function validateContratoEmailEnv() {
     if (port === 587 && secureRaw === 'true') invalid.push('SMTP_SECURE (porta 587 recomenda secure=false)');
   }
 
-  if (mailFrom && !isValidEmail(mailFrom)) invalid.push('MAIL_FROM (e-mail inválido)');
-  if (appUrl) {
-    try {
-      const u = new URL(appUrl);
-      if (!/^https?:$/.test(u.protocol)) invalid.push('PUBLIC_APP_URL (use http(s)://...)');
-    } catch {
-      invalid.push('PUBLIC_APP_URL (URL inválida)');
-    }
+  try {
+    const u = new URL(appUrl);
+    if (!/^https?:$/.test(u.protocol)) invalid.push('PUBLIC_APP_URL (use http(s)://...)');
+  } catch {
+    if (appUrlRaw) invalid.push('PUBLIC_APP_URL (URL inválida)');
   }
 
   return { missing, invalid };
@@ -97,13 +99,18 @@ async function sendContratoEmail({ to, subject, html, attachments }) {
   }
   const from = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@localhost';
   try {
-    await transport.sendMail({
+    const info = await transport.sendMail({
       from,
       to,
       subject,
       html,
       attachments: Array.isArray(attachments) ? attachments : undefined,
     });
+    const messageId = info?.messageId || info?.response || null;
+    if (messageId) {
+      console.info('[smtp] enviado', { to, messageId: String(messageId).slice(0, 200) });
+    }
+    return { messageId: messageId ? String(messageId) : null, accepted: info?.accepted, rejected: info?.rejected };
   } catch (error) {
     const tipo = classifySmtpError(error);
     const err = new Error(`Falha SMTP (${tipo}): ${error?.message || 'erro desconhecido'}`);

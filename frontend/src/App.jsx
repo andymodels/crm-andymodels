@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './components/DynamicTextListField';
 import OperacaoCalendar from './components/OperacaoCalendar';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
@@ -676,15 +676,6 @@ function App({ authUser, onLogout = () => {} }) {
   const [finOsOptions, setFinOsOptions] = useState([]);
   const [finLoading, setFinLoading] = useState(false);
   const [finError, setFinError] = useState('');
-  const [finForm, setFinForm] = useState({
-    os_id: '',
-    valor: '',
-    data_recebimento: '',
-    observacao: '',
-  });
-  /** Contexto da O.S. selecionada no recebimento (espelha o job, sem redigitar total). */
-  const [finOsContexto, setFinOsContexto] = useState(null);
-
   const [finDespesas, setFinDespesas] = useState([]);
   const [finDespesaFiltroDe, setFinDespesaFiltroDe] = useState('');
   const [finDespesaFiltroAte, setFinDespesaFiltroAte] = useState('');
@@ -697,17 +688,25 @@ function App({ authUser, onLogout = () => {} }) {
     categoria: 'operacional',
     os_id: '',
   });
+  /** Modais de ação no Financeiro (sem alterar cálculos). */
+  const [finModal, setFinModal] = useState(null);
+  const [finReceberOsId, setFinReceberOsId] = useState(null);
+  const [finReceberDraft, setFinReceberDraft] = useState({
+    valor: '',
+    data_recebimento: '',
+    observacao: '',
+  });
+  const [finPagarLinha, setFinPagarLinha] = useState(null);
+  const [finPagarDraft, setFinPagarDraft] = useState({
+    valor: '',
+    data_pagamento: '',
+    observacao: '',
+  });
 
   const [extratoRows, setExtratoRows] = useState([]);
   const [extratoLoading, setExtratoLoading] = useState(false);
   const [extratoError, setExtratoError] = useState('');
   const [extratoModeloFilter, setExtratoModeloFilter] = useState('');
-  const [pagamentoForm, setPagamentoForm] = useState({
-    os_modelo_id: '',
-    valor: '',
-    data_pagamento: '',
-    observacao: '',
-  });
 
   const current = useMemo(() => cadastroConfig[tab], [tab]);
   const tabEntries = useMemo(() => Object.entries(cadastroConfig), []);
@@ -745,6 +744,15 @@ function App({ authUser, onLogout = () => {} }) {
     [alertasOperacionais],
   );
 
+  /** O.S. com saldo a receber do cliente — bloqueia pagar modelo na mesma O.S. */
+  const osIdsComSaldoCliente = useMemo(() => {
+    const s = new Set();
+    for (const row of alertasOperacionais?.contas_receber ?? []) {
+      if (Number(row.saldo) > 0.005) s.add(Number(row.os_id));
+    }
+    return s;
+  }, [alertasOperacionais]);
+
   useEffect(() => {
     setForm(cadastroConfig[tab].form);
     setEditingId(null);
@@ -766,6 +774,41 @@ function App({ authUser, onLogout = () => {} }) {
       /* ignore */
     }
   };
+
+  const loadFinanceiroPage = useCallback(async (opts = {}) => {
+    const quiet = opts.quiet === true;
+    if (!quiet) setFinLoading(true);
+    setFinError('');
+    try {
+      const despParams = new URLSearchParams();
+      if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
+      if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
+      if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
+      if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
+      const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
+      const [r1, r2, r3, r4] = await Promise.all([
+        fetch(`${API_BASE}/financeiro/resumo`),
+        fetch(`${API_BASE}/financeiro/recebimentos`),
+        fetch(`${API_BASE}/ordens-servico`),
+        fetch(`${API_BASE}/financeiro/despesas${despQ}`),
+      ]);
+      if (!r1.ok || !r2.ok || !r3.ok || !r4.ok) throw new Error();
+      setFinResumo(await r1.json());
+      setFinRecebimentos(await r2.json());
+      setFinOsOptions(await r3.json());
+      setFinDespesas(await r4.json());
+      await refreshAlertasOperacionais();
+    } catch {
+      setFinError(LOAD_ERROR_MESSAGE);
+    } finally {
+      if (!quiet) setFinLoading(false);
+    }
+  }, [
+    finDespesaFiltroDe,
+    finDespesaFiltroAte,
+    finDespesaFiltroCategoria,
+    finDespesaFiltroOsId,
+  ]);
 
   useEffect(() => {
     const checkApi = async () => {
@@ -818,35 +861,30 @@ function App({ authUser, onLogout = () => {} }) {
   }, [module]);
 
   useEffect(() => {
-    if (!finForm.os_id) {
-      setFinOsContexto(null);
-      return;
-    }
+    if (!finReceberOsId || finModal !== 'receber') return;
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await fetch(`${API_BASE}/financeiro/os/${finForm.os_id}/contexto`);
+        const r = await fetch(`${API_BASE}/financeiro/os/${finReceberOsId}/contexto`);
         if (!r.ok) {
-          if (!cancelled) setFinOsContexto(null);
           return;
         }
         const c = await r.json();
         if (cancelled) return;
-        setFinOsContexto(c);
-        setFinForm((prev) => ({
+        setFinReceberDraft((prev) => ({
           ...prev,
           valor:
-            c.saldo_receber > 0.005 ? String(Number(c.saldo_receber).toFixed(2)) : '',
+            c.saldo_receber > 0.005 ? String(Number(c.saldo_receber).toFixed(2)) : prev.valor,
         }));
       } catch {
-        if (!cancelled) setFinOsContexto(null);
+        /* ignore */
       }
     };
     load();
     return () => {
       cancelled = true;
     };
-  }, [finForm.os_id]);
+  }, [finReceberOsId, finModal]);
 
   useEffect(() => {
     if (module !== 'cadastros') return;
@@ -1034,42 +1072,8 @@ function App({ authUser, onLogout = () => {} }) {
 
   useEffect(() => {
     if (module !== 'financeiro') return;
-    const load = async () => {
-      setFinLoading(true);
-      setFinError('');
-      try {
-        const despParams = new URLSearchParams();
-        if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
-        if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
-        if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
-        if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
-        const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
-
-        const [r1, r2, r3, r4] = await Promise.all([
-          fetch(`${API_BASE}/financeiro/resumo`),
-          fetch(`${API_BASE}/financeiro/recebimentos`),
-          fetch(`${API_BASE}/ordens-servico`),
-          fetch(`${API_BASE}/financeiro/despesas${despQ}`),
-        ]);
-        if (!r1.ok || !r2.ok || !r3.ok || !r4.ok) throw new Error();
-        setFinResumo(await r1.json());
-        setFinRecebimentos(await r2.json());
-        setFinOsOptions(await r3.json());
-        setFinDespesas(await r4.json());
-      } catch {
-        setFinError(LOAD_ERROR_MESSAGE);
-      } finally {
-        setFinLoading(false);
-      }
-    };
-    load();
-  }, [
-    module,
-    finDespesaFiltroDe,
-    finDespesaFiltroAte,
-    finDespesaFiltroCategoria,
-    finDespesaFiltroOsId,
-  ]);
+    loadFinanceiroPage();
+  }, [module, loadFinanceiroPage]);
 
   useEffect(() => {
     if (module !== 'extrato') return;
@@ -1216,7 +1220,10 @@ function App({ authUser, onLogout = () => {} }) {
       const data = await r.json();
       if (!r.ok) throw new Error(data.message || 'Erro ao enviar.');
       if (data?.contrato_enviado) {
-        setContratoEmailMsg('Enviado com sucesso.');
+        const ref = data.smtp_message_id ? ` Ref.: ${String(data.smtp_message_id).slice(0, 120)}` : '';
+        setContratoEmailMsg(
+          `Enviado com sucesso.${ref} Se não chegar: pasta spam; na Brevo, Transacional → Logs para ver entrega.`,
+        );
       } else {
         setContratoEmailMsg(
           data?.message || 'Erro ao enviar e-mail: verifique configuração SMTP. Use o link manual abaixo.',
@@ -1256,33 +1263,24 @@ function App({ authUser, onLogout = () => {} }) {
     }
   };
 
-  const saveRecebimento = async (event) => {
-    event.preventDefault();
+  const registrarRecebimento = async ({ os_id, valor, data_recebimento, observacao }) => {
     setFinError('');
     try {
       const res = await fetch(`${API_BASE}/financeiro/recebimentos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          os_id: Number(finForm.os_id),
-          valor: Number(finForm.valor),
-          data_recebimento: finForm.data_recebimento,
-          observacao: finForm.observacao,
+          os_id: Number(os_id),
+          valor: Number(valor),
+          data_recebimento,
+          observacao: observacao || '',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erro ao salvar.');
-      setFinForm({ os_id: '', valor: '', data_recebimento: '', observacao: '' });
-      setFinOsContexto(null);
-      const [r1, r2, r3] = await Promise.all([
-        fetch(`${API_BASE}/financeiro/resumo`),
-        fetch(`${API_BASE}/financeiro/recebimentos`),
-        fetch(`${API_BASE}/ordens-servico`),
-      ]);
-      if (r1.ok) setFinResumo(await r1.json());
-      if (r2.ok) setFinRecebimentos(await r2.json());
-      if (r3.ok) setFinOsOptions(await r3.json());
-      await refreshAlertasOperacionais();
+      setFinReceberOsId(null);
+      setFinModal(null);
+      await loadFinanceiroPage({ quiet: true });
     } catch (e) {
       setFinError(e.message || LOAD_ERROR_MESSAGE);
     }
@@ -1312,19 +1310,8 @@ function App({ authUser, onLogout = () => {} }) {
         categoria: 'operacional',
         os_id: '',
       });
-      const despParams = new URLSearchParams();
-      if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
-      if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
-      if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
-      if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
-      const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
-      const [r1, r4] = await Promise.all([
-        fetch(`${API_BASE}/financeiro/resumo`),
-        fetch(`${API_BASE}/financeiro/despesas${despQ}`),
-      ]);
-      if (r1.ok) setFinResumo(await r1.json());
-      if (r4.ok) setFinDespesas(await r4.json());
-      await refreshAlertasOperacionais();
+      setFinModal(null);
+      await loadFinanceiroPage({ quiet: true });
     } catch (e) {
       setFinError(e.message || LOAD_ERROR_MESSAGE);
     }
@@ -1337,40 +1324,30 @@ function App({ authUser, onLogout = () => {} }) {
       const res = await fetch(`${API_BASE}/financeiro/despesas/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erro ao excluir.');
-      const despParams = new URLSearchParams();
-      if (finDespesaFiltroDe) despParams.set('data_de', finDespesaFiltroDe);
-      if (finDespesaFiltroAte) despParams.set('data_ate', finDespesaFiltroAte);
-      if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
-      if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
-      const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
-      const [r1, r4] = await Promise.all([
-        fetch(`${API_BASE}/financeiro/resumo`),
-        fetch(`${API_BASE}/financeiro/despesas${despQ}`),
-      ]);
-      if (r1.ok) setFinResumo(await r1.json());
-      if (r4.ok) setFinDespesas(await r4.json());
+      await loadFinanceiroPage({ quiet: true });
     } catch (e) {
       setFinError(e.message || LOAD_ERROR_MESSAGE);
     }
   };
 
-  const savePagamentoModelo = async (event) => {
-    event.preventDefault();
+  const submitPagamentoModelo = async ({ os_modelo_id, valor, data_pagamento, observacao }) => {
     setExtratoError('');
+    setFinError('');
     try {
       const res = await fetch(`${API_BASE}/financeiro/pagamentos-modelo`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          os_modelo_id: Number(pagamentoForm.os_modelo_id),
-          valor: Number(pagamentoForm.valor),
-          data_pagamento: pagamentoForm.data_pagamento,
-          observacao: pagamentoForm.observacao,
+          os_modelo_id: Number(os_modelo_id),
+          valor: Number(valor),
+          data_pagamento,
+          observacao: observacao || '',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erro ao salvar.');
-      setPagamentoForm({ os_modelo_id: '', valor: '', data_pagamento: '', observacao: '' });
+      setFinPagarLinha(null);
+      setFinModal(null);
       const exRes = await fetch(
         extratoModeloFilter
           ? `${API_BASE}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
@@ -1378,8 +1355,10 @@ function App({ authUser, onLogout = () => {} }) {
       );
       if (exRes.ok) setExtratoRows(await exRes.json());
       await refreshAlertasOperacionais();
+      await loadFinanceiroPage({ quiet: true });
     } catch (e) {
       setExtratoError(e.message || LOAD_ERROR_MESSAGE);
+      setFinError(e.message || LOAD_ERROR_MESSAGE);
     }
   };
 
@@ -2584,6 +2563,7 @@ function App({ authUser, onLogout = () => {} }) {
                             ? 'Extrato modelo'
                             : 'Jobs / O.S.'}
                 </h2>
+                {module !== 'financeiro' ? (
                 <p className="text-sm text-slate-500">
                   {module === 'cadastros'
                     ? cadastrosSubView === 'entrada'
@@ -2601,12 +2581,11 @@ function App({ authUser, onLogout = () => {} }) {
                           ? 'Central de contratos por O.S.: status, visualização e reenvio para assinatura.'
                         : module === 'seguranca'
                           ? 'Altere sua senha de administrador em uma tela dedicada.'
-                        : module === 'financeiro'
-                          ? 'Recebimentos do cliente por O.S. e resumo (vínculo ao número da O.S.).'
                           : module === 'extrato'
                             ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
                             : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
                 </p>
+                ) : null}
               </div>
               <span
                 className="rounded-full px-3 py-1 text-xs font-semibold text-white"
@@ -2641,7 +2620,7 @@ function App({ authUser, onLogout = () => {} }) {
                           : `${osList.length} O.S.`}
               </span>
             </div>
-            {module !== 'orcamentos' && module !== 'jobs' && (
+            {module !== 'orcamentos' && module !== 'jobs' && module !== 'financeiro' && (
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Modulo atual</p>
@@ -2882,11 +2861,22 @@ function App({ authUser, onLogout = () => {} }) {
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Contas a receber (cliente)</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Saldo em aberto por O.S. (total_cliente − recebimentos). Ir a <strong>Financeiro</strong> para
-                  confirmar entrada.
-                </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-800">Contas a receber (cliente)</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Saldo em aberto por O.S. O registro de entrada é feito no módulo <strong>Financeiro</strong>.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={() => setModule('financeiro')}
+                  >
+                    Ir para Financeiro
+                  </button>
+                </div>
                 {!alertasOperacionais?.contas_receber?.length ? (
                   <p className="mt-4 text-sm text-slate-600">Nenhuma O.S. com saldo a receber.</p>
                 ) : (
@@ -2900,7 +2890,6 @@ function App({ authUser, onLogout = () => {} }) {
                           <th className="px-2 py-2">Recebido</th>
                           <th className="px-2 py-2">Saldo</th>
                           <th className="px-2 py-2">Status</th>
-                          <th className="px-2 py-2">Ação</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2912,13 +2901,608 @@ function App({ authUser, onLogout = () => {} }) {
                             <td className="px-2 py-2">{formatBRL(row.recebido)}</td>
                             <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
                             <td className="px-2 py-2">{row.status}</td>
-                            <td className="px-2 py-2">
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-800">Pagamentos a modelos (pendências)</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {alertasOperacionais?.meta?.nota_prazos ||
+                        'Linhas com saldo em aberto (líquido da O.S. − pagamentos registrados).'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={() => setModule('financeiro')}
+                  >
+                    Ir para Financeiro
+                  </button>
+                </div>
+                {!alertasOperacionais?.pagamentos_modelo_pendentes?.length ? (
+                  <p className="mt-4 text-sm text-slate-600">Nenhuma linha com saldo pendente.</p>
+                ) : (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-2 py-2">Job</th>
+                          <th className="px-2 py-2">Modelo</th>
+                          <th className="px-2 py-2">Cliente</th>
+                          <th className="px-2 py-2">Líquido</th>
+                          <th className="px-2 py-2">Pago</th>
+                          <th className="px-2 py-2">Saldo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => (
+                          <tr key={row.os_modelo_id} className="border-b border-slate-100">
+                            <td className="px-2 py-2">#{row.job_id}</td>
+                            <td className="px-2 py-2">{row.modelo_nome}</td>
+                            <td className="px-2 py-2">{row.cliente}</td>
+                            <td className="px-2 py-2">{formatBRL(row.liquido)}</td>
+                            <td className="px-2 py-2">{formatBRL(row.pago)}</td>
+                            <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+
+          {module === 'financeiro' && (
+            <>
+              {finModal ? (
+                <div
+                  className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+                  onClick={() => {
+                    setFinModal(null);
+                    setFinReceberOsId(null);
+                    setFinPagarLinha(null);
+                  }}
+                  role="presentation"
+                >
+                  <div
+                    className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                  >
+                    {finModal === 'receber' && (
+                      <div>
+                        <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                          <h3 className="text-lg font-semibold text-slate-900">Receber cliente</h3>
+                          <button
+                            type="button"
+                            className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100"
+                            onClick={() => {
+                              setFinModal(null);
+                              setFinReceberOsId(null);
+                            }}
+                          >
+                            Fechar
+                          </button>
+                        </div>
+                        {!finReceberOsId ? (
+                          <div className="mt-4">
+                            {!alertasOperacionais?.contas_receber?.length ? (
+                              <p className="text-sm text-slate-600">Nenhuma O.S. com saldo a receber.</p>
+                            ) : (
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full text-sm">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                                      <th className="px-2 py-2">O.S.</th>
+                                      <th className="px-2 py-2">Cliente</th>
+                                      <th className="px-2 py-2">Saldo</th>
+                                      <th className="px-2 py-2" />
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {alertasOperacionais.contas_receber.map((row) => (
+                                      <tr key={row.os_id} className="border-b border-slate-100">
+                                        <td className="px-2 py-2 font-medium">#{row.os_id}</td>
+                                        <td className="px-2 py-2">{row.cliente}</td>
+                                        <td className="px-2 py-2">{formatBRL(row.saldo)}</td>
+                                        <td className="px-2 py-2 text-right">
+                                          <button
+                                            type="button"
+                                            className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                            style={{ backgroundColor: BRAND_ORANGE }}
+                                            onClick={() => {
+                                              setFinReceberOsId(row.os_id);
+                                              setFinReceberDraft({
+                                                valor:
+                                                  Number(row.saldo) > 0
+                                                    ? String(Number(row.saldo).toFixed(2))
+                                                    : '',
+                                                data_recebimento: new Date().toISOString().slice(0, 10),
+                                                observacao: '',
+                                              });
+                                            }}
+                                          >
+                                            Receber
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <form
+                            className="mt-4 space-y-4"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              registrarRecebimento({
+                                os_id: finReceberOsId,
+                                valor: finReceberDraft.valor,
+                                data_recebimento: finReceberDraft.data_recebimento,
+                                observacao: finReceberDraft.observacao,
+                              });
+                            }}
+                          >
+                            <p className="text-sm text-slate-700">
+                              O.S. <strong>#{finReceberOsId}</strong>
+                            </p>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Valor (R$)</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={finReceberDraft.valor}
+                                onChange={(e) =>
+                                  setFinReceberDraft((p) => ({ ...p, valor: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                required
+                              />
+                            </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Data</span>
+                              <input
+                                type="date"
+                                autoComplete="off"
+                                value={toDateInputValue(finReceberDraft.data_recebimento)}
+                                onChange={(e) =>
+                                  setFinReceberDraft((p) => ({ ...p, data_recebimento: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                required
+                              />
+                            </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Observação</span>
+                              <input
+                                value={finReceberDraft.observacao}
+                                onChange={(e) =>
+                                  setFinReceberDraft((p) => ({ ...p, observacao: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                                onClick={() => setFinReceberOsId(null)}
+                              >
+                                Voltar
+                              </button>
+                              <button
+                                type="submit"
+                                className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                                style={{ backgroundColor: BRAND_ORANGE }}
+                              >
+                                Confirmar recebimento
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    )}
+
+                    {finModal === 'pagar' && (
+                      <div>
+                        <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                          <h3 className="text-lg font-semibold text-slate-900">Pagar modelos</h3>
+                          <button
+                            type="button"
+                            className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100"
+                            onClick={() => {
+                              setFinModal(null);
+                              setFinPagarLinha(null);
+                            }}
+                          >
+                            Fechar
+                          </button>
+                        </div>
+                        {!finPagarLinha ? (
+                          <div className="mt-4">
+                            {!alertasOperacionais?.pagamentos_modelo_pendentes?.length ? (
+                              <p className="text-sm text-slate-600">Nenhuma linha com saldo pendente.</p>
+                            ) : (
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full text-sm">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 text-left text-slate-500">
+                                      <th className="px-2 py-2">O.S.</th>
+                                      <th className="px-2 py-2">Modelo</th>
+                                      <th className="px-2 py-2">Saldo</th>
+                                      <th className="px-2 py-2" />
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => {
+                                      const bloqueado = osIdsComSaldoCliente.has(Number(row.job_id));
+                                      return (
+                                        <tr key={row.os_modelo_id} className="border-b border-slate-100">
+                                          <td className="px-2 py-2">#{row.job_id}</td>
+                                          <td className="px-2 py-2">{row.modelo_nome}</td>
+                                          <td className="px-2 py-2">{formatBRL(row.saldo)}</td>
+                                          <td className="px-2 py-2 text-right">
+                                            {bloqueado ? (
+                                              <button
+                                                type="button"
+                                                disabled
+                                                className="max-w-[14rem] cursor-not-allowed rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-left text-xs font-medium text-amber-900 disabled:opacity-100"
+                                              >
+                                                Aguardando recebimento do cliente
+                                              </button>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                                style={{ backgroundColor: BRAND_ORANGE }}
+                                                onClick={() => {
+                                                  setFinPagarLinha(row);
+                                                  setFinPagarDraft({
+                                                    valor:
+                                                      Number(row.saldo) > 0
+                                                        ? String(Number(row.saldo).toFixed(2))
+                                                        : '',
+                                                    data_pagamento: new Date().toISOString().slice(0, 10),
+                                                    observacao: '',
+                                                  });
+                                                }}
+                                              >
+                                                Pagar
+                                              </button>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <form
+                            className="mt-4 space-y-4"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              submitPagamentoModelo({
+                                os_modelo_id: finPagarLinha.os_modelo_id,
+                                valor: finPagarDraft.valor,
+                                data_pagamento: finPagarDraft.data_pagamento,
+                                observacao: finPagarDraft.observacao,
+                              });
+                            }}
+                          >
+                            <p className="text-sm text-slate-700">
+                              O.S. <strong>#{finPagarLinha.job_id}</strong> — {finPagarLinha.modelo_nome}
+                            </p>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Valor (R$)</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={finPagarDraft.valor}
+                                onChange={(e) =>
+                                  setFinPagarDraft((p) => ({ ...p, valor: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                required
+                              />
+                            </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Data</span>
+                              <input
+                                type="date"
+                                autoComplete="off"
+                                value={toDateInputValue(finPagarDraft.data_pagamento)}
+                                onChange={(e) =>
+                                  setFinPagarDraft((p) => ({ ...p, data_pagamento: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                required
+                              />
+                            </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Observação</span>
+                              <input
+                                value={finPagarDraft.observacao}
+                                onChange={(e) =>
+                                  setFinPagarDraft((p) => ({ ...p, observacao: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                                onClick={() => setFinPagarLinha(null)}
+                              >
+                                Voltar
+                              </button>
+                              <button
+                                type="submit"
+                                className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                                style={{ backgroundColor: BRAND_ORANGE }}
+                              >
+                                Confirmar pagamento
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    )}
+
+                    {finModal === 'despesa' && (
+                      <div>
+                        <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                          <h3 className="text-lg font-semibold text-slate-900">Registrar despesa</h3>
+                          <button
+                            type="button"
+                            className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100"
+                            onClick={() => setFinModal(null)}
+                          >
+                            Fechar
+                          </button>
+                        </div>
+                        <form className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2" onSubmit={saveDespesa}>
+                          <label className="block text-sm text-slate-600 sm:col-span-1">
+                            <span className="mb-1 block">Data</span>
+                            <input
+                              type="date"
+                              autoComplete="off"
+                              value={toDateInputValue(finDespesaForm.data_despesa)}
+                              onChange={(e) => setFinDespesaForm((p) => ({ ...p, data_despesa: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              required
+                            />
+                          </label>
+                          <label className="block text-sm text-slate-600 sm:col-span-2">
+                            <span className="mb-1 block">Descrição</span>
+                            <input
+                              value={finDespesaForm.descricao}
+                              onChange={(e) => setFinDespesaForm((p) => ({ ...p, descricao: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              required
+                            />
+                          </label>
+                          <label className="block text-sm text-slate-600">
+                            <span className="mb-1 block">Valor (R$)</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={finDespesaForm.valor}
+                              onChange={(e) => setFinDespesaForm((p) => ({ ...p, valor: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              required
+                            />
+                          </label>
+                          <label className="block text-sm text-slate-600">
+                            <span className="mb-1 block">Categoria</span>
+                            <select
+                              value={finDespesaForm.categoria}
+                              onChange={(e) => setFinDespesaForm((p) => ({ ...p, categoria: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              required
+                            >
+                              {DESPESA_CATEGORIAS.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block text-sm text-slate-600 sm:col-span-2">
+                            <span className="mb-1 block">O.S. (opcional)</span>
+                            <select
+                              value={finDespesaForm.os_id}
+                              onChange={(e) => setFinDespesaForm((p) => ({ ...p, os_id: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                            >
+                              <option value="">Nenhuma</option>
+                              {finOsOptions.map((os) => (
+                                <option key={os.id} value={String(os.id)}>
+                                  #{os.id} — {os.nome_empresa || os.nome_fantasia}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="sm:col-span-2">
+                            <button
+                              type="submit"
+                              className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                              style={{ backgroundColor: BRAND_ORANGE }}
+                            >
+                              Salvar despesa
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl px-4 py-5 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={() => {
+                      setFinModal('receber');
+                      setFinReceberOsId(null);
+                      setFinReceberDraft({
+                        valor: '',
+                        data_recebimento: new Date().toISOString().slice(0, 10),
+                        observacao: '',
+                      });
+                    }}
+                  >
+                    Receber cliente
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl px-4 py-5 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={() => {
+                      setFinModal('pagar');
+                      setFinPagarLinha(null);
+                      setFinPagarDraft({
+                        valor: '',
+                        data_pagamento: new Date().toISOString().slice(0, 10),
+                        observacao: '',
+                      });
+                    }}
+                  >
+                    Pagar modelos
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl px-4 py-5 text-center text-base font-semibold text-white shadow-md transition hover:opacity-95"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={() => {
+                      setFinModal('despesa');
+                      setFinDespesaForm({
+                        data_despesa: new Date().toISOString().slice(0, 10),
+                        descricao: '',
+                        valor: '',
+                        categoria: 'operacional',
+                        os_id: '',
+                      });
+                    }}
+                  >
+                    Registrar despesa
+                  </button>
+                </div>
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Resumo financeiro</h3>
+                {finLoading ? (
+                  <p className="mt-3 text-sm text-slate-500">Carregando...</p>
+                ) : finResumo ? (
+                  <div className="mt-4 space-y-6">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Valor realizado (caixa)</p>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Recebido total</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {formatBRL(finResumo.total_recebido_cliente)}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Pago modelos</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {formatBRL(finResumo.total_pago_modelos)}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Comissões</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {formatBRL(finResumo.total_comissoes_os ?? 0)}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Despesas</p>
+                          <p className="text-lg font-semibold text-slate-900">
+                            {formatBRL(finResumo.total_despesas ?? 0)}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 sm:col-span-2 lg:col-span-1">
+                          <p className="text-xs text-emerald-900">Resultado real (caixa)</p>
+                          <p className="text-lg font-semibold text-emerald-950">
+                            {formatBRL(finResumo.resultado_final ?? 0)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Valor previsto</p>
+                      <p className="mt-2 text-sm text-amber-950">
+                        Faturado em O.S. ainda não recebidas:{' '}
+                        <strong>{formatBRL(finResumo.total_faturado_os_abertas)}</strong>
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+                {finError && <p className="mt-3 text-sm text-red-600">{finError}</p>}
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Contas a receber</h3>
+                {!alertasOperacionais?.contas_receber?.length ? (
+                  <p className="mt-3 text-sm text-slate-600">Nenhuma O.S. com saldo a receber.</p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-2 py-2">O.S.</th>
+                          <th className="px-2 py-2">Cliente</th>
+                          <th className="px-2 py-2">Total</th>
+                          <th className="px-2 py-2">Recebido</th>
+                          <th className="px-2 py-2">Saldo</th>
+                          <th className="px-2 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alertasOperacionais.contas_receber.map((row) => (
+                          <tr key={row.os_id} className="border-b border-slate-100">
+                            <td className="px-2 py-2 font-medium">#{row.os_id}</td>
+                            <td className="px-2 py-2">{row.cliente}</td>
+                            <td className="px-2 py-2">{formatBRL(row.total_cliente)}</td>
+                            <td className="px-2 py-2">{formatBRL(row.recebido)}</td>
+                            <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
+                            <td className="px-2 py-2 text-right">
+                              <button
+                                type="button"
+                                className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                style={{ backgroundColor: BRAND_ORANGE }}
                                 onClick={() => {
-                                  setModule('financeiro');
-                                  setFinForm((p) => ({ ...p, os_id: String(row.os_id) }));
+                                  setFinModal('receber');
+                                  setFinReceberOsId(row.os_id);
+                                  setFinReceberDraft({
+                                    valor:
+                                      Number(row.saldo) > 0
+                                        ? String(Number(row.saldo).toFixed(2))
+                                        : '',
+                                    data_recebimento: new Date().toISOString().slice(0, 10),
+                                    observacao: '',
+                                  });
                                 }}
                               >
                                 Receber
@@ -2933,126 +3517,78 @@ function App({ authUser, onLogout = () => {} }) {
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Pagamentos a modelos (pendências)</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  {alertasOperacionais?.meta?.nota_prazos ||
-                    'Linhas com saldo em aberto (líquido da O.S. − pagamentos registrados).'}
-                </p>
+                <h3 className="text-base font-semibold text-slate-800">Pagamento de modelos</h3>
                 {!alertasOperacionais?.pagamentos_modelo_pendentes?.length ? (
-                  <p className="mt-4 text-sm text-slate-600">Nenhuma linha com saldo pendente.</p>
+                  <p className="mt-3 text-sm text-slate-600">Nenhuma linha com saldo pendente.</p>
                 ) : (
-                  <div className="mt-4 overflow-x-auto">
+                  <div className="mt-3 overflow-x-auto">
                     <table className="min-w-full text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2">Job</th>
+                          <th className="px-2 py-2">O.S.</th>
                           <th className="px-2 py-2">Modelo</th>
                           <th className="px-2 py-2">Cliente</th>
                           <th className="px-2 py-2">Líquido</th>
                           <th className="px-2 py-2">Pago</th>
                           <th className="px-2 py-2">Saldo</th>
-                          <th className="px-2 py-2">Ação</th>
+                          <th className="px-2 py-2" />
                         </tr>
                       </thead>
                       <tbody>
-                        {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => (
-                          <tr key={row.os_modelo_id} className="border-b border-slate-100">
-                            <td className="px-2 py-2">#{row.job_id}</td>
-                            <td className="px-2 py-2">{row.modelo_nome}</td>
-                            <td className="px-2 py-2">{row.cliente}</td>
-                            <td className="px-2 py-2">{formatBRL(row.liquido)}</td>
-                            <td className="px-2 py-2">{formatBRL(row.pago)}</td>
-                            <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
-                            <td className="px-2 py-2">
-                              <button
-                                type="button"
-                                className="rounded border border-slate-300 px-2 py-1 text-xs"
-                                onClick={() => {
-                                  setModule('extrato');
-                                  setPagamentoForm((p) => ({
-                                    ...p,
-                                    os_modelo_id: String(row.os_modelo_id),
-                                    valor: row.saldo > 0 ? String(Number(row.saldo).toFixed(2)) : '',
-                                  }));
-                                }}
-                              >
-                                Pagar no extrato
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {alertasOperacionais.pagamentos_modelo_pendentes.map((row) => {
+                          const bloqueado = osIdsComSaldoCliente.has(Number(row.job_id));
+                          return (
+                            <tr key={row.os_modelo_id} className="border-b border-slate-100">
+                              <td className="px-2 py-2">#{row.job_id}</td>
+                              <td className="px-2 py-2">{row.modelo_nome}</td>
+                              <td className="px-2 py-2">{row.cliente}</td>
+                              <td className="px-2 py-2">{formatBRL(row.liquido)}</td>
+                              <td className="px-2 py-2">{formatBRL(row.pago)}</td>
+                              <td className="px-2 py-2 font-medium text-amber-900">{formatBRL(row.saldo)}</td>
+                              <td className="px-2 py-2 text-right">
+                                {bloqueado ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="max-w-[14rem] cursor-not-allowed rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-left text-xs font-medium text-amber-900"
+                                  >
+                                    Aguardando recebimento do cliente
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                    style={{ backgroundColor: BRAND_ORANGE }}
+                                    onClick={() => {
+                                      setFinModal('pagar');
+                                      setFinPagarLinha(row);
+                                      setFinPagarDraft({
+                                        valor:
+                                          Number(row.saldo) > 0
+                                            ? String(Number(row.saldo).toFixed(2))
+                                            : '',
+                                        data_pagamento: new Date().toISOString().slice(0, 10),
+                                        observacao: '',
+                                      });
+                                    }}
+                                  >
+                                    Pagar
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
               </section>
-            </>
-          )}
-
-          {module === 'financeiro' && (
-            <>
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Resumo financeiro</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  <strong>Recebimentos</strong> só por aqui. <strong>Pagamentos a modelos</strong> e{' '}
-                  <strong>comissões</strong> vêm apenas dos dados gravados na O.S. (soma, sem recálculo).{' '}
-                  <strong>Despesas</strong> são só operacionais (impostos, operacional, outros), módulo separado — nunca
-                  cachê ou comissão manual.
-                </p>
-                {finLoading ? (
-                  <p className="mt-3 text-sm text-slate-500">Carregando...</p>
-                ) : finResumo ? (
-                  <>
-                    <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total recebido (cliente)</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.total_recebido_cliente)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total pago a modelos</p>
-                        <p className="text-lg font-semibold text-slate-900">{formatBRL(finResumo.total_pago_modelos)}</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total comissões (O.S.)</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(finResumo.total_comissoes_os ?? 0)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-slate-500">Σ parceiro + booker nos jobs</p>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">Total despesas (agência)</p>
-                        <p className="text-lg font-semibold text-slate-900">
-                          {formatBRL(finResumo.total_despesas ?? 0)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          Impostos, operacional, outros — lançamentos manuais
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                        <p className="text-xs text-emerald-900">Resultado final (caixa)</p>
-                        <p className="text-lg font-semibold text-emerald-950">
-                          {formatBRL(finResumo.resultado_final ?? 0)}
-                        </p>
-                        <p className="mt-1 text-[11px] text-emerald-900/90">
-                          Único saldo: recebido − modelos − comissões − despesas
-                        </p>
-                      </div>
-                    </div>
-                    <p className="mt-3 text-xs text-slate-600">
-                      Faturado em O.S. ainda não recebidas:{' '}
-                      <strong>{formatBRL(finResumo.total_faturado_os_abertas)}</strong>
-                    </p>
-                  </>
-                ) : null}
-                {finError && <p className="mt-3 text-sm text-red-600">{finError}</p>}
-              </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <h3 className="text-base font-semibold text-slate-800">Despesas da agência</h3>
                 <p className="mt-1 text-sm text-slate-500">
-                  Apenas <strong>impostos</strong>, <strong>operacional</strong> e <strong>outros</strong> — não use para
-                  cachê de modelo nem comissões (isso só na O.S.). Vínculo opcional a um job é só referência. Filtros:
-                  período, categoria, O.S.
+                  Lista filtrada. Novo lançamento pelo botão <strong>Registrar despesa</strong>.
                 </p>
 
                 <div className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
@@ -3120,81 +3656,7 @@ function App({ authUser, onLogout = () => {} }) {
                   </button>
                 </div>
 
-                <form className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6" onSubmit={saveDespesa}>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Data</span>
-                    <input
-                      type="date"
-                      autoComplete="off"
-                      value={toDateInputValue(finDespesaForm.data_despesa)}
-                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, data_despesa: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2">
-                    <span className="mb-1 block">Descrição</span>
-                    <input
-                      value={finDespesaForm.descricao}
-                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, descricao: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Valor (R$)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      value={finDespesaForm.valor}
-                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, valor: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Categoria</span>
-                    <select
-                      value={finDespesaForm.categoria}
-                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, categoria: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    >
-                      {DESPESA_CATEGORIAS.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">O.S. (opcional)</span>
-                    <select
-                      value={finDespesaForm.os_id}
-                      onChange={(e) => setFinDespesaForm((p) => ({ ...p, os_id: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    >
-                      <option value="">Nenhuma</option>
-                      {finOsOptions.map((os) => (
-                        <option key={os.id} value={String(os.id)}>
-                          #{os.id} — {os.nome_empresa || os.nome_fantasia}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="flex items-end lg:col-span-6">
-                    <button
-                      type="submit"
-                      className="rounded-xl px-4 py-2 text-sm font-medium text-white"
-                      style={{ backgroundColor: BRAND_ORANGE }}
-                    >
-                      Registrar despesa
-                    </button>
-                  </div>
-                </form>
-
-                <h4 className="mt-8 text-sm font-semibold text-slate-800">Lista (filtrada)</h4>
+                <h4 className="mt-6 text-sm font-semibold text-slate-800">Lista (filtrada)</h4>
                 {finLoading ? (
                   <p className="mt-2 text-sm text-slate-500">Carregando...</p>
                 ) : (
@@ -3243,95 +3705,6 @@ function App({ authUser, onLogout = () => {} }) {
                     </table>
                   </div>
                 )}
-              </section>
-
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Recebimentos (cliente)</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Ao registrar um recebimento, a O.S. passa para <strong>finalizada</strong> e deixa de aceitar novos lançamentos neste fluxo. O valor vem do <strong>total_cliente</strong> da O.S.; você só confirma o montante
-                  (saldo em aberto é preenchido automaticamente).
-                </p>
-                {finOsContexto && (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                    <span className="font-medium">O.S. #{finOsContexto.os_id}</span> — Total cliente{' '}
-                    <strong>{formatBRL(finOsContexto.total_cliente)}</strong>, já recebido{' '}
-                    <strong>{formatBRL(finOsContexto.recebido)}</strong>, saldo{' '}
-                    <strong className="text-amber-900">{formatBRL(finOsContexto.saldo_receber)}</strong>.
-                    <button
-                      type="button"
-                      className="ml-2 text-xs font-medium text-amber-800 underline"
-                      onClick={() =>
-                        setFinForm((p) => ({
-                          ...p,
-                          valor:
-                            finOsContexto.saldo_receber > 0
-                              ? String(Number(finOsContexto.saldo_receber).toFixed(2))
-                              : p.valor,
-                        }))
-                      }
-                    >
-                      Repor saldo no campo
-                    </button>
-                  </div>
-                )}
-                <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4" onSubmit={saveRecebimento}>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">O.S.</span>
-                    <select
-                      value={finForm.os_id}
-                      onChange={(e) => setFinForm((p) => ({ ...p, os_id: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    >
-                      <option value="">Selecione</option>
-                      {finOsOptions.map((os) => (
-                        <option key={os.id} value={os.id}>
-                          #{os.id} — {os.nome_empresa || os.nome_fantasia}
-                          {os.status === 'finalizada' || os.status === 'recebida' ? ' (finalizada)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Valor (máx. = saldo em aberto)</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={finForm.valor}
-                      onChange={(e) => setFinForm((p) => ({ ...p, valor: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Data</span>
-                    <input
-                      type="date"
-                      autoComplete="off"
-                      value={toDateInputValue(finForm.data_recebimento)}
-                      onChange={(e) => setFinForm((p) => ({ ...p, data_recebimento: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2 lg:col-span-1">
-                    <span className="mb-1 block">Obs.</span>
-                    <input
-                      value={finForm.observacao}
-                      onChange={(e) => setFinForm((p) => ({ ...p, observacao: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <div className="flex items-end">
-                    <button
-                      type="submit"
-                      className="rounded-xl px-4 py-2 text-sm font-medium text-white"
-                      style={{ backgroundColor: BRAND_ORANGE }}
-                    >
-                      Registrar recebimento
-                    </button>
-                  </div>
-                </form>
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -3448,71 +3821,9 @@ function App({ authUser, onLogout = () => {} }) {
                   </div>
                 )}
                 {extratoError && <p className="mt-3 text-sm text-red-600">{extratoError}</p>}
-              </section>
-
-              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="text-base font-semibold text-slate-800">Registrar pagamento ao modelo</h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  Use o <strong>id da linha</strong> (interno) mostrado na tabela acima — coluna implícita: cada linha tem
-                  os_modelo_id no backend; escolha o id correspondente à linha do Job × Modelo.
+                <p className="mt-4 text-sm text-slate-500">
+                  Pagamentos a modelos são registrados no módulo <strong>Financeiro</strong>.
                 </p>
-                <form className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5" onSubmit={savePagamentoModelo}>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">ID da linha (os_modelo_id)</span>
-                    <select
-                      value={pagamentoForm.os_modelo_id}
-                      onChange={(e) => setPagamentoForm((p) => ({ ...p, os_modelo_id: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    >
-                      <option value="">Selecione</option>
-                      {extratoRows.map((row) => (
-                        <option key={row.os_modelo_id} value={row.os_modelo_id}>
-                          #{row.job_id} — {row.modelo_nome} (saldo {formatBRL(row.saldo)})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Valor</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={pagamentoForm.valor}
-                      onChange={(e) => setPagamentoForm((p) => ({ ...p, valor: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600">
-                    <span className="mb-1 block">Data</span>
-                    <input
-                      type="date"
-                      autoComplete="off"
-                      value={toDateInputValue(pagamentoForm.data_pagamento)}
-                      onChange={(e) => setPagamentoForm((p) => ({ ...p, data_pagamento: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                      required
-                    />
-                  </label>
-                  <label className="text-sm text-slate-600 md:col-span-2 lg:col-span-1">
-                    <span className="mb-1 block">Obs.</span>
-                    <input
-                      value={pagamentoForm.observacao}
-                      onChange={(e) => setPagamentoForm((p) => ({ ...p, observacao: e.target.value }))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <div className="flex items-end">
-                    <button
-                      type="submit"
-                      className="rounded-xl px-4 py-2 text-sm font-medium text-white"
-                      style={{ backgroundColor: BRAND_ORANGE }}
-                    >
-                      Registrar pagamento
-                    </button>
-                  </div>
-                </form>
               </section>
             </>
           )}
