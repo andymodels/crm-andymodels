@@ -36,7 +36,7 @@ router.get('/public/agenda-presenca', async (req, res, next) => {
       [token],
     );
     if (r.rows.length === 0) {
-      return res.status(404).json({ message: 'Link inválido ou expirado.' });
+      return res.status(404).json({ message: 'Link inválido ou expirado. Peça um novo convite ao escritório.' });
     }
     const row = r.rows[0];
     res.json({
@@ -69,7 +69,9 @@ router.post('/public/agenda-presenca', async (req, res, next) => {
       `SELECT id, os_modelo_id, status FROM agenda_modelo_presenca WHERE token = $1`,
       [token],
     );
-    if (cur.rows.length === 0) return res.status(404).json({ message: 'Link inválido.' });
+    if (cur.rows.length === 0) {
+      return res.status(404).json({ message: 'Link inválido ou expirado. Peça um novo convite ao escritório.' });
+    }
     const pr = cur.rows[0];
     const novo = acao === 'confirmar' ? 'confirmado' : 'recusado';
     await pool.query(
@@ -108,7 +110,10 @@ router.post('/public/agenda-presenca', async (req, res, next) => {
       console.warn('[public/agenda-presenca] os_historico:', histErr?.message);
     }
     res.json({
-      message: acao === 'confirmar' ? 'Presença confirmada. Obrigado!' : 'Resposta registrada.',
+      message:
+        acao === 'confirmar'
+          ? 'Presença confirmada com sucesso.'
+          : 'Você informou que não poderá comparecer.',
       status: novo,
     });
   } catch (e) {

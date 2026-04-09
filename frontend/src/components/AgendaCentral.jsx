@@ -41,14 +41,14 @@ const MANUAL_TIPOS = [
 const statusLabel = (s) => {
   if (s === 'confirmado') return 'Confirmado';
   if (s === 'recusado') return 'Recusado';
-  if (s === 'enviado') return 'Enviado';
+  /** convite enviado ou ainda não enviado: ambos “pendente” de resposta do modelo */
+  if (s === 'enviado') return 'Pendente';
   return 'Pendente';
 };
 
 const statusBadge = (s) => {
   if (s === 'confirmado') return 'border-emerald-200 bg-emerald-50 text-emerald-900';
   if (s === 'recusado') return 'border-rose-200 bg-rose-50 text-rose-900';
-  if (s === 'enviado') return 'border-sky-200 bg-sky-50 text-sky-900';
   return 'border-amber-200 bg-amber-50 text-amber-900';
 };
 
@@ -230,9 +230,17 @@ export default function AgendaCentral({ apiBase }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event_id: eventId, presenca_id: presencaId }),
       });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || 'Falha ao enviar.');
-      setGlobalMsg(data.message || 'Enviado.');
+      let data = {};
+      try {
+        data = await r.json();
+      } catch {
+        throw new Error('Resposta inválida do servidor. Tente outra vez ou contacte o suporte.');
+      }
+      if (!r.ok) {
+        const code = data.error_code ? ` [${data.error_code}]` : '';
+        throw new Error((data.message || 'Falha ao enviar o e-mail.') + code);
+      }
+      setGlobalMsg(data.message || 'E-mail enviado ao modelo.');
       await loadList();
       if (detailById[eventId]) {
         const rd = await fetchWithTimeout(`${apiBase}/agenda/eventos/${eventId}`);

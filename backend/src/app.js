@@ -26,8 +26,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 /**
- * /crm -> CRM público (mesmo stack). Destino base: PUBLIC_APP_URL (ex.: https://www.andymodels.com)
- * ou, em falta, o host Render. Assim o redirect pode manter o domínio customizado.
+ * /crm -> CRM público (mesmo stack). Destino: PUBLIC_APP_URL (ex.: https://crm-andymodels.onrender.com).
  */
 const crmPublicBase = String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(
   /\/$/,

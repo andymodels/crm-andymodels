@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import './index.css'
 import App from './App.jsx'
 import PublicCadastroModelo from './PublicCadastroModelo.jsx'
@@ -10,6 +10,11 @@ import ModeloExtratoPortal from './ModeloExtratoPortal.jsx'
 import ContratoAssinaturaPublica from './ContratoAssinaturaPublica.jsx'
 import PublicAgendaConfirmacao from './PublicAgendaConfirmacao.jsx'
 
+function LegacyAgendaConfirmRedirect() {
+  const { search } = useLocation()
+  return <Navigate to={`/agenda/confirmar${search}`} replace />
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <BrowserRouter>
@@ -18,7 +23,8 @@ createRoot(document.getElementById('root')).render(
         <Route path="/cadastro-cliente" element={<PublicCadastroCliente />} />
         <Route path="/extrato-modelo" element={<ModeloExtratoPortal />} />
         <Route path="/assinatura-contrato" element={<ContratoAssinaturaPublica />} />
-        <Route path="/agenda-confirmar" element={<PublicAgendaConfirmacao />} />
+        <Route path="/agenda/confirmar" element={<PublicAgendaConfirmacao />} />
+        <Route path="/agenda-confirmar" element={<LegacyAgendaConfirmRedirect />} />
         <Route path="/*" element={<AuthGate>{({ user, onLogout }) => <App authUser={user} onLogout={onLogout} />}</AuthGate>} />
       </Routes>
     </BrowserRouter>

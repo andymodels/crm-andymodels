@@ -68,7 +68,18 @@ function montarMensagemModelo({
   return linhas.join('\n');
 }
 
-function montarEmailAgenda({ modeloNome, tipoTrabalho, dataStr, horario, local, mapUrl, obsExtras, confirmUrl }) {
+function montarEmailAgenda({
+  modeloNome,
+  tipoTrabalho,
+  dataStr,
+  horario,
+  local,
+  mapUrl,
+  obsExtras,
+  urlConfirmar,
+  urlRecusar,
+  urlPagina,
+}) {
   const obs = String(obsExtras || '').trim();
   return `
     <div style="font-family:Arial,sans-serif;line-height:1.45;color:#111;">
@@ -82,7 +93,9 @@ function montarEmailAgenda({ modeloNome, tipoTrabalho, dataStr, horario, local, 
         ${mapUrl ? `<li><strong>Mapa:</strong> <a href="${escapeHtml(mapUrl)}" target="_blank" rel="noreferrer">Abrir</a></li>` : ''}
       </ul>
       ${obs ? `<p><strong>Observações:</strong><br/>${escapeHtml(obs).replace(/\n/g, '<br/>')}</p>` : ''}
-      <p><a href="${escapeHtml(confirmUrl)}" target="_blank" rel="noreferrer"><strong>Confirmar presença / Não posso ir</strong></a></p>
+      <p><a href="${escapeHtml(urlConfirmar)}" target="_blank" rel="noreferrer"><strong>Confirmar presença</strong></a></p>
+      <p><a href="${escapeHtml(urlRecusar)}" target="_blank" rel="noreferrer"><strong>Não posso ir</strong></a></p>
+      <p style="color:#666;font-size:13px">Ou <a href="${escapeHtml(urlPagina)}" target="_blank" rel="noreferrer">abra esta página</a> para ver os detalhes e escolher.</p>
       <p style="color:#666;font-size:12px">Mensagem automática enviada pelo CRM Andy Models.</p>
     </div>
   `;
@@ -143,7 +156,12 @@ async function doSendModeloEmail({ eventId, presencaId }) {
   const horario = ev.horario_trabalho || '—';
   const local = ev.local_trabalho || '—';
   const mapUrl = String(ev.link_mapa || '').trim() || mapsSearchUrl(local);
-  const confirmUrl = `${publicBase()}/agenda-confirmar?token=${encodeURIComponent(ev.token)}`;
+  const newToken = crypto.randomBytes(24).toString('hex');
+  const base = publicBase();
+  const enc = encodeURIComponent(newToken);
+  const urlPagina = `${base}/agenda/confirmar?token=${enc}`;
+  const urlConfirmar = `${base}/agenda/confirmar?token=${enc}&acao=confirmar`;
+  const urlRecusar = `${base}/agenda/confirmar?token=${enc}&acao=recusar`;
   const subject = `Convocação de job - ${ev.cliente_nome || 'Andy Models'} - ${dataStr}`;
   const html = montarEmailAgenda({
     modeloNome: ev.modelo_nome,
@@ -153,7 +171,9 @@ async function doSendModeloEmail({ eventId, presencaId }) {
     local,
     mapUrl,
     obsExtras: ev.observacoes_extras,
-    confirmUrl,
+    urlConfirmar,
+    urlRecusar,
+    urlPagina,
   });
 
   const smtp = await sendContratoEmail({
@@ -165,10 +185,16 @@ async function doSendModeloEmail({ eventId, presencaId }) {
   await pool.query(
     `
     UPDATE agenda_modelo_presenca
-    SET enviado_em = NOW(), status = 'enviado'
+    SET
+      token = $2,
+      enviado_em = NOW(),
+      status = CASE
+        WHEN status IN ('confirmado', 'recusado') THEN status
+        ELSE 'enviado'
+      END
     WHERE id = $1
     `,
-    [presencaId],
+    [presencaId, newToken],
   );
   await pool.query(
     `
@@ -182,7 +208,8 @@ async function doSendModeloEmail({ eventId, presencaId }) {
     to: ev.modelo_email,
     modelo_nome: ev.modelo_nome,
     message_id: smtp?.messageId || null,
-    confirm_url: confirmUrl,
+    confirm_url: urlPagina,
+    links: { confirmar: urlConfirmar, recusar: urlRecusar, pagina: urlPagina },
   };
 }
 
@@ -486,7 +513,9 @@ router.delete('/agenda/eventos/:id', async (req, res, next) => {
   }
 });
 
-const publicBase = () => String(process.env.PUBLIC_APP_URL || 'http://localhost:5173').replace(/\/$/, '');
+/** Mesmo default que cadastroLinks / contratoEmail — produção Render sem depender de .env. */
+const DEFAULT_PUBLIC_APP_URL = 'https://crm-andymodels.onrender.com';
+const publicBase = () => String(process.env.PUBLIC_APP_URL || DEFAULT_PUBLIC_APP_URL).replace(/\/$/, '');
 
 /** POST /agenda/eventos/:id/presenca/:presencaId/enviar */
 router.post('/agenda/eventos/:id/presenca/:presencaId/enviar', async (req, res, next) => {
