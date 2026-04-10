@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits } from '../utils/brValidators';
+import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
 const emptyFormaRecebimento = () => ({
   tipo: 'PIX',
@@ -52,17 +53,11 @@ function createInitialForm() {
   };
 }
 
-/**
- * Igual ao site: `model.media` com itens → usar tal qual; senão `[cover_image, …images]`.
- * Sem alterar ordem nem estrutura dos objetos vindos em `media`.
- */
-function galleryItemsFromDetail(detail) {
+/** Apenas `model.media` da API, sem cover_image/images/concatenações. */
+function mediaArrayFromDetail(detail) {
   if (!detail || typeof detail !== 'object') return [];
   const m = detail.media;
-  if (Array.isArray(m) && m.length > 0) return m.slice();
-  const cover = detail.cover_image;
-  const images = Array.isArray(detail.images) ? detail.images : [];
-  return [cover, ...images];
+  return Array.isArray(m) ? m.slice() : [];
 }
 
 /** Alinhado ao site: URL de vídeo para embed / leitura (YouTube, Vimeo, resto inalterado). */
@@ -206,7 +201,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const fileInputId = `${useId()}-files`;
   const isEdit = mode === 'edit';
   const [form, setForm] = useState(createInitialForm);
-  /** Em edição: `media` da API ou fallback [cover_image, …images] — mesma ordem, objetos intocados. */
+  /** Em edição: cópia de `model.media` apenas — URLs tal como no backend. */
   const [apiMedia, setApiMedia] = useState([]);
   /** ID do modelo no site (GET /website/models/:slug) para PATCH .../admin/models/:id/media */
   const [websiteModelId, setWebsiteModelId] = useState(null);
@@ -260,7 +255,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         if (cancelled) return;
         const d = data && typeof data === 'object' ? data : null;
         setForm(mapDetailToForm(d));
-        setApiMedia(d ? galleryItemsFromDetail(d) : []);
+        setApiMedia(d ? mediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
         setWebsiteModelId(
           d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
@@ -403,7 +398,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         const d = data && typeof data === 'object' ? data : null;
         setForm(mapDetailToForm(d));
-        setApiMedia(d ? galleryItemsFromDetail(d) : []);
+        setApiMedia(d ? mediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
         setWebsiteModelId(
           d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
@@ -906,9 +901,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {isEdit ? (
               apiMedia.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  Sem galeria: <code className="rounded bg-slate-100 px-1">media</code> vazio e sem{' '}
-                  <code className="rounded bg-slate-100 px-1">cover_image</code> /{' '}
-                  <code className="rounded bg-slate-100 px-1">images</code>.
+                  Sem itens em <code className="rounded bg-slate-100 px-1">model.media</code> (resposta do site).
                 </p>
               ) : (
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
@@ -917,10 +910,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                     const isCover = index === 0;
                     const polaroidOn =
                       item && typeof item === 'object' && (item.polaroid === true || item.polaroid === 'true');
-                    const flatSrc =
-                      typeof item === 'string'
-                        ? String(item).trim()
-                        : String((item && item.thumb) || (item && item.url) || '').trim();
+                    const { primary: mediaPrimary } = mediaItemThumbOrUrl(item);
                     return (
                       <li
                         key={index}
@@ -940,9 +930,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                             : {})}
                         >
                           {isVideo ? (
-                            item && typeof item === 'object' && item.thumb ? (
-                              <img
-                                src={String(item.thumb)}
+                            mediaPrimary ? (
+                              <WebsiteMediaImg
+                                item={item}
                                 alt=""
                                 loading="lazy"
                                 draggable={false}
@@ -953,9 +943,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                                 Vídeo
                               </div>
                             )
-                          ) : flatSrc ? (
-                            <img
-                              src={flatSrc}
+                          ) : mediaPrimary ? (
+                            <WebsiteMediaImg
+                              item={item}
                               alt=""
                               loading="lazy"
                               draggable={false}

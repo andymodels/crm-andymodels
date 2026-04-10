@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { WebsiteMediaImg, firstMediaEntry } from './WebsiteMediaImage';
 
 /** Género para listagem: women / men; usa `category` e, se necessário, `categories`. */
 function websiteModelGender(m) {
@@ -146,10 +147,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
               {filteredRows.map((m, idx) => {
                 const name = m?.name != null ? String(m.name) : '—';
                 const slug = m?.slug != null ? String(m.slug).trim() : '';
-                const img =
-                  m?.cover_image != null && String(m.cover_image).trim() !== ''
-                    ? String(m.cover_image).trim()
-                    : null;
+                const cardMedia = firstMediaEntry(m);
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
                 const canOpen = Boolean(slug);
                 return (
@@ -160,13 +158,13 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                       onClick={() => canOpen && openEdit(slug)}
                       className={`w-full text-left ${canOpen ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-80'}`}
                     >
-                      <div className="aspect-[3/4] w-full overflow-hidden bg-slate-200">
-                        {img ? (
-                          <img
-                            src={img}
+                      <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-200">
+                        {cardMedia ? (
+                          <WebsiteMediaImg
+                            item={cardMedia}
                             alt=""
-                            className="h-full w-full object-cover"
                             loading="lazy"
+                            className="absolute inset-0 h-full w-full object-cover object-top"
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center text-xs text-slate-500">
