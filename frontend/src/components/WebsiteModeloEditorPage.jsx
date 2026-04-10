@@ -61,6 +61,27 @@ function mediaArrayFromDetail(detail) {
 }
 
 /**
+ * Corpo do PATCH no site: objetos com type, url, thumb, polaroid (sem campos extra que possam falhar no backend).
+ */
+function sanitizeMediaForWebsitePatch(media) {
+  if (!Array.isArray(media)) return [];
+  return media.map((raw) => {
+    if (raw != null && typeof raw === 'string') {
+      const url = String(raw).trim();
+      return { type: 'image', url, thumb: '', polaroid: false };
+    }
+    if (!raw || typeof raw !== 'object') {
+      return { type: 'image', url: '', thumb: '', polaroid: false };
+    }
+    const url = raw.url != null ? String(raw.url).trim() : '';
+    const type = raw.type != null ? String(raw.type).trim() : 'image';
+    const thumb = raw.thumb != null ? String(raw.thumb).trim() : '';
+    const polaroid = raw.polaroid === true || raw.polaroid === 'true' || raw.polaroid === 1;
+    return { type: type || 'image', url, thumb, polaroid };
+  });
+}
+
+/**
  * ID do modelo na BD do site — campo raiz `id` (inteiro).
  * Contrato verificado: GET https://www.andymodels.com/api/models/:slug → `{ "id": <number>, ... }`.
  */
@@ -448,13 +469,19 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       return;
     }
     setSaveError('');
+    const mediaPayload = sanitizeMediaForWebsitePatch(apiMedia);
+    const emptyUrl = mediaPayload.some((it) => !it.url);
+    if (emptyUrl) {
+      setSaveError('Há itens de mídia sem URL válida. Recarregue a página e tente de novo.');
+      return;
+    }
     setSaveLoading(true);
     try {
       const modelId = websiteModelId;
       // eslint-disable-next-line no-console -- ID usado no PATCH
       console.log('ID usado no PATCH:', modelId);
       // eslint-disable-next-line no-console -- debug obrigatório (salvamento mídia)
-      console.log('Saving media:', modelId, apiMedia);
+      console.log('Saving media:', modelId, mediaPayload);
       const url = `${API_BASE}/admin/models/${encodeURIComponent(String(modelId))}/media`;
       const r = await fetchWithAuth(url, {
         method: 'PATCH',
@@ -462,7 +489,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify({ media: apiMedia }),
+        body: JSON.stringify({ media: mediaPayload }),
       });
       // eslint-disable-next-line no-console -- debug obrigatório
       console.log('Response:', r.status);
@@ -473,6 +500,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         try {
           const j = raw ? JSON.parse(raw) : null;
           if (j && typeof j.message === 'string') msg = j.message;
+          else if (j && typeof j.error === 'string') msg = j.error;
         } catch {
           /* ignore */
         }
