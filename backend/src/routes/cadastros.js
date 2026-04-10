@@ -155,6 +155,29 @@ function cadastroPdfHtml({ title, row }) {
 </html>`;
 }
 
+/**
+ * Resposta JSON: se existir URL http(s), devolve-a (nunca preferir base64 sobre URL).
+ * Suporta legado em base64 puro ou data URL; se o texto misturar lixo com URL, extrai a URL.
+ */
+function fotoPerfilBase64ForApiResponse(stored) {
+  if (stored == null) return '';
+  const s = String(stored).trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^data:image\//i.test(s)) return s;
+  const m = s.match(/https?:\/\/[^\s"'<>]+/i);
+  if (m) return m[0].replace(/[,;.)]+$/, '');
+  return s;
+}
+
+function mapModeloRowFotoForApi(row) {
+  if (!row || typeof row !== 'object') return row;
+  return {
+    ...row,
+    foto_perfil_base64: fotoPerfilBase64ForApiResponse(row.foto_perfil_base64),
+  };
+}
+
 const makeCrudRoutes = ({
   path,
   table,
@@ -165,7 +188,11 @@ const makeCrudRoutes = ({
   router.get(`/${path}`, async (_req, res, next) => {
     try {
       const result = await pool.query(`SELECT * FROM ${table} ORDER BY id DESC`);
-      res.json(result.rows);
+      if (table === 'modelos') {
+        res.json(result.rows.map(mapModeloRowFotoForApi));
+      } else {
+        res.json(result.rows);
+      }
     } catch (error) {
       next(error);
     }
@@ -220,7 +247,7 @@ const makeCrudRoutes = ({
 
       if (table === 'modelos') {
         const result = await insertModeloRow(pool, body);
-        return res.status(201).json(result);
+        return res.status(201).json(mapModeloRowFotoForApi(result));
       }
 
       stringifyJsonbColumns(body);
@@ -344,6 +371,9 @@ const makeCrudRoutes = ({
         return res.status(404).json({ message: 'Registro nao encontrado.' });
       }
 
+      if (table === 'modelos') {
+        return res.json(mapModeloRowFotoForApi(result.rows[0]));
+      }
       return res.json(result.rows[0]);
     } catch (error) {
       if (error.code === '23505') {

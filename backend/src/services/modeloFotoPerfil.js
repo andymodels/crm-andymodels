@@ -7,6 +7,16 @@ const crypto = require('crypto');
 const sharp = require('sharp');
 const storage = require('./storage');
 
+/** Valor final na BD: só URL http(s); data:image ou base64 puro → vazio. */
+function fotoPerfilOnlyUrlForDb(value) {
+  if (value == null) return '';
+  const s = String(value).trim();
+  if (!s) return '';
+  if (/^data:image\//i.test(s)) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return '';
+}
+
 function decodeIncoming(raw) {
   const t = raw === undefined || raw === null ? '' : String(raw).trim();
   if (!t) return { kind: 'empty' };
@@ -49,8 +59,8 @@ async function maybeRemoveStoredFoto(storedUrl) {
  */
 async function persistModeloFotoPerfil(raw) {
   const dec = decodeIncoming(raw);
-  if (dec.kind === 'empty') return '';
-  if (dec.kind === 'url') return dec.url;
+  if (dec.kind === 'empty') return fotoPerfilOnlyUrlForDb('');
+  if (dec.kind === 'url') return fotoPerfilOnlyUrlForDb(dec.url);
   if (dec.kind !== 'buffer') {
     throw new Error('Foto de perfil invalida.');
   }
@@ -70,7 +80,7 @@ async function persistModeloFotoPerfil(raw) {
   console.log(relativePath);
   const url = storage.getPublicUrl(relativePath);
   console.log(url);
-  return url;
+  return fotoPerfilOnlyUrlForDb(url);
 }
 
 /**
@@ -81,11 +91,11 @@ async function replaceModeloFotoPerfil(raw, previousStored) {
   const dec = decodeIncoming(raw);
   if (dec.kind === 'empty') {
     await maybeRemoveStoredFoto(prev);
-    return '';
+    return fotoPerfilOnlyUrlForDb('');
   }
   if (dec.kind === 'url') {
     if (dec.url !== prev && prev) await maybeRemoveStoredFoto(prev);
-    return dec.url;
+    return fotoPerfilOnlyUrlForDb(dec.url);
   }
   if (dec.kind !== 'buffer') {
     throw new Error('Foto de perfil invalida.');
@@ -105,7 +115,7 @@ async function replaceModeloFotoPerfil(raw, previousStored) {
   });
   const newUrl = storage.getPublicUrl(relativePath);
   if (prev && newUrl !== prev) await maybeRemoveStoredFoto(prev);
-  return newUrl;
+  return fotoPerfilOnlyUrlForDb(newUrl);
 }
 
 async function removeStoredModeloFotoIfAny(storedValue) {

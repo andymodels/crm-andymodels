@@ -296,6 +296,20 @@ function relativePathFromPublicUrl(url) {
   return null;
 }
 
+(function logStorageEnvAtLoad() {
+  console.log('[storage/env] STORAGE_DRIVER=', driver());
+  console.log(
+    '[storage/env] definidos (sem valores): B2_S3_ENDPOINT=',
+    Boolean(String(process.env.B2_S3_ENDPOINT || '').trim()),
+    'B2_KEY_ID=',
+    Boolean(String(process.env.B2_KEY_ID || '').trim()),
+    'B2_APPLICATION_KEY=',
+    Boolean(String(process.env.B2_APPLICATION_KEY || '').trim()),
+    'B2_BUCKET=',
+    Boolean(String(process.env.B2_BUCKET || '').trim()),
+  );
+})();
+
 module.exports = {
   UPLOAD_ROOT,
   saveFile,

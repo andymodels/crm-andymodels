@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './components/DynamicTextListField';
 import OperacaoAgenda from './components/OperacaoAgenda';
 import AgendaCentral from './components/AgendaCentral';
+import WebsiteModelsPage from './components/WebsiteModelsPage';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
@@ -2542,6 +2543,13 @@ function App({ authUser, onLogout = () => {} }) {
             </button>
             <button
               type="button"
+              onClick={() => setModule('website')}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'website')}`}
+            >
+              Website
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setModule('seguranca');
                 setSenhaMsg('');
@@ -2609,7 +2617,9 @@ function App({ authUser, onLogout = () => {} }) {
                                 ? 'Financeiro'
                                 : module === 'extrato'
                                   ? 'Extrato modelo'
-                                  : 'Jobs / O.S.'}
+                                  : module === 'website'
+                                    ? 'Website'
+                                    : 'Jobs / O.S.'}
                 </h2>
                 {module !== 'financeiro' ? (
                 <p className="text-sm text-slate-500">
@@ -2633,7 +2643,9 @@ function App({ authUser, onLogout = () => {} }) {
                               ? 'Altere sua senha de administrador em uma tela dedicada.'
                               : module === 'extrato'
                                 ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
-                                : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
+                                : module === 'website'
+                                  ? 'Catálogo do site institucional (somente leitura).'
+                                  : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
                 </p>
                 ) : null}
               </div>
@@ -2669,7 +2681,9 @@ function App({ authUser, onLogout = () => {} }) {
                                 : '—'
                               : module === 'extrato'
                                 ? `${extratoRows.length} linha(s)`
-                                : `${osList.length} O.S.`}
+                                : module === 'website'
+                                  ? 'andymodels.com'
+                                  : `${osList.length} O.S.`}
               </span>
             </div>
           </section>
@@ -3777,6 +3791,8 @@ function App({ authUser, onLogout = () => {} }) {
               </section>
             </>
           )}
+
+          {module === 'website' && <WebsiteModelsPage />}
 
           {module === 'seguranca' && (
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
