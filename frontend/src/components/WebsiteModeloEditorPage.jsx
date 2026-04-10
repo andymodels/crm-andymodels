@@ -182,6 +182,21 @@ function moveBlockDown(arr, start, end) {
   return [...arr.slice(0, start), after, ...block, ...arr.slice(end + 2)];
 }
 
+/**
+ * Move o bloco contíguo [start..end] para começar na posição dropIndex (como reorderApiMedia para um item).
+ */
+function reorderBlockTo(arr, start, end, dropIndex) {
+  if (start < 0 || end >= arr.length || start > end) return arr;
+  if (dropIndex < 0 || dropIndex >= arr.length) return arr;
+  if (dropIndex >= start && dropIndex <= end) return arr;
+  const len = end - start + 1;
+  const block = arr.slice(start, end + 1);
+  const without = [...arr.slice(0, start), ...arr.slice(end + 1)];
+  let insertAt = dropIndex;
+  if (dropIndex > end) insertAt = dropIndex - len;
+  return [...without.slice(0, insertAt), ...block, ...without.slice(insertAt)];
+}
+
 /** Novo array; no índice, cópia rasa do objeto com `polaroid` alternado. */
 function togglePolaroidAt(arr, index) {
   if (index < 0 || index >= arr.length) return arr;
@@ -282,10 +297,21 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
+  /** Confirmação antes de apagar foto (modal — evita bloqueio de `window.confirm` em alguns browsers). */
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const localMediaRef = useRef([]);
   useEffect(() => {
     localMediaRef.current = localMediaItems;
   }, [localMediaItems]);
+
+  useEffect(() => {
+    if (!deleteConfirm) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setDeleteConfirm(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [deleteConfirm]);
 
   useEffect(() => {
     if (!isEdit || !String(editSlug || '').trim()) {
@@ -419,14 +445,13 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     e.target.value = '';
   };
 
-  const removeLocalMedia = (id) => {
-    if (!window.confirm('Remover esta imagem da lista? Ainda não foi enviada ao site.')) return;
+  const removeLocalMediaConfirmed = useCallback((id) => {
     setLocalMediaItems((prev) => {
       const item = prev.find((x) => x.id === id);
       if (item?.preview?.startsWith('blob:')) URL.revokeObjectURL(item.preview);
       return prev.filter((x) => x.id !== id);
     });
-  };
+  }, []);
 
   const moveLocalMedia = (index, delta) => {
     setLocalMediaItems((prev) => {
@@ -614,10 +639,18 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     });
   };
 
-  const handleApiMediaDragStart = useCallback((e, index) => {
-    e.dataTransfer.setData('text/plain', String(index));
-    e.dataTransfer.effectAllowed = 'move';
-  }, []);
+  const handleApiMediaDragStart = useCallback(
+    (e, index) => {
+      const range = consecutiveBlockRange([...apiMediaSelected]);
+      if (range && index >= range.start && index <= range.end) {
+        e.dataTransfer.setData('text/plain', `block:${range.start}:${range.end}`);
+      } else {
+        e.dataTransfer.setData('text/plain', String(index));
+      }
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    [apiMediaSelected],
+  );
 
   const handleApiMediaDragOver = useCallback((e) => {
     e.preventDefault();
@@ -626,7 +659,18 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
 
   const handleApiMediaDrop = useCallback((e, dropIndex) => {
     e.preventDefault();
-    const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    const plain = e.dataTransfer.getData('text/plain');
+    if (plain.startsWith('block:')) {
+      const seg = plain.split(':');
+      const start = Number(seg[1], 10);
+      const end = Number(seg[2], 10);
+      if (!Number.isNaN(start) && !Number.isNaN(end) && start <= end) {
+        setApiMedia((prev) => reorderBlockTo(prev, start, end, dropIndex));
+        setApiMediaSelected(new Set());
+        return;
+      }
+    }
+    const from = parseInt(plain, 10);
     if (Number.isNaN(from)) return;
     setApiMedia((prev) => reorderApiMedia(prev, from, dropIndex));
   }, []);
@@ -676,14 +720,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     setApiMediaSelected(new Set());
   }, [apiMediaSelected, apiMedia.length]);
 
-  const handleApiMediaRemove = useCallback((index) => {
-    if (
-      !window.confirm(
-        'Apagar esta foto da galeria? Só fica definitivo no site depois de clicar em «Salvar mídia».',
-      )
-    ) {
-      return;
-    }
+  const applyRemoveApiMediaAt = useCallback((index) => {
     setApiMedia((prev) => removeApiMediaAt(prev, index));
     setApiMediaSelected((prevSel) => {
       const next = new Set();
@@ -1124,9 +1161,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {isEdit ? (
               <div className="space-y-2">
                 <p className="text-xs text-slate-500">
-                  Edição local do array <code className="rounded bg-slate-100 px-1">media</code> (arrastar para
-                  reordenar uma foto; marque várias fotos <strong>em sequência</strong> para subir ou descer o bloco
-                  inteiro). Use <strong>Salvar mídia</strong> para persistir no site.
+                  Edição local do array <code className="rounded bg-slate-100 px-1">media</code>: marque fotos{' '}
+                  <strong>em sequência</strong> (caixas) e arraste <strong>a partir de uma delas</strong> para mover o
+                  bloco inteiro, ou use <strong>Subir bloco</strong> / <strong>Descer bloco</strong>. Uma foto só:
+                  arraste sem bloco selecionado. <strong>Salvar mídia</strong> grava no site.
                 </p>
                 {apiMedia.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
@@ -1256,7 +1294,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                             ⋮⋮
                           </span>
                         </div>
-                        <div className="grid grid-cols-3 gap-0.5 border-t border-slate-200 p-1">
+                        <div
+                          className="grid grid-cols-3 gap-0.5 border-t border-slate-200 p-1"
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
                           <button
                             type="button"
                             disabled={isCover}
@@ -1278,7 +1319,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleApiMediaRemove(index)}
+                            onClick={(ev) => {
+                              ev.preventDefault();
+                              ev.stopPropagation();
+                              setDeleteConfirm({ type: 'api', index });
+                            }}
                             className="min-w-0 rounded border border-red-200 px-0.5 py-1 text-center text-[10px] leading-tight text-red-700"
                           >
                             Apagar
@@ -1342,7 +1387,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeLocalMedia(item.id)}
+                        onClick={() => setDeleteConfirm({ type: 'local', id: item.id })}
                         className="ml-auto rounded border border-red-200 px-2 py-1 text-xs text-red-700"
                       >
                         Remover
@@ -1415,6 +1460,50 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
         </div>
       </form>
+
+      {deleteConfirm ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-confirm-title"
+          onClick={() => setDeleteConfirm(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 id="delete-confirm-title" className="text-base font-semibold text-slate-900">
+              Tem certeza que quer deletar esta imagem?
+            </h4>
+            <p className="mt-2 text-sm text-slate-600">
+              {deleteConfirm.type === 'api'
+                ? 'A alteração só passa a valer no site depois de clicar em «Salvar mídia».'
+                : 'Esta imagem ainda não foi enviada ao site.'}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirm(null)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (deleteConfirm.type === 'api') applyRemoveApiMediaAt(deleteConfirm.index);
+                  else removeLocalMediaConfirmed(deleteConfirm.id);
+                  setDeleteConfirm(null);
+                }}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+              >
+                Sim, apagar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
