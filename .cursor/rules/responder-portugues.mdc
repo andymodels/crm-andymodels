@@ -1,0 +1,10 @@
+---
+description: Respostas do assistente em português (preferência de idioma do utilizador).
+alwaysApply: true
+---
+
+# Idioma
+
+- Responde **sempre em português** (Portugal), com frases claras e completas.
+- Comentários em código, mensagens de commit e texto para o utilizador: em português, salvo pedido explícito em contrário.
+- Se o utilizador escrever noutra língua, mantém o português nas respostas, exceto se pedir explicitamente outro idioma.

@@ -5,6 +5,7 @@ import AgendaCentral from './components/AgendaCentral';
 import WebsiteModelsPage from './components/WebsiteModelsPage';
 import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
 import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
+import WebsiteModeloEditorPage from './components/WebsiteModeloEditorPage';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
@@ -2460,7 +2461,7 @@ function App({ authUser, onLogout = () => {} }) {
     if (module !== 'website') return '';
     const lines = {
       modelos: 'Catálogo do site institucional (somente leitura).',
-      novo_modelo: 'Página placeholder — sem alteração de dados ainda.',
+      novo_modelo: 'Formulário completo — gravação na API em breve.',
       inscricoes: 'Filtre por categoria e status; a listagem será integrada depois.',
       home: 'Página placeholder — sem alteração de dados ainda.',
       instagram: 'Página placeholder — sem alteração de dados ainda.',
@@ -2500,6 +2501,44 @@ function App({ authUser, onLogout = () => {} }) {
             >
               Dashboard
             </button>
+            <div className="rounded-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setWebsiteMenuOpen((prev) => !prev);
+                  setModule('website');
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'website')}`}
+              >
+                <span>Website</span>
+                <span className="text-xs opacity-90">{websiteMenuOpen ? '▾' : '▸'}</span>
+              </button>
+              {websiteMenuOpen && (
+                <nav className="mt-2 space-y-1.5 pl-2" aria-label="Secções do website">
+                  {[
+                    { id: 'modelos', label: 'Modelos' },
+                    { id: 'novo_modelo', label: 'Novo Modelo' },
+                    { id: 'inscricoes', label: 'Inscrições' },
+                    { id: 'home', label: 'Home' },
+                    { id: 'instagram', label: 'Instagram' },
+                    { id: 'radio', label: 'Rádio' },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => {
+                        setWebsiteMenuOpen(true);
+                        setModule('website');
+                        setWebsiteSubView(id);
+                      }}
+                      className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(websiteSubView === id && module === 'website')}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
+              )}
+            </div>
             <div className="rounded-xl">
               <button
                 type="button"
@@ -2580,44 +2619,6 @@ function App({ authUser, onLogout = () => {} }) {
             >
               Extrato modelo
             </button>
-            <div className="rounded-xl">
-              <button
-                type="button"
-                onClick={() => {
-                  setWebsiteMenuOpen((prev) => !prev);
-                  setModule('website');
-                }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'website')}`}
-              >
-                <span>Website</span>
-                <span className="text-xs opacity-90">{websiteMenuOpen ? '▾' : '▸'}</span>
-              </button>
-              {websiteMenuOpen && (
-                <nav className="mt-2 space-y-1.5 pl-2" aria-label="Secções do website">
-                  {[
-                    { id: 'modelos', label: 'Modelos' },
-                    { id: 'novo_modelo', label: 'Novo Modelo' },
-                    { id: 'inscricoes', label: 'Inscrições' },
-                    { id: 'home', label: 'Home' },
-                    { id: 'instagram', label: 'Instagram' },
-                    { id: 'radio', label: 'Rádio' },
-                  ].map(({ id, label }) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => {
-                        setWebsiteMenuOpen(true);
-                        setModule('website');
-                        setWebsiteSubView(id);
-                      }}
-                      className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(websiteSubView === id && module === 'website')}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </nav>
-              )}
-            </div>
             <button
               type="button"
               onClick={() => {
@@ -3863,9 +3864,7 @@ function App({ authUser, onLogout = () => {} }) {
           )}
 
           {module === 'website' && websiteSubView === 'modelos' && <WebsiteModelsPage />}
-          {module === 'website' && websiteSubView === 'novo_modelo' && (
-            <WebsitePlaceholderPage title="Novo Modelo" />
-          )}
+          {module === 'website' && websiteSubView === 'novo_modelo' && <WebsiteModeloEditorPage />}
           {module === 'website' && websiteSubView === 'inscricoes' && <WebsiteInscricoesPage />}
           {module === 'website' && websiteSubView === 'home' && <WebsitePlaceholderPage title="Home" />}
           {module === 'website' && websiteSubView === 'instagram' && (
