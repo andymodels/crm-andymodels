@@ -181,10 +181,15 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [form, setForm] = useState(createInitialForm);
   /** Em edição: itens exatamente como em `detail.media` da API (ordem preservada). */
   const [apiMedia, setApiMedia] = useState([]);
+  /** ID do modelo no site (GET /website/models/:slug) para PATCH .../admin/models/:id/media */
+  const [websiteModelId, setWebsiteModelId] = useState(null);
   /** Em criação: pré-visualizações locais (ficheiros). */
   const [localMediaItems, setLocalMediaItems] = useState([]);
   const [loadLoading, setLoadLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
   const localMediaRef = useRef([]);
   useEffect(() => {
@@ -195,10 +200,13 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     if (!isEdit || !String(editSlug || '').trim()) {
       setForm(createInitialForm());
       setApiMedia([]);
+      setWebsiteModelId(null);
       setLocalMediaItems([]);
       setLoadError('');
       setLoadLoading(false);
       setEditBoot(false);
+      setSaveMessage('');
+      setSaveError('');
       return;
     }
     let cancelled = false;
@@ -206,6 +214,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       setEditBoot(true);
       setLoadLoading(true);
       setLoadError('');
+      setSaveMessage('');
+      setSaveError('');
       try {
         const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(String(editSlug).trim())}`);
         const raw = await r.text();
@@ -225,6 +235,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         setForm(mapDetailToForm(d));
         setApiMedia(d ? cloneMediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
+        setWebsiteModelId(
+          d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
+        );
       } catch (e) {
         if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -344,6 +357,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     const slug = String(editSlug).trim();
     setLoadLoading(true);
     setLoadError('');
+    setSaveMessage('');
+    setSaveError('');
     (async () => {
       try {
         const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
@@ -363,6 +378,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         setForm(mapDetailToForm(d));
         setApiMedia(d ? cloneMediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
+        setWebsiteModelId(
+          d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
+        );
       } catch (e) {
         setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -370,6 +388,37 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       }
     })();
   }, [isEdit, editSlug]);
+
+  const handleSaveMedia = useCallback(async () => {
+    if (!isEdit || !websiteModelId) return;
+    setSaveLoading(true);
+    setSaveMessage('');
+    setSaveError('');
+    try {
+      const r = await fetchWithTimeout(`${API_BASE}/admin/models/${encodeURIComponent(websiteModelId)}/media`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ media: apiMedia }),
+      });
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+          const j = raw ? JSON.parse(raw) : null;
+          if (j && typeof j.message === 'string') msg = j.message;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      setSaveMessage('Salvo com sucesso');
+    } catch (e) {
+      setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
+    } finally {
+      setSaveLoading(false);
+    }
+  }, [isEdit, websiteModelId, apiMedia]);
 
   const clearForm = () => {
     if (isEdit) {
@@ -975,22 +1024,37 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           </div>
         </section>
 
-        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-4">
-          <button
-            type="button"
-            onClick={clearForm}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            {isEdit ? 'Repor dados do site' : 'Limpar formulário'}
-          </button>
-          <button
-            type="submit"
-            disabled
-            className="cursor-not-allowed rounded-lg bg-slate-300 px-4 py-2 text-sm font-semibold text-slate-600"
-            title="Gravação na API ainda não disponível"
-          >
-            Guardar (em breve)
-          </button>
+        <div className="flex flex-col items-end gap-2 border-t border-slate-200 pt-4">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={clearForm}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {isEdit ? 'Repor dados do site' : 'Limpar formulário'}
+            </button>
+            {isEdit ? (
+              <button
+                type="button"
+                onClick={handleSaveMedia}
+                disabled={!websiteModelId || saveLoading}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
+                title={!websiteModelId ? 'Modelo sem ID no site — não é possível salvar media.' : undefined}
+              >
+                {saveLoading ? 'A guardar…' : 'Salvar'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="cursor-not-allowed rounded-lg bg-slate-300 px-4 py-2 text-sm font-semibold text-slate-600"
+              >
+                Guardar (em breve)
+              </button>
+            )}
+          </div>
+          {saveMessage ? <p className="text-sm text-emerald-700">{saveMessage}</p> : null}
+          {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
         </div>
       </form>
     </div>

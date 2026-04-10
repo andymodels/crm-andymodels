@@ -34,6 +34,46 @@ function fetchWebsiteJson(url) {
   });
 }
 
+/** PATCH JSON para o website (ex.: atualizar media). */
+function patchWebsiteJson(urlString, bodyObj) {
+  const body = JSON.stringify(bodyObj);
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlString);
+    const options = {
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: `${u.pathname}${u.search}`,
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'Content-Length': Buffer.byteLength(body, 'utf8'),
+        'User-Agent': 'AndyModels-CRM/1.0',
+      },
+    };
+    const token = String(process.env.WEBSITE_ADMIN_API_KEY || process.env.WEBSITE_ADMIN_TOKEN || '').trim();
+    if (token) {
+      options.headers.Authorization = `Bearer ${token}`;
+    }
+    const req = https.request(options, (res) => {
+      let raw = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        raw += chunk;
+      });
+      res.on('end', () => {
+        resolve({ statusCode: res.statusCode || 0, raw });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(25_000, () => {
+      req.destroy(new Error('Timeout ao contactar o website.'));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
 router.get('/website/models', async (_req, res, next) => {
   try {
     const { statusCode, raw } = await fetchWebsiteJson(WEBSITE_MODELS_LIST_URL);
@@ -78,6 +118,44 @@ router.get('/website/models/:slug', async (req, res, next) => {
       return res.status(502).json({ message: 'Resposta do website não é JSON válido.' });
     }
     return res.json(data);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/**
+ * Atualiza apenas media do modelo no site: PATCH https://www.andymodels.com/api/admin/models/:id/media
+ * Body: { media: [...] } — repassado sem outros campos.
+ */
+router.patch('/admin/models/:id/media', async (req, res, next) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ message: 'ID invalido.' });
+    }
+    if (!req.body || typeof req.body !== 'object' || !('media' in req.body)) {
+      return res.status(400).json({ message: 'Body deve incluir o campo media.' });
+    }
+    const url = `${WEBSITE_ORIGIN}/api/admin/models/${encodeURIComponent(id)}/media`;
+    const { statusCode, raw } = await patchWebsiteJson(url, { media: req.body.media });
+    if (statusCode === 204) {
+      return res.status(204).end();
+    }
+    if (String(raw || '').trim() === '' && statusCode >= 200 && statusCode < 300) {
+      return res.json({ ok: true });
+    }
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return res.status(statusCode >= 400 ? statusCode : 502).json({
+        message: raw ? String(raw).slice(0, 500) : 'Resposta invalida do website.',
+      });
+    }
+    if (statusCode < 200 || statusCode >= 300) {
+      return res.status(statusCode).json(data && typeof data === 'object' ? data : { message: String(data) });
+    }
+    return res.json(data != null ? data : { ok: true });
   } catch (e) {
     return next(e);
   }
