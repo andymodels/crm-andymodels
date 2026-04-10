@@ -146,7 +146,7 @@ router.patch('/admin/models/:id/media', async (req, res, next) => {
       return res.status(401).json({
         message: hasEnvToken
           ? 'Website recusou WEBSITE_ADMIN_API_KEY / WEBSITE_ADMIN_TOKEN (401). Confirme a mesma chave configurada no servidor do site e no CRM (Render).'
-          : 'Website exige autenticacao (401). Defina WEBSITE_ADMIN_API_KEY no backend do CRM (mesmo segredo que o site usa para /api/admin).',
+          : 'O backend do CRM não tem WEBSITE_ADMIN_API_KEY (ou WEBSITE_ADMIN_TOKEN) definida. No Render: serviço Web da API → Environment → adicionar a variável com o mesmo valor secreto que o site usa para /api/admin → Save → Manual Deploy. Em local: copie para backend/.env e reinicie.',
       });
     }
     if (statusCode === 204) {
