@@ -60,6 +60,22 @@ function mediaArrayFromDetail(detail) {
   return Array.isArray(m) ? m.slice() : [];
 }
 
+/**
+ * ID do modelo na BD do site — campo raiz `id` (inteiro).
+ * Contrato verificado: GET https://www.andymodels.com/api/models/:slug → `{ "id": <number>, ... }`.
+ */
+function resolveWebsiteModelId(detail) {
+  if (!detail || typeof detail !== 'object') return null;
+  const raw = detail.id;
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+    console.warn('[Website editor] detail.id inválido (esperado inteiro ≥ 1):', raw);
+    return null;
+  }
+  return n;
+}
+
 /** Alinhado ao site: URL de vídeo para embed / leitura (YouTube, Vimeo, resto inalterado). */
 function parseVideoUrl(raw) {
   if (raw == null) return '';
@@ -203,7 +219,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [form, setForm] = useState(createInitialForm);
   /** Em edição: cópia de `model.media` apenas — URLs tal como no backend. */
   const [apiMedia, setApiMedia] = useState([]);
-  /** ID do modelo no site (GET /website/models/:slug) para PATCH .../admin/models/:id/media */
+  /** ID numérico do modelo no site — PATCH /api/admin/models/{id}/media */
   const [websiteModelId, setWebsiteModelId] = useState(null);
   /** Em criação: pré-visualizações locais (ficheiros). */
   const [localMediaItems, setLocalMediaItems] = useState([]);
@@ -254,12 +270,16 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         if (cancelled) return;
         const d = data && typeof data === 'object' ? data : null;
+        // eslint-disable-next-line no-console -- debug ID (GET detalhe)
+        console.log('MODEL DETAIL:', d);
         setForm(mapDetailToForm(d));
         setApiMedia(d ? mediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
-        setWebsiteModelId(
-          d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
-        );
+        const resolvedId = resolveWebsiteModelId(d);
+        setWebsiteModelId(resolvedId);
+        if (resolvedId == null && d) {
+          console.warn('[Website editor] Sem detail.id inteiro em MODEL DETAIL.');
+        }
       } catch (e) {
         if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -397,12 +417,12 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           throw new Error(msg);
         }
         const d = data && typeof data === 'object' ? data : null;
+        // eslint-disable-next-line no-console -- debug ID (reload)
+        console.log('MODEL DETAIL:', d);
         setForm(mapDetailToForm(d));
         setApiMedia(d ? mediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
-        setWebsiteModelId(
-          d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
-        );
+        setWebsiteModelId(resolveWebsiteModelId(d));
       } catch (e) {
         setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -412,15 +432,30 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   }, [isEdit, editSlug]);
 
   const handleSaveMedia = useCallback(async () => {
-    if (!isEdit || !websiteModelId) return;
-    setSaveLoading(true);
+    // eslint-disable-next-line no-console -- debug fluxo Salvar
+    console.log('clicou salvar');
+    // eslint-disable-next-line no-console -- debug fluxo Salvar
+    console.log('enviando media', apiMedia);
     setSaveMessage('');
+    if (!isEdit) {
+      setSaveError('Salvar mídia só está disponível ao editar um modelo.');
+      return;
+    }
+    if (websiteModelId == null) {
+      setSaveError(
+        'ID do modelo não encontrado: o detalhe deve incluir `id` (inteiro) como na API pública /api/models/:slug.',
+      );
+      return;
+    }
     setSaveError('');
+    setSaveLoading(true);
     try {
       const modelId = websiteModelId;
+      // eslint-disable-next-line no-console -- ID usado no PATCH
+      console.log('ID usado no PATCH:', modelId);
       // eslint-disable-next-line no-console -- debug obrigatório (salvamento mídia)
       console.log('Saving media:', modelId, apiMedia);
-      const url = `${API_BASE}/admin/models/${encodeURIComponent(modelId)}/media`;
+      const url = `${API_BASE}/admin/models/${encodeURIComponent(String(modelId))}/media`;
       const r = await fetchWithAuth(url, {
         method: 'PATCH',
         headers: {
@@ -1110,9 +1145,13 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               <button
                 type="button"
                 onClick={handleSaveMedia}
-                disabled={!websiteModelId || saveLoading}
+                disabled={saveLoading}
                 className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
-                title={!websiteModelId ? 'Modelo sem ID no site — não é possível salvar media.' : undefined}
+                title={
+                  !websiteModelId
+                    ? 'Aviso: ID do modelo ainda não detetado — ao clicar verá mensagem de erro até a API enviar id.'
+                    : undefined
+                }
               >
                 {saveLoading ? 'A guardar…' : 'Salvar'}
               </button>
