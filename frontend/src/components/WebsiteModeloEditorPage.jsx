@@ -60,14 +60,44 @@ function cloneMediaArrayFromDetail(detail) {
   return m.slice();
 }
 
-/** Resolve URL só para o elemento <img> — não altera o array guardado em estado. */
+/**
+ * URL para o <img> (pré-visualização). Preferir thumb quando existir — não altera o array em estado.
+ */
 function itemToImageSrc(item) {
   if (typeof item === 'string') return item;
   if (item && typeof item === 'object') {
+    const thumb = item.thumb != null ? String(item.thumb).trim() : '';
+    if (thumb) return thumb;
     if (item.url != null) return String(item.url);
     if (item.src != null) return String(item.src);
   }
   return '';
+}
+
+/** Grelha de thumbnails: colunas 280–320px, alinhamento consistente. */
+const MEDIA_THUMB_GRID_CLASS =
+  'grid w-full justify-center gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,320px))]';
+
+/** Área 3:4 com imagem forçada ao tamanho do contentor (sem usar dimensões intrínsecas). */
+function MediaThumbFrame({ src, children, emptyLabel = 'Sem URL de imagem neste item.' }) {
+  return (
+    <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-100">
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          draggable={false}
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"
+        />
+      ) : (
+        <div className="flex h-full min-h-0 w-full items-center justify-center p-2 text-center text-xs text-slate-500">
+          {emptyLabel}
+        </div>
+      )}
+      {children}
+    </div>
+  );
 }
 
 /** Novo array com mesmos elementos; só muda a ordem. */
@@ -861,7 +891,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {isEdit ? (
               <p className="text-xs text-slate-500">
                 Edição local do array <code className="rounded bg-slate-100 px-1">media</code> (arrastar para
-                reordenar; gravar no servidor ainda não disponível).
+                reordenar; use <strong>Salvar</strong> para persistir).
               </p>
             ) : (
               <div className="flex flex-wrap items-center gap-3">
@@ -882,7 +912,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                   O endpoint não devolveu itens em <code className="rounded bg-slate-100 px-1">media</code>.
                 </p>
               ) : (
-                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <ul className={MEDIA_THUMB_GRID_CLASS}>
                   {apiMedia.map((item, index) => {
                     const src = itemToImageSrc(item);
                     const isCover = index === 0;
@@ -895,19 +925,12 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                         onDragStart={(e) => handleApiMediaDragStart(e, index)}
                         onDragOver={handleApiMediaDragOver}
                         onDrop={(e) => handleApiMediaDrop(e, index)}
-                        className={`overflow-hidden rounded-xl border bg-white shadow-sm ${
+                        className={`min-w-0 w-full max-w-[320px] overflow-hidden rounded-xl border bg-white shadow-sm ${
                           isCover ? 'border-amber-400 ring-2 ring-amber-300' : 'border-slate-200'
                         } ${polaroidOn ? 'ring-1 ring-sky-300' : ''}`}
                       >
-                        <div className="relative aspect-[3/4] w-full bg-slate-100">
-                          {src ? (
-                            <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />
-                          ) : (
-                            <div className="flex h-full items-center justify-center p-2 text-center text-xs text-slate-500">
-                              Sem URL de imagem neste item.
-                            </div>
-                          )}
-                          <div className="absolute left-2 top-2 flex flex-wrap gap-1">
+                        <MediaThumbFrame src={src}>
+                          <div className="pointer-events-none absolute left-2 top-2 z-[1] flex flex-wrap gap-1">
                             {isCover ? (
                               <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white shadow">
                                 Capa
@@ -922,12 +945,12 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                             ) : null}
                           </div>
                           <span
-                            className="absolute bottom-2 right-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white"
+                            className="pointer-events-none absolute bottom-2 right-2 z-[1] rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white"
                             title="Arrastar para reordenar"
                           >
                             ⋮⋮
                           </span>
-                        </div>
+                        </MediaThumbFrame>
                         <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
                           <button
                             type="button"
@@ -966,18 +989,17 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 Nenhuma imagem adicionada.
               </p>
             ) : (
-              <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <ul className={MEDIA_THUMB_GRID_CLASS}>
                 {localMediaItems.map((item, index) => (
                   <li
                     key={item.id}
-                    className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                    className="min-w-0 w-full max-w-[320px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
                   >
-                    <div className="relative aspect-[3/4] w-full bg-slate-100">
-                      <img src={item.preview} alt="" className="h-full w-full object-cover" />
-                      <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">
+                    <MediaThumbFrame src={item.preview} emptyLabel="Sem pré-visualização.">
+                      <span className="pointer-events-none absolute left-2 top-2 z-[1] rounded bg-black/60 px-2 py-0.5 text-xs text-white">
                         {index + 1}
                       </span>
-                    </div>
+                    </MediaThumbFrame>
                     <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
                       <button
                         type="button"
