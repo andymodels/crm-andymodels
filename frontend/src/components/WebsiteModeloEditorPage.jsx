@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
-import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits } from '../utils/brValidators';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
@@ -417,11 +417,20 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     setSaveMessage('');
     setSaveError('');
     try {
-      const r = await fetchWithTimeout(`${API_BASE}/admin/models/${encodeURIComponent(websiteModelId)}/media`, {
+      const modelId = websiteModelId;
+      // eslint-disable-next-line no-console -- debug obrigatório (salvamento mídia)
+      console.log('Saving media:', modelId, apiMedia);
+      const url = `${API_BASE}/admin/models/${encodeURIComponent(modelId)}/media`;
+      const r = await fetchWithAuth(url, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({ media: apiMedia }),
       });
+      // eslint-disable-next-line no-console -- debug obrigatório
+      console.log('Response:', r.status);
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) {

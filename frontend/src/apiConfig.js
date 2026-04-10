@@ -31,6 +31,27 @@ export function fetchWithTimeout(url, options = {}) {
   });
 }
 
+/**
+ * Rotas protegidas do CRM: envia cookie de sessão (`credentials: 'include'`) como o resto da app.
+ * Opcional: `sessionStorage.crm_api_token` com JWT para `Authorization: Bearer` (ex.: domínio sem cookie).
+ */
+export function fetchWithAuth(url, options = {}) {
+  const headers = new Headers(options.headers ?? {});
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const t = sessionStorage.getItem('crm_api_token');
+      if (t && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${String(t).trim()}`);
+    }
+  } catch {
+    /* ignore */
+  }
+  return fetchWithTimeout(url, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+}
+
 export function throwIfHtmlOrCannotPost(raw, httpStatus) {
   const t = String(raw || '');
   if (!t.includes('<') && !/cannot\s+post/i.test(t)) return;
