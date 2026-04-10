@@ -60,16 +60,50 @@ function cloneMediaArrayFromDetail(detail) {
   return m.slice();
 }
 
+/** Só `type === 'video'` desativa <img> (sem images[]/cover_image). */
+function isMediaItemVideo(item) {
+  return item != null && typeof item === 'object' && item.type === 'video';
+}
+
+/** Aceita http(s), blob:, data:image, URLs relativas ao site e protocol-relative // */
+function isValidImageSrcUrl(s) {
+  if (typeof s !== 'string') return false;
+  const t = s.trim();
+  if (!t) return false;
+  if (t.startsWith('blob:')) return true;
+  if (t.startsWith('data:image/')) return true;
+  try {
+    if (/^https?:\/\//i.test(t)) {
+      new URL(t);
+      return true;
+    }
+    if (t.startsWith('//') && /\/\/.+/.test(t)) {
+      new URL(`https:${t}`);
+      return true;
+    }
+    if (t.startsWith('/')) return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 /**
- * URL para o <img> (pré-visualização). Preferir thumb quando existir — não altera o array em estado.
+ * Src para <img> no editor: thumb → url; nunca images[]/cover_image.
+ * `item.type === 'video'` → não há src de imagem (retorno '').
+ * Caso contrário retorna sempre string: URL validada ou ''.
  */
-function itemToImageSrc(item) {
-  if (typeof item === 'string') return item;
+function resolveModelEditorMediaImageSrc(item) {
+  if (isMediaItemVideo(item)) return '';
+  if (typeof item === 'string') {
+    const u = item.trim();
+    return isValidImageSrcUrl(u) ? u : '';
+  }
   if (item && typeof item === 'object') {
     const thumb = item.thumb != null ? String(item.thumb).trim() : '';
-    if (thumb) return thumb;
-    if (item.url != null) return String(item.url);
-    if (item.src != null) return String(item.src);
+    const url = item.url != null ? String(item.url).trim() : '';
+    const raw = thumb || url;
+    return raw && isValidImageSrcUrl(raw) ? raw : '';
   }
   return '';
 }
@@ -78,20 +112,36 @@ function itemToImageSrc(item) {
 const MEDIA_THUMB_GRID_CLASS =
   'grid w-full justify-center gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,320px))]';
 
-/** Área 3:4 com imagem forçada ao tamanho do contentor (sem usar dimensões intrínsecas). */
-function MediaThumbFrame({ src, children, emptyLabel = 'Sem URL de imagem neste item.' }) {
+/** Área 3:4: imagem só com src válido; vídeo ou falha → placeholder (sem ícone partido). */
+function MediaThumbFrame({
+  src,
+  isVideo = false,
+  children,
+  videoLabel = 'Vídeo',
+  emptyLabel = 'Sem imagem',
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  useEffect(() => {
+    setImgFailed(false);
+  }, [src]);
+  const showImg = Boolean(src) && !isVideo && !imgFailed;
   return (
     <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-100">
-      {src ? (
+      {isVideo ? (
+        <div className="flex h-full min-h-0 w-full items-center justify-center bg-gradient-to-b from-slate-200 to-slate-300/90 p-3 text-center">
+          <span className="text-xs font-medium text-slate-600">{videoLabel}</span>
+        </div>
+      ) : showImg ? (
         <img
           src={src}
           alt=""
           loading="lazy"
           draggable={false}
+          onError={() => setImgFailed(true)}
           className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"
         />
       ) : (
-        <div className="flex h-full min-h-0 w-full items-center justify-center p-2 text-center text-xs text-slate-500">
+        <div className="flex h-full min-h-0 w-full items-center justify-center border border-dashed border-slate-200 bg-slate-50 p-2 text-center text-xs text-slate-500">
           {emptyLabel}
         </div>
       )}
@@ -914,7 +964,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               ) : (
                 <ul className={MEDIA_THUMB_GRID_CLASS}>
                   {apiMedia.map((item, index) => {
-                    const src = itemToImageSrc(item);
+                    const isVideo = isMediaItemVideo(item);
+                    const src = resolveModelEditorMediaImageSrc(item);
                     const isCover = index === 0;
                     const polaroidOn =
                       item && typeof item === 'object' && (item.polaroid === true || item.polaroid === 'true');
@@ -929,7 +980,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                           isCover ? 'border-amber-400 ring-2 ring-amber-300' : 'border-slate-200'
                         } ${polaroidOn ? 'ring-1 ring-sky-300' : ''}`}
                       >
-                        <MediaThumbFrame src={src}>
+                        <MediaThumbFrame src={src} isVideo={isVideo} emptyLabel="Sem pré-visualização">
                           <div className="pointer-events-none absolute left-2 top-2 z-[1] flex flex-wrap gap-1">
                             {isCover ? (
                               <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white shadow">
