@@ -65,46 +65,46 @@ function isMediaItemVideo(item) {
   return item != null && typeof item === 'object' && item.type === 'video';
 }
 
-/** Aceita http(s), blob:, data:image, URLs relativas ao site e protocol-relative // */
-function isValidImageSrcUrl(s) {
-  if (typeof s !== 'string') return false;
-  const t = s.trim();
-  if (!t) return false;
-  if (t.startsWith('blob:')) return true;
-  if (t.startsWith('data:image/')) return true;
-  try {
-    if (/^https?:\/\//i.test(t)) {
-      new URL(t);
-      return true;
-    }
-    if (t.startsWith('//') && /\/\/.+/.test(t)) {
-      new URL(`https:${t}`);
-      return true;
-    }
-    if (t.startsWith('/')) return true;
-  } catch {
-    return false;
-  }
-  return false;
+/** Miniatura utilizável: URL absoluta http(s) (evita thumb inválido pós-migração B2). */
+function isHttpThumbUrl(thumb) {
+  const t = thumb == null ? '' : String(thumb).trim();
+  return t.length > 0 && /^https?:\/\//i.test(t);
 }
 
 /**
- * Src para <img> no editor: thumb → url; nunca images[]/cover_image.
- * `item.type === 'video'` → não há src de imagem (retorno '').
- * Caso contrário retorna sempre string: URL validada ou ''.
+ * Src para <img> no editor de mídia. Sem images[]/cover_image.
+ * — Vídeo (`type === 'video'`): sem src para <img>.
+ * — Imagem: usar `thumb` só se for URL http(s); senão `item.url` como fallback (sempre que existir).
  */
-function resolveModelEditorMediaImageSrc(item) {
-  if (isMediaItemVideo(item)) return '';
+function resolveModelEditorMediaImageSrc(item, logMeta = {}) {
+  if (isMediaItemVideo(item)) {
+    // eslint-disable-next-line no-console -- log temporário para validar migração B2 / thumb
+    console.log('[Website editor media]', { ...logMeta, thumb: item?.thumb, url: item?.url, srcFinal: '' });
+    return '';
+  }
   if (typeof item === 'string') {
-    const u = item.trim();
-    return isValidImageSrcUrl(u) ? u : '';
+    const u = String(item).trim();
+    // eslint-disable-next-line no-console
+    console.log('[Website editor media]', { ...logMeta, thumb: '(item string)', url: u, srcFinal: u });
+    return u;
   }
   if (item && typeof item === 'object') {
     const thumb = item.thumb != null ? String(item.thumb).trim() : '';
     const url = item.url != null ? String(item.url).trim() : '';
-    const raw = thumb || url;
-    return raw && isValidImageSrcUrl(raw) ? raw : '';
+    let src = '';
+    if (isHttpThumbUrl(thumb)) {
+      src = thumb;
+    } else if (url) {
+      src = url;
+    } else if (thumb) {
+      src = thumb;
+    }
+    // eslint-disable-next-line no-console
+    console.log('[Website editor media]', { ...logMeta, thumb, url, srcFinal: src });
+    return src;
   }
+  // eslint-disable-next-line no-console
+  console.log('[Website editor media]', { ...logMeta, thumb: undefined, url: undefined, srcFinal: '' });
   return '';
 }
 
@@ -965,7 +965,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 <ul className={MEDIA_THUMB_GRID_CLASS}>
                   {apiMedia.map((item, index) => {
                     const isVideo = isMediaItemVideo(item);
-                    const src = resolveModelEditorMediaImageSrc(item);
+                    const src = resolveModelEditorMediaImageSrc(item, { index });
                     const isCover = index === 0;
                     const polaroidOn =
                       item && typeof item === 'object' && (item.polaroid === true || item.polaroid === 'true');
