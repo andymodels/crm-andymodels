@@ -89,10 +89,9 @@ function isValidImageSrcUrl(s) {
 }
 
 /**
- * Src para <img> no editor de mídia: miniatura (`thumb`) antes de imagem full (`url`).
- * Nunca `images[]` nem `cover_image` aqui.
- * `item.type === 'video'` → sem <img> (retorno '').
- * Retorno sempre string segura: URL validada ou ''.
+ * Src para <img> no editor: thumb → url; nunca images[]/cover_image.
+ * `item.type === 'video'` → não há src de imagem (retorno '').
+ * Caso contrário retorna sempre string: URL validada ou ''.
  */
 function resolveModelEditorMediaImageSrc(item) {
   if (isMediaItemVideo(item)) return '';
@@ -109,9 +108,9 @@ function resolveModelEditorMediaImageSrc(item) {
   return '';
 }
 
-/** Thumbnails compactos (site antigo): auto-fill, faixa 280–320px por cartão, gap 20px. */
+/** Grelha de thumbnails: colunas 280–320px, alinhamento consistente. */
 const MEDIA_THUMB_GRID_CLASS =
-  'grid w-full justify-center justify-items-center gap-5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]';
+  'grid w-full justify-center gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,320px))]';
 
 /** Área 3:4: imagem só com src válido; vídeo ou falha → placeholder (sem ícone partido). */
 function MediaThumbFrame({

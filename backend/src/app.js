@@ -20,7 +20,6 @@ const publicContratoAssinaturaRouter = require('./routes/publicContratoAssinatur
 const publicAgendaPresencaRouter = require('./routes/publicAgendaPresenca');
 const agendaRouter = require('./routes/agenda');
 const websiteModelsRouter = require('./routes/websiteModels');
-const compositeRoute = require('./routes/compositeRoute');
 const { UPLOAD_ROOT } = require('./services/storage');
 
 const app = express();
@@ -96,7 +95,6 @@ app.use('/api', financeiroRouter);
 app.use('/api', cadastroLinksRouter);
 app.use('/api', agendaRouter);
 app.use('/api', websiteModelsRouter);
-app.use('/api', compositeRoute);
 
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {
