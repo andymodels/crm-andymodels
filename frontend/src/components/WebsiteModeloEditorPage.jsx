@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
-import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits } from '../utils/brValidators';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
@@ -61,43 +61,6 @@ function mediaArrayFromDetail(detail) {
   if (!detail || typeof detail !== 'object') return [];
   const m = detail.media;
   return Array.isArray(m) ? m.slice() : [];
-}
-
-/**
- * Corpo do PATCH no site: objetos com type, url, thumb, polaroid (sem campos extra que possam falhar no backend).
- */
-function sanitizeMediaForWebsitePatch(media) {
-  if (!Array.isArray(media)) return [];
-  return media.map((raw) => {
-    if (raw != null && typeof raw === 'string') {
-      const url = String(raw).trim();
-      return { type: 'image', url, thumb: '', polaroid: false };
-    }
-    if (!raw || typeof raw !== 'object') {
-      return { type: 'image', url: '', thumb: '', polaroid: false };
-    }
-    const url = raw.url != null ? String(raw.url).trim() : '';
-    const type = raw.type != null ? String(raw.type).trim() : 'image';
-    const thumb = raw.thumb != null ? String(raw.thumb).trim() : '';
-    const polaroid = raw.polaroid === true || raw.polaroid === 'true' || raw.polaroid === 1;
-    return { type: type || 'image', url, thumb, polaroid };
-  });
-}
-
-/**
- * ID do modelo na BD do site — campo raiz `id` (inteiro).
- * Contrato verificado: GET https://www.andymodels.com/api/models/:slug → `{ "id": <number>, ... }`.
- */
-function resolveWebsiteModelId(detail) {
-  if (!detail || typeof detail !== 'object') return null;
-  const raw = detail.id;
-  if (raw == null) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-    console.warn('[Website editor] detail.id inválido (esperado inteiro ≥ 1):', raw);
-    return null;
-  }
-  return n;
 }
 
 /** Alinhado ao site: URL de vídeo para embed / leitura (YouTube, Vimeo, resto inalterado). */
@@ -285,45 +248,26 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [form, setForm] = useState(createInitialForm);
   /** Em edição: cópia de `model.media` apenas — URLs tal como no backend. */
   const [apiMedia, setApiMedia] = useState([]);
-  /** ID numérico do modelo no site — PATCH /api/admin/models/{id}/media */
-  const [websiteModelId, setWebsiteModelId] = useState(null);
   /** Em criação: pré-visualizações locais (ficheiros). */
   const [localMediaItems, setLocalMediaItems] = useState([]);
   const [loadLoading, setLoadLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('');
-  const [saveError, setSaveError] = useState('');
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
-  /** Confirmação antes de apagar foto (modal — evita bloqueio de `window.confirm` em alguns browsers). */
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const localMediaRef = useRef([]);
   useEffect(() => {
     localMediaRef.current = localMediaItems;
   }, [localMediaItems]);
 
   useEffect(() => {
-    if (!deleteConfirm) return undefined;
-    const onKey = (e) => {
-      if (e.key === 'Escape') setDeleteConfirm(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [deleteConfirm]);
-
-  useEffect(() => {
     if (!isEdit || !String(editSlug || '').trim()) {
       setForm(createInitialForm());
       setApiMedia([]);
-      setWebsiteModelId(null);
       setLocalMediaItems([]);
       setLoadError('');
       setLoadLoading(false);
       setEditBoot(false);
-      setSaveMessage('');
-      setSaveError('');
       setApiMediaSelected(new Set());
       return;
     }
@@ -332,8 +276,6 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       setEditBoot(true);
       setLoadLoading(true);
       setLoadError('');
-      setSaveMessage('');
-      setSaveError('');
       try {
         const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(String(editSlug).trim())}`);
         const raw = await r.text();
@@ -350,17 +292,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         if (cancelled) return;
         const d = data && typeof data === 'object' ? data : null;
-        // eslint-disable-next-line no-console -- debug ID (GET detalhe)
-        console.log('MODEL DETAIL:', d);
         setForm(mapDetailToForm(d));
         setApiMedia(d ? mediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
-        const resolvedId = resolveWebsiteModelId(d);
-        setWebsiteModelId(resolvedId);
         setApiMediaSelected(new Set());
-        if (resolvedId == null && d) {
-          console.warn('[Website editor] Sem detail.id inteiro em MODEL DETAIL.');
-        }
       } catch (e) {
         if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -475,160 +410,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     e.preventDefault();
   };
 
-  const reloadEdit = useCallback(() => {
-    if (!isEdit || !String(editSlug || '').trim()) return;
-    const slug = String(editSlug).trim();
-    setLoadLoading(true);
-    setLoadError('');
-    setSaveMessage('');
-    setSaveError('');
-    (async () => {
-      try {
-        const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
-        const raw = await r.text();
-        throwIfHtmlOrCannotPost(raw, r.status);
-        let data;
-        try {
-          data = raw ? JSON.parse(raw) : null;
-        } catch {
-          throw new Error('Resposta inválida do servidor.');
-        }
-        if (!r.ok) {
-          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
-          throw new Error(msg);
-        }
-        const d = data && typeof data === 'object' ? data : null;
-        // eslint-disable-next-line no-console -- debug ID (reload)
-        console.log('MODEL DETAIL:', d);
-        setForm(mapDetailToForm(d));
-        setApiMedia(d ? mediaArrayFromDetail(d) : []);
-        setLocalMediaItems([]);
-        setWebsiteModelId(resolveWebsiteModelId(d));
-        setApiMediaSelected(new Set());
-      } catch (e) {
-        setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
-      } finally {
-        setLoadLoading(false);
-      }
-    })();
-  }, [isEdit, editSlug]);
-
-  const handleSaveMedia = useCallback(async () => {
-    // eslint-disable-next-line no-console -- debug fluxo Salvar
-    console.log('clicou salvar');
-    // eslint-disable-next-line no-console -- debug fluxo Salvar
-    console.log('enviando media', apiMedia);
-    setSaveMessage('');
-    if (!isEdit) {
-      setSaveError('Salvar mídia só está disponível ao editar um modelo.');
-      return;
-    }
-    if (websiteModelId == null) {
-      setSaveError(
-        'ID do modelo não encontrado: o detalhe deve incluir `id` (inteiro) como na API pública /api/models/:slug.',
-      );
-      return;
-    }
-    setSaveError('');
-    const mediaPayload = sanitizeMediaForWebsitePatch(apiMedia);
-    const emptyUrl = mediaPayload.some((it) => !it.url);
-    if (emptyUrl) {
-      setSaveError('Há itens de mídia sem URL válida. Recarregue a página e tente de novo.');
-      return;
-    }
-    setSaveLoading(true);
-    try {
-      const modelId = websiteModelId;
-      // eslint-disable-next-line no-console -- ID usado no PATCH
-      console.log('ID usado no PATCH:', modelId);
-      // eslint-disable-next-line no-console -- debug obrigatório (salvamento mídia)
-      console.log('Saving media:', modelId, mediaPayload);
-      const url = `${API_BASE}/admin/models/${encodeURIComponent(String(modelId))}/media`;
-      const r = await fetchWithAuth(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ media: mediaPayload }),
-      });
-      // eslint-disable-next-line no-console -- debug obrigatório
-      console.log('Response:', r.status);
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      if (!r.ok) {
-        let msg = `HTTP ${r.status}`;
-        try {
-          const j = raw ? JSON.parse(raw) : null;
-          if (j && typeof j.message === 'string') msg = j.message;
-          else if (j && typeof j.error === 'string') msg = j.error;
-        } catch {
-          /* ignore */
-        }
-        throw new Error(msg);
-      }
-      setSaveMessage('Salvo com sucesso');
-    } catch (e) {
-      setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
-    } finally {
-      setSaveLoading(false);
-    }
-  }, [isEdit, websiteModelId, apiMedia]);
-
-  const handleSaveModelSite = useCallback(async () => {
-    setSaveMessage('');
-    if (!isEdit) {
-      setSaveError('Guardar dados do site só em modo edição.');
-      return;
-    }
-    if (websiteModelId == null) {
-      setSaveError(
-        'ID do modelo não encontrado. Confirme que o detalhe do site inclui `id`.',
-      );
-      return;
-    }
-    setSaveError('');
-    setSaveLoading(true);
-    try {
-      const payload = {
-        model_status: form.model_status,
-        city: form.city,
-      };
-      const url = `${API_BASE}/admin/models/${encodeURIComponent(String(websiteModelId))}`;
-      const r = await fetchWithAuth(url, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      if (!r.ok) {
-        let msg = `HTTP ${r.status}`;
-        try {
-          const j = raw ? JSON.parse(raw) : null;
-          if (j && typeof j.message === 'string') msg = j.message;
-          else if (j && typeof j.error === 'string') msg = j.error;
-        } catch {
-          /* ignore */
-        }
-        throw new Error(msg);
-      }
-      setSaveMessage('Dados do site guardados.');
-    } catch (e) {
-      setSaveError(e?.message ? String(e.message) : 'Erro ao guardar.');
-    } finally {
-      setSaveLoading(false);
-    }
-  }, [isEdit, websiteModelId, form.model_status, form.city]);
-
   const clearForm = () => {
-    if (isEdit) {
-      reloadEdit();
-      return;
-    }
     setForm(createInitialForm());
     setApiMedia([]);
     setLocalMediaItems((prev) => {
@@ -1164,7 +946,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                   Edição local do array <code className="rounded bg-slate-100 px-1">media</code>: marque fotos{' '}
                   <strong>em sequência</strong> (caixas) e arraste <strong>a partir de uma delas</strong> para mover o
                   bloco inteiro, ou use <strong>Subir bloco</strong> / <strong>Descer bloco</strong>. Uma foto só:
-                  arraste sem bloco selecionado. <strong>Salvar mídia</strong> grava no site.
+                  arraste sem bloco selecionado.
                 </p>
                 {apiMedia.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
@@ -1322,7 +1104,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                             onClick={(ev) => {
                               ev.preventDefault();
                               ev.stopPropagation();
-                              setDeleteConfirm({ type: 'api', index });
+                              if (!confirm('Tem certeza que deseja apagar esta foto?')) return;
+                              applyRemoveApiMediaAt(index);
                             }}
                             className="min-w-0 rounded border border-red-200 px-0.5 py-1 text-center text-[10px] leading-tight text-red-700"
                           >
@@ -1387,7 +1170,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                       </button>
                       <button
                         type="button"
-                        onClick={() => setDeleteConfirm({ type: 'local', id: item.id })}
+                        onClick={() => {
+                          if (!confirm('Tem certeza que deseja apagar esta foto?')) return;
+                          removeLocalMediaConfirmed(item.id);
+                        }}
                         className="ml-auto rounded border border-red-200 px-2 py-1 text-xs text-red-700"
                       >
                         Remover
@@ -1412,41 +1198,16 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           </div>
         </section>
 
-        <div className="flex flex-col items-end gap-2 border-t border-slate-200 pt-4">
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={clearForm}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {isEdit ? 'Repor dados do site' : 'Limpar formulário'}
-            </button>
-            {isEdit ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleSaveModelSite}
-                  disabled={saveLoading}
-                  className="rounded-lg border border-amber-600 bg-white px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Guarda model_status e city no site"
-                >
-                  {saveLoading ? 'A guardar…' : 'Salvar dados no site'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveMedia}
-                  disabled={saveLoading}
-                  className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={
-                    !websiteModelId
-                      ? 'Aviso: ID do modelo ainda não detetado — ao clicar verá mensagem de erro até a API enviar id.'
-                      : undefined
-                  }
-                >
-                  {saveLoading ? 'A guardar…' : 'Salvar mídia'}
-                </button>
-              </>
-            ) : (
+        {!isEdit ? (
+          <div className="flex flex-col items-end gap-2 border-t border-slate-200 pt-4">
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={clearForm}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Limpar formulário
+              </button>
               <button
                 type="button"
                 disabled
@@ -1454,56 +1215,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               >
                 Guardar (em breve)
               </button>
-            )}
-          </div>
-          {saveMessage ? <p className="text-sm text-emerald-700">{saveMessage}</p> : null}
-          {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
-        </div>
-      </form>
-
-      {deleteConfirm ? (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-confirm-title"
-          onClick={() => setDeleteConfirm(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h4 id="delete-confirm-title" className="text-base font-semibold text-slate-900">
-              Tem certeza que quer deletar esta imagem?
-            </h4>
-            <p className="mt-2 text-sm text-slate-600">
-              {deleteConfirm.type === 'api'
-                ? 'A alteração só passa a valer no site depois de clicar em «Salvar mídia».'
-                : 'Esta imagem ainda não foi enviada ao site.'}
-            </p>
-            <div className="mt-5 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeleteConfirm(null)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (deleteConfirm.type === 'api') applyRemoveApiMediaAt(deleteConfirm.index);
-                  else removeLocalMediaConfirmed(deleteConfirm.id);
-                  setDeleteConfirm(null);
-                }}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
-              >
-                Sim, apagar
-              </button>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </form>
+
     </div>
   );
 }
