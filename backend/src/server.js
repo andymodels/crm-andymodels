@@ -14,6 +14,19 @@ const server = app.listen(PORT, HOST);
 
 server.once('listening', () => {
   console.log(`API running on http://${HOST}:${PORT}`);
+  try {
+    const storage = require('./services/storage');
+    const d = storage.driver();
+    const hint =
+      d === 'b2'
+        ? storage.resolveB2PublicBase()
+          ? 'OK (URL pública B2)'
+          : 'ERRO: falta B2_PUBLIC_BASE_URL ou B2_DOWNLOAD_HOST+B2_BUCKET — fotos ficam em erro ao gravar'
+        : 'local (uploads/)';
+    console.log(`[storage] driver=${d} ${hint}`);
+  } catch (e) {
+    console.warn('[storage] ao verificar:', e.message || e);
+  }
   const publicIndex = path.join(__dirname, '..', 'public', 'index.html');
   if (!fs.existsSync(publicIndex)) {
     console.log(

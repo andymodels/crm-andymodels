@@ -4,6 +4,7 @@ const { sanitizeAndValidateModelo } = require('../utils/brValidators');
 const { insertModeloRow } = require('../utils/modeloInsert');
 const { validateTokenReadOnly, validateAndLockLink } = require('../utils/cadastroLinkHelpers');
 const { hashPassword } = require('../utils/auth');
+const { persistModeloFotoPerfil } = require('../services/modeloFotoPerfil');
 
 const router = express.Router();
 
@@ -198,6 +199,12 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
     body.status_cadastro = 'pendente';
     body.sexo = sexoParsed.label;
     Object.assign(body, med.values);
+
+    try {
+      body.foto_perfil_base64 = await persistModeloFotoPerfil(body.foto_perfil_base64);
+    } catch (e) {
+      return res.status(400).json({ message: e.message || 'Foto de perfil invalida.' });
+    }
 
     const client = await pool.connect();
     try {

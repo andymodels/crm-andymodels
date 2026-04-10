@@ -8,6 +8,11 @@ const {
 } = require('../utils/brValidators');
 const { stringifyJsonbColumns } = require('../utils/jsonbBody');
 const { insertModeloRow } = require('../utils/modeloInsert');
+const {
+  persistModeloFotoPerfil,
+  replaceModeloFotoPerfil,
+  removeStoredModeloFotoIfAny,
+} = require('../services/modeloFotoPerfil');
 
 const router = express.Router();
 
@@ -198,6 +203,14 @@ const makeCrudRoutes = ({
         if (!validation.valid) return res.status(400).json({ message: validation.message });
       }
 
+      if (table === 'modelos') {
+        try {
+          body.foto_perfil_base64 = await persistModeloFotoPerfil(body.foto_perfil_base64);
+        } catch (e) {
+          return res.status(400).json({ message: e.message || 'Foto de perfil invalida.' });
+        }
+      }
+
       const missing = missingRequiredFields(body, requiredFields);
       if (missing.length > 0) {
         return res.status(400).json({
@@ -290,6 +303,21 @@ const makeCrudRoutes = ({
         return res.status(400).json({ message: 'ID invalido.' });
       }
 
+      if (table === 'modelos' && Object.prototype.hasOwnProperty.call(body, 'foto_perfil_base64')) {
+        const prevQ = await pool.query('SELECT foto_perfil_base64 FROM modelos WHERE id = $1', [id]);
+        if (prevQ.rows.length === 0) {
+          return res.status(404).json({ message: 'Registro nao encontrado.' });
+        }
+        try {
+          body.foto_perfil_base64 = await replaceModeloFotoPerfil(
+            body.foto_perfil_base64,
+            prevQ.rows[0].foto_perfil_base64 || '',
+          );
+        } catch (e) {
+          return res.status(400).json({ message: e.message || 'Foto de perfil invalida.' });
+        }
+      }
+
       const setFields = updateFields
         .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
         .map((field, idx) => `${field} = $${idx + 1}`);
@@ -333,6 +361,13 @@ const makeCrudRoutes = ({
       const id = Number(req.params.id);
       if (Number.isNaN(id)) {
         return res.status(400).json({ message: 'ID invalido.' });
+      }
+
+      if (table === 'modelos') {
+        const prevQ = await pool.query('SELECT foto_perfil_base64 FROM modelos WHERE id = $1', [id]);
+        if (prevQ.rows.length > 0) {
+          await removeStoredModeloFotoIfAny(prevQ.rows[0].foto_perfil_base64);
+        }
       }
 
       const result = await pool.query(`DELETE FROM ${table} WHERE id = $1 RETURNING id`, [id]);

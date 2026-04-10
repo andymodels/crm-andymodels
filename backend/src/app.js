@@ -19,6 +19,7 @@ const modeloPortalRouter = require('./routes/modeloPortal');
 const publicContratoAssinaturaRouter = require('./routes/publicContratoAssinatura');
 const publicAgendaPresencaRouter = require('./routes/publicAgendaPresenca');
 const agendaRouter = require('./routes/agenda');
+const { UPLOAD_ROOT } = require('./services/storage');
 
 const app = express();
 
@@ -45,6 +46,13 @@ app.use((req, res, next) => {
 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
+/** Ficheiros gravados em uploads/ (driver local); mantido em paralelo a storage externa (B2). */
+try {
+  fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
+} catch (_e) {
+  /* ignorar; saveFile também cria subpastas */
+}
+app.use('/uploads', express.static(UPLOAD_ROOT));
 
 app.use((req, res, next) => {
   if (req.path === '/health') return next();

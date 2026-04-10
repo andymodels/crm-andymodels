@@ -1,20 +1,16 @@
-const path = require('path');
-const fs = require('fs');
-
-const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
+const storage = require('./storage');
 
 /**
- * Remove arquivos físicos de os_documentos antes de apagar a O.S. (CASCADE não apaga disco).
+ * Remove arquivos de os_documentos antes de apagar a O.S. (CASCADE não apaga storage).
  */
-function unlinkDocumentoPaths(rows) {
+async function unlinkDocumentoPaths(rows) {
   for (const r of rows) {
     const sp = r && r.storage_path != null ? String(r.storage_path) : '';
     if (!sp) continue;
     try {
-      const abs = path.join(UPLOAD_ROOT, ...sp.split('/').filter(Boolean));
-      if (fs.existsSync(abs)) fs.unlinkSync(abs);
+      await storage.removeFile(sp);
     } catch (e) {
-      console.warn('[excluirOrcamentoDefinitivo] arquivo:', e.message);
+      console.warn('[excluirOrcamentoDefinitivo] storage:', e.message);
     }
   }
 }
@@ -50,7 +46,7 @@ async function excluirOrcamentoDefinitivo(pool, orcamentoId) {
         `SELECT storage_path FROM os_documentos WHERE os_id = ANY($1::int[])`,
         [osIds],
       );
-      unlinkDocumentoPaths(docRows);
+      await unlinkDocumentoPaths(docRows);
     }
 
     await client.query(`DELETE FROM ordens_servico WHERE orcamento_id = $1`, [id]);

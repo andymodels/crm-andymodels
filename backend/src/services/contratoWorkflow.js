@@ -1,13 +1,10 @@
-const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const { loadContratoContext } = require('./contratoContext');
 const { validarContratoPronto } = require('./contratoReadiness');
 const { buildContratoDocumentHtml } = require('./contratoHtml');
 const { renderContratoPdfBuffer } = require('./contratoPdf');
 const { sendContratoEmail, validateContratoEmailEnv } = require('./contratoEmail');
-
-const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
+const storage = require('./storage');
 
 function appBaseUrl() {
   return String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(/\/$/, '');
@@ -19,10 +16,6 @@ function contratoAssinaturaPath(token) {
 
 function contratoAssinaturaUrl(token) {
   return `${appBaseUrl()}${contratoAssinaturaPath(token)}`;
-}
-
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 function sha256Hex(content) {
@@ -60,23 +53,22 @@ async function deleteOldGeneratedDoc(db, osId) {
   );
   for (const row of old.rows) {
     if (!row.storage_path) continue;
-    const abs = path.join(UPLOAD_ROOT, ...String(row.storage_path).split('/'));
     try {
-      fs.unlinkSync(abs);
+      await storage.removeFile(String(row.storage_path));
     } catch {
-      // arquivo já removido/indisponível
+      /* ignore */
     }
   }
 }
 
 async function saveGeneratedContractSnapshot(db, osId, pdfBuffer) {
-  ensureDir(UPLOAD_ROOT);
-  const dir = path.join(UPLOAD_ROOT, 'os', String(osId));
-  ensureDir(dir);
   const fileName = `contrato-os-${osId}.pdf`;
-  const abs = path.join(dir, fileName);
-  fs.writeFileSync(abs, pdfBuffer);
   const relPath = `os/${osId}/${fileName}`;
+  await storage.saveFile({
+    buffer: pdfBuffer,
+    relativePath: relPath,
+    contentType: 'application/pdf',
+  });
   const sha = sha256Hex(pdfBuffer);
 
   await deleteOldGeneratedDoc(db, osId);

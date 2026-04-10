@@ -1,35 +1,16 @@
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const { pool } = require('../config/db');
+const storage = require('../services/storage');
 
 const router = express.Router();
 
-const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
-
-function ensureUploadRoot() {
-  if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, _file, cb) => {
-    ensureUploadRoot();
-    const osId = req.params.id;
-    const dir = path.join(UPLOAD_ROOT, 'os', String(osId));
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.bin';
-    const safe = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-    cb(null, safe);
-  },
-});
+const memStorage = multer.memoryStorage();
 
 const upload = multer({
-  storage,
+  storage: memStorage,
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
@@ -43,7 +24,9 @@ router.post('/ordens-servico/:id/documentos', upload.single('arquivo'), async (r
     if (!TIPOS.includes(tipo)) {
       return res.status(400).json({ message: `tipo deve ser: ${TIPOS.join(', ')}` });
     }
-    if (!req.file) return res.status(400).json({ message: 'Arquivo obrigatorio (campo arquivo).' });
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'Arquivo obrigatorio (campo arquivo).' });
+    }
 
     const osCheck = await pool.query('SELECT id, status FROM ordens_servico WHERE id = $1', [osId]);
     if (osCheck.rows.length === 0) return res.status(404).json({ message: 'O.S. nao encontrada.' });
@@ -52,8 +35,22 @@ router.post('/ordens-servico/:id/documentos', upload.single('arquivo'), async (r
       return res.status(400).json({ message: 'O.S. cancelada nao aceita novos documentos.' });
     }
 
-    const relPath = `os/${osId}/${path.basename(req.file.path)}`;
-    const buf = fs.readFileSync(req.file.path);
+    const ext = path.extname(req.file.originalname || '') || '.bin';
+    const safe = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+    const relPath = `os/${osId}/${safe}`;
+
+    let buf = req.file.buffer;
+    const mime = req.file.mimetype || 'application/octet-stream';
+    // Processamento de imagem (Sharp, etc.) — inserir aqui sem alterar a rota; o buffer final vai para storage.saveFile.
+    // const sharp = require('sharp');
+    // buf = await sharp(buf).rotate().resize(2000, 2000, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+
+    await storage.saveFile({
+      buffer: buf,
+      relativePath: relPath,
+      contentType: mime,
+    });
+
     const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
 
     const ins = await pool.query(
@@ -62,8 +59,11 @@ router.post('/ordens-servico/:id/documentos', upload.single('arquivo'), async (r
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, os_id, tipo, nome_arquivo, mime, storage_path, sha256, created_at
       `,
-      [osId, tipo, req.file.originalname || path.basename(req.file.filename), req.file.mimetype, relPath, sha256],
+      [osId, tipo, req.file.originalname || safe, mime, relPath, sha256],
     );
+
+    const row = ins.rows[0];
+    const public_url = storage.getPublicUrl(row.storage_path);
 
     if (tipo === 'contrato_assinado_scan') {
       await pool.query(
@@ -78,7 +78,7 @@ router.post('/ordens-servico/:id/documentos', upload.single('arquivo'), async (r
       );
     }
 
-    res.status(201).json(ins.rows[0]);
+    res.status(201).json({ ...row, public_url: public_url || undefined });
   } catch (e) {
     next(e);
   }
@@ -97,11 +97,16 @@ router.get('/ordens-servico/:id/documentos/:docId/download', async (req, res, ne
     );
     if (r.rows.length === 0) return res.status(404).json({ message: 'Documento nao encontrado.' });
     const row = r.rows[0];
-    const abs = path.join(UPLOAD_ROOT, ...row.storage_path.split('/'));
-    if (!fs.existsSync(abs)) return res.status(404).json({ message: 'Arquivo nao encontrado no disco.' });
+
+    const exists = await storage.fileExists(row.storage_path);
+    if (!exists) return res.status(404).json({ message: 'Arquivo nao encontrado no armazenamento.' });
+
     res.setHeader('Content-Type', row.mime || 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.nome_arquivo)}"`);
-    fs.createReadStream(abs).pipe(res);
+
+    const stream = await storage.getReadableStream(row.storage_path);
+    if (!stream) return res.status(404).json({ message: 'Arquivo nao encontrado no armazenamento.' });
+    stream.pipe(res);
   } catch (e) {
     next(e);
   }
@@ -121,11 +126,10 @@ router.delete('/ordens-servico/:id/documentos/:docId', async (req, res, next) =>
       [docId, osId],
     );
     if (r.rows.length === 0) return res.status(404).json({ message: 'Documento nao encontrado.' });
-    const abs = path.join(UPLOAD_ROOT, ...r.rows[0].storage_path.split('/'));
     try {
-      fs.unlinkSync(abs);
+      await storage.removeFile(r.rows[0].storage_path);
     } catch {
-      // arquivo ja removido
+      // já removido ou indisponível
     }
     if (r.rows[0].tipo === 'contrato_assinado_scan') {
       const still = await pool.query(

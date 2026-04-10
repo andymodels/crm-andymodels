@@ -1555,10 +1555,36 @@ function App({ authUser, onLogout = () => {} }) {
 
       const saved = data;
 
-      if (editingId) {
-        setItems((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
+      const mergeSavedIntoItems = () => {
+        if (editingId) {
+          setItems((prev) =>
+            prev.map((item) =>
+              Number(item.id) === Number(saved.id) ? { ...item, ...saved } : item,
+            ),
+          );
+        } else {
+          setItems((prev) => [saved, ...prev]);
+        }
+      };
+
+      /** Modelos: lista completa do GET para refletir foto_perfil_base64 persistida (URL), não o preview base64 em memória. */
+      if (tab === 'modelos') {
+        try {
+          const listRes = await fetchWithTimeout(`${API_BASE}/modelos`);
+          const listRaw = await listRes.text();
+          throwIfHtmlOrCannotPost(listRaw, listRes.status);
+          if (!listRes.ok) throw new Error('refetch');
+          const listData = listRaw ? JSON.parse(listRaw) : [];
+          if (Array.isArray(listData)) {
+            setItems(listData);
+          } else {
+            mergeSavedIntoItems();
+          }
+        } catch {
+          mergeSavedIntoItems();
+        }
       } else {
-        setItems((prev) => [saved, ...prev]);
+        mergeSavedIntoItems();
       }
 
       setError('');
@@ -1607,6 +1633,10 @@ function App({ authUser, onLogout = () => {} }) {
       nextForm.cpf = formatCpfDisplay(onlyDigits(item.cpf || ''));
       nextForm.origem_cadastro = item.origem_cadastro ?? 'interno';
       nextForm.status_cadastro = item.status_cadastro ?? 'aprovado';
+      nextForm.foto_perfil_base64 =
+        item.foto_perfil_base64 != null && String(item.foto_perfil_base64).trim() !== ''
+          ? String(item.foto_perfil_base64)
+          : '';
     }
     if (tab === 'clientes') {
       nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).map(
