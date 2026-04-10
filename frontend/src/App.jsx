@@ -2466,7 +2466,7 @@ function App({ authUser, onLogout = () => {} }) {
       modelos: 'Catálogo do site institucional (somente leitura).',
       novo_modelo: '',
       editar_modelo: '',
-      inscricoes: 'Filtre por categoria e status; a listagem será integrada depois.',
+      inscricoes: 'Inscrições do site (api/applications/admin), alinhadas à administração do andymodels.com.',
       home: 'Página placeholder — sem alteração de dados ainda.',
       instagram: 'Página placeholder — sem alteração de dados ainda.',
       radio: 'Página placeholder — sem alteração de dados ainda.',
