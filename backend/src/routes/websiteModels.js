@@ -11,6 +11,16 @@ const router = express.Router();
 const WEBSITE_ORIGIN = 'https://www.andymodels.com';
 const WEBSITE_MODELS_LIST_URL = `${WEBSITE_ORIGIN}/api/models`;
 
+/** Mesmo valor que o site usa em adminAuth: Bearer = ADMIN_SECRET (login devolve { token: config.adminSecret }). */
+function websiteAdminBearerToken() {
+  return String(
+    process.env.WEBSITE_ADMIN_API_KEY ||
+      process.env.WEBSITE_ADMIN_TOKEN ||
+      process.env.ADMIN_SECRET ||
+      '',
+  ).trim();
+}
+
 function fetchWebsiteJson(url) {
   return new Promise((resolve, reject) => {
     const req = https.get(
@@ -54,7 +64,7 @@ function patchWebsiteJson(urlString, bodyObj) {
         'User-Agent': 'AndyModels-CRM/1.0',
       },
     };
-    const token = String(process.env.WEBSITE_ADMIN_API_KEY || process.env.WEBSITE_ADMIN_TOKEN || '').trim();
+    const token = websiteAdminBearerToken();
     if (token) {
       options.headers.Authorization = `Bearer ${token}`;
     }
@@ -142,11 +152,11 @@ router.patch('/admin/models/:id/media', async (req, res, next) => {
     const url = `${WEBSITE_ORIGIN}/api/admin/models/${encodeURIComponent(id)}/media`;
     const { statusCode, raw } = await patchWebsiteJson(url, { media: req.body.media });
     if (statusCode === 401) {
-      const hasEnvToken = String(process.env.WEBSITE_ADMIN_API_KEY || process.env.WEBSITE_ADMIN_TOKEN || '').trim();
+      const hasEnvToken = Boolean(websiteAdminBearerToken());
       return res.status(401).json({
         message: hasEnvToken
-          ? 'Website recusou WEBSITE_ADMIN_API_KEY / WEBSITE_ADMIN_TOKEN (401). Confirme a mesma chave configurada no servidor do site e no CRM (Render).'
-          : 'O backend do CRM não tem WEBSITE_ADMIN_API_KEY (ou WEBSITE_ADMIN_TOKEN) definida. No Render: serviço Web da API → Environment → adicionar a variável com o mesmo valor secreto que o site usa para /api/admin → Save → Manual Deploy. Em local: copie para backend/.env e reinicie.',
+          ? 'Website recusou o Bearer (401). O valor no CRM tem de ser o mesmo ADMIN_SECRET do site (o token devolvido por POST /api/admin/auth/login).'
+          : 'O backend do CRM não tem token admin do site. No Render (API): defina ADMIN_SECRET ou WEBSITE_ADMIN_API_KEY com o mesmo valor de ADMIN_SECRET do servidor do site → Save → Manual Deploy. Em local: backend/.env e reinicie.',
       });
     }
     if (statusCode === 204) {
