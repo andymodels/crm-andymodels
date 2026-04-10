@@ -1049,19 +1049,19 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                             ⋮⋮
                           </span>
                         </div>
-                        <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
+                        <div className="grid grid-cols-3 gap-0.5 border-t border-slate-200 p-1">
                           <button
                             type="button"
                             disabled={isCover}
                             onClick={() => handleApiMediaSetCover(index)}
-                            className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-950 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="min-w-0 rounded border border-amber-300 bg-amber-50 px-0.5 py-1 text-center text-[10px] font-medium leading-tight text-amber-950 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             Capa
                           </button>
                           <button
                             type="button"
                             onClick={() => handleApiMediaTogglePolaroid(index)}
-                            className={`rounded border px-2 py-1 text-xs font-medium ${
+                            className={`min-w-0 rounded border px-0.5 py-1 text-center text-[10px] font-medium leading-tight ${
                               polaroidOn
                                 ? 'border-sky-600 bg-sky-600 text-white shadow-sm'
                                 : 'border-sky-300 bg-sky-50 text-sky-900'
@@ -1072,7 +1072,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                           <button
                             type="button"
                             onClick={() => handleApiMediaRemove(index)}
-                            className="ml-auto rounded border border-red-200 px-2 py-1 text-xs text-red-700"
+                            className="min-w-0 rounded border border-red-200 px-0.5 py-1 text-center text-[10px] leading-tight text-red-700"
                           >
                             Apagar
                           </button>
