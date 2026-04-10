@@ -3,6 +3,8 @@ import DynamicTextListField from './components/DynamicTextListField';
 import OperacaoAgenda from './components/OperacaoAgenda';
 import AgendaCentral from './components/AgendaCentral';
 import WebsiteModelsPage from './components/WebsiteModelsPage';
+import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
+import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
@@ -606,6 +608,8 @@ function itemMatchesCadastroBusca(tab, item, rawQuery) {
 function App({ authUser, onLogout = () => {} }) {
   const [module, setModule] = useState('inicio');
   const [cadastrosMenuOpen, setCadastrosMenuOpen] = useState(false);
+  const [websiteMenuOpen, setWebsiteMenuOpen] = useState(false);
+  const [websiteSubView, setWebsiteSubView] = useState('modelos');
   const [tab, setTab] = useState('clientes');
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(cadastroConfig.bookers.form);
@@ -738,6 +742,10 @@ function App({ authUser, onLogout = () => {} }) {
 
   useEffect(() => {
     if (module !== 'cadastros') setCadastrosMenuOpen(false);
+  }, [module]);
+
+  useEffect(() => {
+    if (module !== 'website') setWebsiteMenuOpen(false);
   }, [module]);
 
   useEffect(() => {
@@ -2435,6 +2443,37 @@ function App({ authUser, onLogout = () => {} }) {
     });
   }, [orcamentoForm.linhas?.length]);
 
+  const websiteMainTitle = useMemo(() => {
+    if (module !== 'website') return '';
+    const labels = {
+      modelos: 'Modelos',
+      novo_modelo: 'Novo Modelo',
+      inscricoes: 'Inscrições',
+      home: 'Home',
+      instagram: 'Instagram',
+      radio: 'Rádio',
+    };
+    return labels[websiteSubView] || 'Website';
+  }, [module, websiteSubView]);
+
+  const websiteSubtitle = useMemo(() => {
+    if (module !== 'website') return '';
+    const lines = {
+      modelos: 'Catálogo do site institucional (somente leitura).',
+      novo_modelo: 'Página placeholder — sem alteração de dados ainda.',
+      inscricoes: 'Filtre por categoria e status; a listagem será integrada depois.',
+      home: 'Página placeholder — sem alteração de dados ainda.',
+      instagram: 'Página placeholder — sem alteração de dados ainda.',
+      radio: 'Página placeholder — sem alteração de dados ainda.',
+    };
+    return lines[websiteSubView] || '';
+  }, [module, websiteSubView]);
+
+  const websiteBadgeLabel = useMemo(() => {
+    if (module !== 'website') return '';
+    return websiteSubView === 'modelos' ? 'andymodels.com' : 'Website';
+  }, [module, websiteSubView]);
+
   return (
     <div className="min-h-screen bg-[#F7F7F7] text-slate-900">
       <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-5 p-5 lg:grid-cols-[260px_1fr]">
@@ -2541,13 +2580,44 @@ function App({ authUser, onLogout = () => {} }) {
             >
               Extrato modelo
             </button>
-            <button
-              type="button"
-              onClick={() => setModule('website')}
-              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'website')}`}
-            >
-              Website
-            </button>
+            <div className="rounded-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setWebsiteMenuOpen((prev) => !prev);
+                  setModule('website');
+                }}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'website')}`}
+              >
+                <span>Website</span>
+                <span className="text-xs opacity-90">{websiteMenuOpen ? '▾' : '▸'}</span>
+              </button>
+              {websiteMenuOpen && (
+                <nav className="mt-2 space-y-1.5 pl-2" aria-label="Secções do website">
+                  {[
+                    { id: 'modelos', label: 'Modelos' },
+                    { id: 'novo_modelo', label: 'Novo Modelo' },
+                    { id: 'inscricoes', label: 'Inscrições' },
+                    { id: 'home', label: 'Home' },
+                    { id: 'instagram', label: 'Instagram' },
+                    { id: 'radio', label: 'Rádio' },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => {
+                        setWebsiteMenuOpen(true);
+                        setModule('website');
+                        setWebsiteSubView(id);
+                      }}
+                      className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(websiteSubView === id && module === 'website')}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -2618,7 +2688,7 @@ function App({ authUser, onLogout = () => {} }) {
                                 : module === 'extrato'
                                   ? 'Extrato modelo'
                                   : module === 'website'
-                                    ? 'Website'
+                                    ? websiteMainTitle
                                     : 'Jobs / O.S.'}
                 </h2>
                 {module !== 'financeiro' ? (
@@ -2644,7 +2714,7 @@ function App({ authUser, onLogout = () => {} }) {
                               : module === 'extrato'
                                 ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
                                 : module === 'website'
-                                  ? 'Catálogo do site institucional (somente leitura).'
+                                  ? websiteSubtitle
                                   : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
                 </p>
                 ) : null}
@@ -2682,7 +2752,7 @@ function App({ authUser, onLogout = () => {} }) {
                               : module === 'extrato'
                                 ? `${extratoRows.length} linha(s)`
                                 : module === 'website'
-                                  ? 'andymodels.com'
+                                  ? websiteBadgeLabel
                                   : `${osList.length} O.S.`}
               </span>
             </div>
@@ -3792,7 +3862,16 @@ function App({ authUser, onLogout = () => {} }) {
             </>
           )}
 
-          {module === 'website' && <WebsiteModelsPage />}
+          {module === 'website' && websiteSubView === 'modelos' && <WebsiteModelsPage />}
+          {module === 'website' && websiteSubView === 'novo_modelo' && (
+            <WebsitePlaceholderPage title="Novo Modelo" />
+          )}
+          {module === 'website' && websiteSubView === 'inscricoes' && <WebsiteInscricoesPage />}
+          {module === 'website' && websiteSubView === 'home' && <WebsitePlaceholderPage title="Home" />}
+          {module === 'website' && websiteSubView === 'instagram' && (
+            <WebsitePlaceholderPage title="Instagram" />
+          )}
+          {module === 'website' && websiteSubView === 'radio' && <WebsitePlaceholderPage title="Rádio" />}
 
           {module === 'seguranca' && (
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">

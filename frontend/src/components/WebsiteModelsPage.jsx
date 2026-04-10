@@ -38,6 +38,17 @@ function hasCreatorsTag(m) {
   return arr.some((x) => String(x || '').trim().toLowerCase() === 'creators');
 }
 
+/** Destaca no topo sem alterar a ordem relativa dentro de cada grupo. */
+function prioritizeFeaturedStable(list) {
+  const featured = [];
+  const rest = [];
+  for (const m of list) {
+    if (m && typeof m === 'object' && m.featured === true) featured.push(m);
+    else rest.push(m);
+  }
+  return featured.concat(rest);
+}
+
 /**
  * Lista e detalhe de modelos do site (proxy CRM: /api/website/models, /api/website/models/:slug).
  */
@@ -55,11 +66,12 @@ export default function WebsiteModelsPage() {
   const [creatorsOnly, setCreatorsOnly] = useState(false);
 
   const filteredRows = useMemo(() => {
-    return rows.filter((m) => {
+    const filtered = rows.filter((m) => {
       if (websiteModelGender(m) !== siteGender) return false;
       if (creatorsOnly && !hasCreatorsTag(m)) return false;
       return true;
     });
+    return prioritizeFeaturedStable(filtered);
   }, [rows, siteGender, creatorsOnly]);
 
   useEffect(() => {
