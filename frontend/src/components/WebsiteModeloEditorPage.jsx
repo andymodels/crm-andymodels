@@ -50,6 +50,9 @@ function createInitialForm() {
     observacoes: '',
     video_url: '',
     slug_site: '',
+    /** GET /api/models/:slug — nomes iguais à API pública do site */
+    model_status: '',
+    city: '',
   };
 }
 
@@ -154,6 +157,31 @@ function removeApiMediaAt(arr, index) {
   return arr.filter((_, i) => i !== index);
 }
 
+/** Índices ordenados; todos consecutivos → { start, end }; senão null. */
+function consecutiveBlockRange(indices) {
+  if (!indices.length) return null;
+  const s = [...indices].sort((a, b) => a - b);
+  for (let i = 1; i < s.length; i += 1) {
+    if (s[i] !== s[i - 1] + 1) return null;
+  }
+  return { start: s[0], end: s[s.length - 1] };
+}
+
+/** Move o bloco [start..end] uma posição para cima. */
+function moveBlockUp(arr, start, end) {
+  if (start <= 0 || start > end || end >= arr.length) return arr;
+  const block = arr.slice(start, end + 1);
+  return [...arr.slice(0, start - 1), ...block, arr[start - 1], ...arr.slice(end + 1)];
+}
+
+/** Move o bloco [start..end] uma posição para baixo. */
+function moveBlockDown(arr, start, end) {
+  if (end >= arr.length - 1 || start > end || start < 0) return arr;
+  const after = arr[end + 1];
+  const block = arr.slice(start, end + 1);
+  return [...arr.slice(0, start), after, ...block, ...arr.slice(end + 2)];
+}
+
 /** Novo array; no índice, cópia rasa do objeto com `polaroid` alternado. */
 function togglePolaroidAt(arr, index) {
   if (index < 0 || index >= arr.length) return arr;
@@ -207,6 +235,8 @@ function mapDetailToForm(detail) {
           : '',
     slug_site: detail.slug != null ? String(detail.slug) : '',
     observacoes: detail.observacoes != null ? String(detail.observacoes) : '',
+    model_status: detail.model_status != null ? String(detail.model_status) : '',
+    city: detail.city != null ? String(detail.city) : '',
   };
 }
 
@@ -250,6 +280,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [saveMessage, setSaveMessage] = useState('');
   const [saveError, setSaveError] = useState('');
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
+  /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
+  const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
   const localMediaRef = useRef([]);
   useEffect(() => {
     localMediaRef.current = localMediaItems;
@@ -266,6 +298,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       setEditBoot(false);
       setSaveMessage('');
       setSaveError('');
+      setApiMediaSelected(new Set());
       return;
     }
     let cancelled = false;
@@ -298,6 +331,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         setLocalMediaItems([]);
         const resolvedId = resolveWebsiteModelId(d);
         setWebsiteModelId(resolvedId);
+        setApiMediaSelected(new Set());
         if (resolvedId == null && d) {
           console.warn('[Website editor] Sem detail.id inteiro em MODEL DETAIL.');
         }
@@ -386,6 +420,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   };
 
   const removeLocalMedia = (id) => {
+    if (!window.confirm('Remover esta imagem da lista? Ainda não foi enviada ao site.')) return;
     setLocalMediaItems((prev) => {
       const item = prev.find((x) => x.id === id);
       if (item?.preview?.startsWith('blob:')) URL.revokeObjectURL(item.preview);
@@ -444,6 +479,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         setApiMedia(d ? mediaArrayFromDetail(d) : []);
         setLocalMediaItems([]);
         setWebsiteModelId(resolveWebsiteModelId(d));
+        setApiMediaSelected(new Set());
       } catch (e) {
         setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -514,6 +550,55 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     }
   }, [isEdit, websiteModelId, apiMedia]);
 
+  const handleSaveModelSite = useCallback(async () => {
+    setSaveMessage('');
+    if (!isEdit) {
+      setSaveError('Guardar dados do site só em modo edição.');
+      return;
+    }
+    if (websiteModelId == null) {
+      setSaveError(
+        'ID do modelo não encontrado. Confirme que o detalhe do site inclui `id`.',
+      );
+      return;
+    }
+    setSaveError('');
+    setSaveLoading(true);
+    try {
+      const payload = {
+        model_status: form.model_status,
+        city: form.city,
+      };
+      const url = `${API_BASE}/admin/models/${encodeURIComponent(String(websiteModelId))}`;
+      const r = await fetchWithAuth(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`;
+        try {
+          const j = raw ? JSON.parse(raw) : null;
+          if (j && typeof j.message === 'string') msg = j.message;
+          else if (j && typeof j.error === 'string') msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      setSaveMessage('Dados do site guardados.');
+    } catch (e) {
+      setSaveError(e?.message ? String(e.message) : 'Erro ao guardar.');
+    } finally {
+      setSaveLoading(false);
+    }
+  }, [isEdit, websiteModelId, form.model_status, form.city]);
+
   const clearForm = () => {
     if (isEdit) {
       reloadEdit();
@@ -554,8 +639,60 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     setApiMedia((prev) => togglePolaroidAt(prev, index));
   }, []);
 
+  const toggleApiMediaSelect = useCallback((index) => {
+    setApiMediaSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const handleMoveMediaBlockUp = useCallback(() => {
+    const range = consecutiveBlockRange([...apiMediaSelected]);
+    if (!range) {
+      window.alert('Selecione uma ou mais fotos em sequência (caixas à esquerda) para formar um bloco.');
+      return;
+    }
+    if (range.start <= 0) {
+      window.alert('O bloco já está no topo.');
+      return;
+    }
+    setApiMedia((prev) => moveBlockUp(prev, range.start, range.end));
+    setApiMediaSelected(new Set());
+  }, [apiMediaSelected]);
+
+  const handleMoveMediaBlockDown = useCallback(() => {
+    const range = consecutiveBlockRange([...apiMediaSelected]);
+    if (!range) {
+      window.alert('Selecione uma ou mais fotos em sequência (caixas à esquerda) para formar um bloco.');
+      return;
+    }
+    if (range.end >= apiMedia.length - 1) {
+      window.alert('O bloco já está no fim.');
+      return;
+    }
+    setApiMedia((prev) => moveBlockDown(prev, range.start, range.end));
+    setApiMediaSelected(new Set());
+  }, [apiMediaSelected, apiMedia.length]);
+
   const handleApiMediaRemove = useCallback((index) => {
+    if (
+      !window.confirm(
+        'Apagar esta foto da galeria? Só fica definitivo no site depois de clicar em «Salvar mídia».',
+      )
+    ) {
+      return;
+    }
     setApiMedia((prev) => removeApiMediaAt(prev, index));
+    setApiMediaSelected((prevSel) => {
+      const next = new Set();
+      prevSel.forEach((i) => {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      });
+      return next;
+    });
   }, []);
 
   const formas = form.formas_pagamento?.length ? form.formas_pagamento : [emptyFormaRecebimento()];
@@ -665,6 +802,38 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                   <span className="text-xs text-slate-400">({hint})</span>
                 </label>
               ))}
+            </div>
+          </div>
+          <div className="md:col-span-2">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Status no site (API pública)
+            </p>
+            <p className="mb-3 text-xs text-slate-500">
+              Campos <code className="rounded bg-slate-100 px-1">model_status</code> e{' '}
+              <code className="rounded bg-slate-100 px-1">city</code> como em GET{' '}
+              <code className="rounded bg-slate-100 px-1">/api/models/:slug</code>.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Status do modelo">
+                <input
+                  value={form.model_status}
+                  onChange={(e) => setField('model_status', e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="ex.: In Town"
+                  autoComplete="off"
+                  name="model_status"
+                />
+              </Field>
+              <Field label="Cidade / localização pública">
+                <input
+                  value={form.city}
+                  onChange={(e) => setField('city', e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Cidade no perfil público"
+                  autoComplete="off"
+                  name="city"
+                />
+              </Field>
             </div>
           </div>
         </Section>
@@ -953,10 +1122,39 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           </h4>
           <div className="mt-4 space-y-4">
             {isEdit ? (
-              <p className="text-xs text-slate-500">
-                Edição local do array <code className="rounded bg-slate-100 px-1">media</code> (arrastar para
-                reordenar; use <strong>Salvar</strong> para persistir).
-              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-slate-500">
+                  Edição local do array <code className="rounded bg-slate-100 px-1">media</code> (arrastar para
+                  reordenar uma foto; marque várias fotos <strong>em sequência</strong> para subir ou descer o bloco
+                  inteiro). Use <strong>Salvar mídia</strong> para persistir no site.
+                </p>
+                {apiMedia.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                    <span className="font-medium text-slate-800">Bloco</span>
+                    <button
+                      type="button"
+                      onClick={handleMoveMediaBlockUp}
+                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 font-medium text-slate-800 hover:bg-slate-100"
+                    >
+                      Subir bloco
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleMoveMediaBlockDown}
+                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 font-medium text-slate-800 hover:bg-slate-100"
+                    >
+                      Descer bloco
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setApiMediaSelected(new Set())}
+                      className="rounded border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50"
+                    >
+                      Limpar seleção
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div className="flex flex-wrap items-center gap-3">
                 <input id={fileInputId} type="file" accept="image/*" multiple className="hidden" onChange={onPickFiles} />
@@ -1028,7 +1226,16 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                               —
                             </div>
                           )}
-                          <div className="pointer-events-none absolute left-2 top-2 z-[1] flex flex-wrap gap-1">
+                          <div className="pointer-events-auto absolute left-2 top-2 z-[2] flex max-w-[calc(100%-0.5rem)] flex-wrap items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={apiMediaSelected.has(index)}
+                              onChange={() => toggleApiMediaSelect(index)}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              title="Selecionar para mover em bloco (marcar fotos seguidas)"
+                              className="h-3.5 w-3.5 shrink-0 rounded border-slate-500 text-amber-600 focus:ring-amber-500"
+                              aria-label={`Selecionar foto ${index + 1}`}
+                            />
                             {isCover ? (
                               <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white shadow">
                                 Capa
@@ -1170,19 +1377,30 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               {isEdit ? 'Repor dados do site' : 'Limpar formulário'}
             </button>
             {isEdit ? (
-              <button
-                type="button"
-                onClick={handleSaveMedia}
-                disabled={saveLoading}
-                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
-                title={
-                  !websiteModelId
-                    ? 'Aviso: ID do modelo ainda não detetado — ao clicar verá mensagem de erro até a API enviar id.'
-                    : undefined
-                }
-              >
-                {saveLoading ? 'A guardar…' : 'Salvar'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveModelSite}
+                  disabled={saveLoading}
+                  className="rounded-lg border border-amber-600 bg-white px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Guarda model_status e city no site"
+                >
+                  {saveLoading ? 'A guardar…' : 'Salvar dados no site'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveMedia}
+                  disabled={saveLoading}
+                  className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={
+                    !websiteModelId
+                      ? 'Aviso: ID do modelo ainda não detetado — ao clicar verá mensagem de erro até a API enviar id.'
+                      : undefined
+                  }
+                >
+                  {saveLoading ? 'A guardar…' : 'Salvar mídia'}
+                </button>
+              </>
             ) : (
               <button
                 type="button"

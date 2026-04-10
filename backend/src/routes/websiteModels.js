@@ -45,18 +45,19 @@ function fetchWebsiteJson(url) {
 }
 
 /**
- * PATCH JSON para o website (ex.: atualizar media).
- * Nunca repassa o Authorization do browser (JWT do CRM) — o site só aceita a chave admin do próprio site (env no servidor).
+ * PATCH/PUT JSON para o website (media, modelo, etc.).
+ * Nunca repassa o Authorization do browser (JWT do CRM).
  */
-function patchWebsiteJson(urlString, bodyObj) {
-  const body = JSON.stringify(bodyObj);
+function websiteJsonRequest(method, urlString, bodyObj) {
+  const m = String(method || 'PATCH').toUpperCase();
+  const body = JSON.stringify(bodyObj ?? {});
   return new Promise((resolve, reject) => {
     const u = new URL(urlString);
     const options = {
       hostname: u.hostname,
       port: u.port || 443,
       path: `${u.pathname}${u.search}`,
-      method: 'PATCH',
+      method: m === 'PUT' ? 'PUT' : 'PATCH',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
@@ -85,6 +86,40 @@ function patchWebsiteJson(urlString, bodyObj) {
     req.write(body);
     req.end();
   });
+}
+
+function patchWebsiteJson(urlString, bodyObj) {
+  return websiteJsonRequest('PATCH', urlString, bodyObj);
+}
+
+/** Resposta proxy admin → cliente CRM (401, JSON, vazio). */
+function sendWebsiteAdminProxyResponse(res, statusCode, raw) {
+  if (statusCode === 401) {
+    const hasEnvToken = Boolean(websiteAdminBearerToken());
+    return res.status(401).json({
+      message: hasEnvToken
+        ? 'Website recusou o Bearer (401). O valor no CRM tem de ser o mesmo ADMIN_SECRET do site (o token devolvido por POST /api/admin/auth/login).'
+        : 'O backend do CRM não tem token admin do site. No Render (API): defina ADMIN_SECRET ou WEBSITE_ADMIN_API_KEY com o mesmo valor de ADMIN_SECRET do servidor do site → Save → Manual Deploy. Em local: backend/.env e reinicie.',
+    });
+  }
+  if (statusCode === 204) {
+    return res.status(204).end();
+  }
+  if (String(raw || '').trim() === '' && statusCode >= 200 && statusCode < 300) {
+    return res.json({ ok: true });
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return res.status(statusCode >= 400 ? statusCode : 502).json({
+      message: raw ? String(raw).slice(0, 500) : 'Resposta invalida do website.',
+    });
+  }
+  if (statusCode < 200 || statusCode >= 300) {
+    return res.status(statusCode).json(data && typeof data === 'object' ? data : { message: String(data) });
+  }
+  return res.json(data != null ? data : { ok: true });
 }
 
 router.get('/website/models', async (_req, res, next) => {
@@ -139,6 +174,7 @@ router.get('/website/models/:slug', async (req, res, next) => {
 /**
  * Atualiza apenas media do modelo no site: PATCH https://www.andymodels.com/api/admin/models/:id/media
  * Body: { media: [...] } — repassado sem outros campos.
+ * (Registado antes de /admin/models/:id para evitar ambiguidade.)
  */
 router.patch('/admin/models/:id/media', async (req, res, next) => {
   try {
@@ -151,32 +187,28 @@ router.patch('/admin/models/:id/media', async (req, res, next) => {
     }
     const url = `${WEBSITE_ORIGIN}/api/admin/models/${encodeURIComponent(id)}/media`;
     const { statusCode, raw } = await patchWebsiteJson(url, { media: req.body.media });
-    if (statusCode === 401) {
-      const hasEnvToken = Boolean(websiteAdminBearerToken());
-      return res.status(401).json({
-        message: hasEnvToken
-          ? 'Website recusou o Bearer (401). O valor no CRM tem de ser o mesmo ADMIN_SECRET do site (o token devolvido por POST /api/admin/auth/login).'
-          : 'O backend do CRM não tem token admin do site. No Render (API): defina ADMIN_SECRET ou WEBSITE_ADMIN_API_KEY com o mesmo valor de ADMIN_SECRET do servidor do site → Save → Manual Deploy. Em local: backend/.env e reinicie.',
-      });
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/**
+ * Atualiza modelo no site: PATCH https://www.andymodels.com/api/admin/models/:id
+ * Body repassado (ex.: model_status, city — nomes da API pública GET /api/models/:slug).
+ */
+router.patch('/admin/models/:id', async (req, res, next) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ message: 'ID invalido.' });
     }
-    if (statusCode === 204) {
-      return res.status(204).end();
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ message: 'Body invalido.' });
     }
-    if (String(raw || '').trim() === '' && statusCode >= 200 && statusCode < 300) {
-      return res.json({ ok: true });
-    }
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return res.status(statusCode >= 400 ? statusCode : 502).json({
-        message: raw ? String(raw).slice(0, 500) : 'Resposta invalida do website.',
-      });
-    }
-    if (statusCode < 200 || statusCode >= 300) {
-      return res.status(statusCode).json(data && typeof data === 'object' ? data : { message: String(data) });
-    }
-    return res.json(data != null ? data : { ok: true });
+    const url = `${WEBSITE_ORIGIN}/api/admin/models/${encodeURIComponent(id)}`;
+    const { statusCode, raw } = await patchWebsiteJson(url, req.body);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
   } catch (e) {
     return next(e);
   }
