@@ -142,7 +142,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
               {filteredRows.length === 0 ? (
                 <p className="mt-6 text-sm text-slate-500">Nenhum modelo nesta seleção.</p>
               ) : (
-            <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="mt-6 grid w-full justify-center justify-items-center gap-5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
               {filteredRows.map((m, idx) => {
                 const name = m?.name != null ? String(m.name) : '—';
                 const slug = m?.slug != null ? String(m.slug).trim() : '';
@@ -153,23 +153,26 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
                 const canOpen = Boolean(slug);
                 return (
-                  <li key={key} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+                  <li
+                    key={key}
+                    className="min-w-[280px] max-w-[320px] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm"
+                  >
                     <button
                       type="button"
                       disabled={!canOpen}
                       onClick={() => canOpen && openEdit(slug)}
                       className={`w-full text-left ${canOpen ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-80'}`}
                     >
-                      <div className="aspect-[3/4] w-full overflow-hidden bg-slate-200">
+                      <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-200">
                         {img ? (
                           <img
                             src={img}
                             alt=""
-                            className="h-full w-full object-cover"
+                            className="absolute inset-0 h-full w-full object-cover object-center"
                             loading="lazy"
                           />
                         ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                          <div className="flex h-full min-h-0 items-center justify-center text-xs text-slate-500">
                             Sem imagem
                           </div>
                         )}
