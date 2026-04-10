@@ -2,6 +2,28 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { API_BASE } from './apiConfig';
 
+/** yyyy-mm-dd → dd/mm/yyyy (data civil em UTC, evita “Invalid Date”) */
+function formatarDataBr(ymd) {
+  if (!ymd || typeof ymd !== 'string') return '—';
+  const m = ymd.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '—';
+  const [, y, mo, d] = m;
+  return `${d}/${mo}/${y}`;
+}
+
+/** dd/mm/yyyy, dia da semana, horário — funciona para datas passadas ou futuras */
+function linhaDataHorario(dataYmd, horario) {
+  const br = formatarDataBr(dataYmd);
+  if (br === '—') return horario ? `— às ${horario}` : '—';
+  const m = String(dataYmd).trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return horario ? `${br} às ${horario}` : br;
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(dt.getTime())) return horario ? `${br} às ${horario}` : br;
+  const diaSemana = dt.toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'UTC' });
+  const parte = `${br} (${diaSemana})`;
+  return horario ? `${parte} · ${horario}` : parte;
+}
+
 function JobResumo({ info }) {
   if (!info) return null;
   return (
@@ -19,17 +41,7 @@ function JobResumo({ info }) {
       </div>
       <div>
         <dt className="text-xs text-slate-500">Data e horário</dt>
-        <dd>
-          {info.data_trabalho
-            ? new Date(`${info.data_trabalho}T12:00:00`).toLocaleDateString('pt-BR', {
-                weekday: 'long',
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric',
-              })
-            : '—'}{' '}
-          {info.horario ? `às ${info.horario}` : ''}
-        </dd>
+        <dd>{linhaDataHorario(info.data_trabalho, info.horario)}</dd>
       </div>
       <div>
         <dt className="text-xs text-slate-500">Local</dt>
@@ -57,9 +69,8 @@ export default function PublicAgendaConfirmacao() {
   const [erro, setErro] = useState('');
   const [info, setInfo] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  /** null = ainda a escolher; após resposta nesta sessão */
-  const [respostaTipo, setRespostaTipo] = useState(null);
-  const [mostrarFormulario, setMostrarFormulario] = useState(true);
+  /** Resposta acabada de enviar nesta sessão (mostra mensagem de sucesso, não a de “já registrada”) */
+  const [acabeiDeResponder, setAcabeiDeResponder] = useState(false);
 
   const registrar = useCallback(
     async (acao) => {
@@ -78,16 +89,31 @@ export default function PublicAgendaConfirmacao() {
         } catch {
           throw new Error('Resposta inválida do servidor.');
         }
+        if (res.status === 409) {
+          setErro(data.message || 'Resposta já registrada para este convite.');
+          setInfo((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: data.status || prev.status,
+                  resposta_ja_registrada: true,
+                  pode_responder: false,
+                }
+              : prev,
+          );
+          return;
+        }
         if (!res.ok) throw new Error(data.message || 'Não foi possível registrar.');
         const novo = data.status === 'recusado' ? 'recusado' : 'confirmado';
-        setRespostaTipo(novo);
-        setMostrarFormulario(false);
+        setAcabeiDeResponder(true);
         setInfo((prev) =>
           prev
             ? {
                 ...prev,
                 status: novo,
                 respondido_em: new Date().toISOString(),
+                resposta_ja_registrada: true,
+                pode_responder: false,
               }
             : prev,
         );
@@ -124,6 +150,13 @@ export default function PublicAgendaConfirmacao() {
         if (!ativo) return;
         setInfo(data);
 
+        const ja = data.resposta_ja_registrada === true || data.pode_responder === false;
+
+        if (ja) {
+          setLoading(false);
+          return;
+        }
+
         if (acaoUrl) {
           setSubmitting(true);
           try {
@@ -138,17 +171,32 @@ export default function PublicAgendaConfirmacao() {
             } catch {
               throw new Error('Resposta inválida do servidor.');
             }
+            if (res2.status === 409) {
+              setErro(data2.message || 'Resposta já registrada para este convite.');
+              setInfo((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      status: data2.status || prev.status,
+                      resposta_ja_registrada: true,
+                      pode_responder: false,
+                    }
+                  : prev,
+              );
+              return;
+            }
             if (!res2.ok) throw new Error(data2.message || 'Não foi possível registrar.');
             if (!ativo) return;
             const novo = data2.status === 'recusado' ? 'recusado' : 'confirmado';
-            setRespostaTipo(novo);
-            setMostrarFormulario(false);
+            setAcabeiDeResponder(true);
             setInfo((prev) =>
               prev
                 ? {
                     ...prev,
                     status: novo,
                     respondido_em: new Date().toISOString(),
+                    resposta_ja_registrada: true,
+                    pode_responder: false,
                   }
                 : prev,
             );
@@ -187,19 +235,20 @@ export default function PublicAgendaConfirmacao() {
     );
   }
 
+  const jaRegistradoAntes = info?.resposta_ja_registrada === true && !acabeiDeResponder;
   const tituloSucesso =
-    respostaTipo === 'confirmado'
+    info?.status === 'confirmado'
       ? 'Presença confirmada com sucesso.'
-      : respostaTipo === 'recusado'
+      : info?.status === 'recusado'
         ? 'Você informou que não poderá comparecer.'
         : '';
 
   const caixaSucessoClass =
-    respostaTipo === 'recusado'
+    info?.status === 'recusado'
       ? 'border-rose-200 bg-rose-50 text-rose-900'
       : 'border-emerald-200 bg-emerald-50 text-emerald-900';
 
-  const mostrarSucesso = Boolean(respostaTipo) && !mostrarFormulario;
+  const mostrarSucessoPrimeiraResposta = acabeiDeResponder && info?.resposta_ja_registrada;
 
   return (
     <main className="mx-auto max-w-lg p-4 md:p-6">
@@ -207,23 +256,25 @@ export default function PublicAgendaConfirmacao() {
         <h1 className="text-xl font-semibold text-slate-900">Confirmação de presença</h1>
         <p className="mt-1 text-sm text-slate-600">Olá, {info?.modelo_nome || 'modelo'}.</p>
 
-        {mostrarSucesso ? (
+        {jaRegistradoAntes ? (
+          <>
+            <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800">
+              Resposta já registrada para este convite.
+            </p>
+            {info?.status === 'confirmado' ? (
+              <p className="mt-2 text-sm text-slate-600">O seu registo: <strong>confirmado</strong>.</p>
+            ) : null}
+            {info?.status === 'recusado' ? (
+              <p className="mt-2 text-sm text-slate-600">O seu registo: <strong>não poderá comparecer</strong>.</p>
+            ) : null}
+            <JobResumo info={info} />
+          </>
+        ) : mostrarSucessoPrimeiraResposta ? (
           <>
             <p className={`mt-4 rounded-lg border px-3 py-3 text-sm font-medium ${caixaSucessoClass}`}>
               {tituloSucesso}
             </p>
             <JobResumo info={info} />
-            <button
-              type="button"
-              className="mt-4 w-full rounded-xl border border-slate-300 py-2.5 text-sm font-medium text-slate-800"
-              onClick={() => {
-                setMostrarFormulario(true);
-                setRespostaTipo(null);
-                setErro('');
-              }}
-            >
-              Alterar minha resposta
-            </button>
           </>
         ) : (
           <>

@@ -5,6 +5,13 @@ const { getHorasValidade } = require('../utils/cadastroLinkHelpers');
 
 const router = express.Router();
 
+/** Base dos links públicos de cadastro (modelo/cliente). Não usar PUBLIC_APP_URL — costuma apontar para o site institucional. */
+const DEFAULT_CADASTRO_PUBLIC_URL = 'https://crm-andymodels.onrender.com';
+
+function cadastroPublicBase() {
+  return String(process.env.CADASTRO_PUBLIC_URL || DEFAULT_CADASTRO_PUBLIC_URL).replace(/\/$/, '');
+}
+
 /**
  * Gera um token de uso único para cadastro público de modelo.
  * POST /api/cadastro-links/gerar
@@ -17,7 +24,7 @@ router.post('/cadastro-links/gerar', async (req, res, next) => {
       [token],
     );
     const row = result.rows[0];
-    const base = String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(/\/$/, '');
+    const base = cadastroPublicBase();
     const url = `${base}/cadastro-modelo?token=${encodeURIComponent(token)}`;
     const horas = getHorasValidade();
     const validoAte = new Date(new Date(row.criado_em).getTime() + horas * 3600 * 1000);
@@ -45,7 +52,7 @@ router.post('/cadastro-links/clientes/gerar', async (req, res, next) => {
       [token],
     );
     const row = result.rows[0];
-    const base = String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(/\/$/, '');
+    const base = cadastroPublicBase();
     const url = `${base}/cadastro-cliente?token=${encodeURIComponent(token)}`;
     const horas = getHorasValidade();
     const validoAte = new Date(new Date(row.criado_em).getTime() + horas * 3600 * 1000);

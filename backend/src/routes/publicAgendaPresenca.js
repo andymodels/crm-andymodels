@@ -3,6 +3,17 @@ const { pool } = require('../config/db');
 
 const router = express.Router();
 
+function ymdFromDbDate(v) {
+  if (v == null) return null;
+  const s = String(v);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+function respostaFinalizada(status) {
+  return status === 'confirmado' || status === 'recusado';
+}
+
 router.get('/public/agenda-presenca', async (req, res, next) => {
   try {
     const token = String(req.query.token || '').trim();
@@ -39,18 +50,21 @@ router.get('/public/agenda-presenca', async (req, res, next) => {
       return res.status(404).json({ message: 'Link inválido ou expirado. Peça um novo convite ao escritório.' });
     }
     const row = r.rows[0];
+    const final = respostaFinalizada(row.status);
     res.json({
       agenda_evento_id: row.agenda_evento_id,
       os_id: row.os_id,
       cliente: row.cliente,
       modelo_nome: row.modelo_nome,
       tipo_trabalho: row.tipo_trabalho,
-      data_trabalho: row.data_trabalho ? String(row.data_trabalho).slice(0, 10) : null,
+      data_trabalho: ymdFromDbDate(row.data_trabalho),
       horario: row.horario_trabalho || null,
       local: row.local_trabalho || null,
       observacoes_extras: row.observacoes_extras || '',
       status: row.status,
       respondido_em: row.respondido_em,
+      resposta_ja_registrada: final,
+      pode_responder: !final,
     });
   } catch (e) {
     next(e);
@@ -58,23 +72,36 @@ router.get('/public/agenda-presenca', async (req, res, next) => {
 });
 
 router.post('/public/agenda-presenca', async (req, res, next) => {
+  const token = String(req.body?.token || '').trim();
+  const acao = String(req.body?.acao || '').trim().toLowerCase();
+  if (!token) return res.status(400).json({ message: 'Token obrigatório.' });
+  if (acao !== 'confirmar' && acao !== 'recusar') {
+    return res.status(400).json({ message: 'acao deve ser confirmar ou recusar.' });
+  }
+
+  const client = await pool.connect();
   try {
-    const token = String(req.body?.token || '').trim();
-    const acao = String(req.body?.acao || '').trim().toLowerCase();
-    if (!token) return res.status(400).json({ message: 'Token obrigatório.' });
-    if (acao !== 'confirmar' && acao !== 'recusar') {
-      return res.status(400).json({ message: 'acao deve ser confirmar ou recusar.' });
-    }
-    const cur = await pool.query(
-      `SELECT id, os_modelo_id, status FROM agenda_modelo_presenca WHERE token = $1`,
+    await client.query('BEGIN');
+    const cur = await client.query(
+      `SELECT id, os_modelo_id, status FROM agenda_modelo_presenca WHERE token = $1 FOR UPDATE`,
       [token],
     );
     if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Link inválido ou expirado. Peça um novo convite ao escritório.' });
     }
     const pr = cur.rows[0];
+    if (respostaFinalizada(pr.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        message: 'Resposta já registrada para este convite.',
+        status: pr.status,
+        resposta_ja_registrada: true,
+      });
+    }
+
     const novo = acao === 'confirmar' ? 'confirmado' : 'recusado';
-    await pool.query(
+    await client.query(
       `
       UPDATE agenda_modelo_presenca
       SET status = $2, respondido_em = NOW()
@@ -82,13 +109,15 @@ router.post('/public/agenda-presenca', async (req, res, next) => {
       `,
       [pr.id, novo],
     );
-    await pool.query(
+    await client.query(
       `
       INSERT INTO agenda_presenca_historico (presenca_id, tipo, detalhe)
       VALUES ($1, 'resposta', $2)
       `,
       [pr.id, acao === 'confirmar' ? 'Modelo confirmou presença' : 'Modelo recusou'],
     );
+    await client.query('COMMIT');
+
     try {
       const osRow = await pool.query(
         `
@@ -115,9 +144,17 @@ router.post('/public/agenda-presenca', async (req, res, next) => {
           ? 'Presença confirmada com sucesso.'
           : 'Você informou que não poderá comparecer.',
       status: novo,
+      resposta_ja_registrada: false,
     });
   } catch (e) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      /* ignore */
+    }
     next(e);
+  } finally {
+    client.release();
   }
 });
 

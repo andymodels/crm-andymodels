@@ -101,11 +101,14 @@ function montarEmailAgenda({
   `;
 }
 
-/** Base pública usada só nos links do e-mail de convocação (produção: Render). */
+/**
+ * Base dos links no e-mail de convocação — deve ser sempre o host onde o CRM está servido (SPA + API).
+ * Não usar PUBLIC_APP_URL aqui: muitas instalações definem-no como o site institucional (ex.: www.andymodels.com),
+ * o que faz os botões abrirem o site errado (/agenda/confirmar não existe lá).
+ * Override explícito: AGENDA_EMAIL_PUBLIC_URL (ex.: https://crm-andymodels.onrender.com).
+ */
 function agendaEmailLinkBase() {
-  return String(
-    process.env.AGENDA_EMAIL_PUBLIC_URL || process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com',
-  ).replace(/\/$/, '');
+  return String(process.env.AGENDA_EMAIL_PUBLIC_URL || 'https://crm-andymodels.onrender.com').replace(/\/$/, '');
 }
 
 /** Texto simples com os mesmos URLs do HTML — muitos clientes mostram links diretos sem reescrita Brevo no bloco text/plain. */

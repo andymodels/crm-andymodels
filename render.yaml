@@ -22,8 +22,11 @@ services:
           property: connectionString
       - key: RENDER
         value: "true"
-      # URL pública do SPA (links gerados em Cadastros → Gerar link de cadastro)
+      # URL pública do SPA (redirect /crm, contratos, etc.)
       - key: PUBLIC_APP_URL
+        value: "https://crm-andymodels.onrender.com"
+      # Links de cadastro público modelo/cliente (independente de PUBLIC_APP_URL)
+      - key: CADASTRO_PUBLIC_URL
         value: "https://crm-andymodels.onrender.com"
       # Cache do Chromium no disco do serviço (não use /opt/render/.cache/puppeteer no painel).
       - key: PUPPETEER_CACHE_DIR
