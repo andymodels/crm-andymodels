@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { WebsiteMediaImg, firstMediaEntry } from './WebsiteMediaImage';
 
+/** Mesma densidade e proporção da grelha de mídia na ficha do modelo (WebsiteModeloEditorPage). */
+const LIST_THUMB_GRID_CLASS =
+  'grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1';
+
 /** Género para listagem: women / men; usa `category` e, se necessário, `categories`. */
 function websiteModelGender(m) {
   if (!m || typeof m !== 'object') return '';
@@ -143,7 +147,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
               {filteredRows.length === 0 ? (
                 <p className="mt-6 text-sm text-slate-500">Nenhum modelo nesta seleção.</p>
               ) : (
-            <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className={`mt-6 ${LIST_THUMB_GRID_CLASS}`}>
               {filteredRows.map((m, idx) => {
                 const name = m?.name != null ? String(m.name) : '—';
                 const slug = m?.slug != null ? String(m.slug).trim() : '';
@@ -151,14 +155,17 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
                 const canOpen = Boolean(slug);
                 return (
-                  <li key={key} className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
+                  <li key={key} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
                     <button
                       type="button"
                       disabled={!canOpen}
                       onClick={() => canOpen && openEdit(slug)}
                       className={`w-full text-left ${canOpen ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-80'}`}
                     >
-                      <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-200">
+                      <div
+                        className="relative w-full overflow-hidden bg-slate-200"
+                        style={{ aspectRatio: '4/5' }}
+                      >
                         {cardMedia ? (
                           <WebsiteMediaImg
                             item={cardMedia}
@@ -172,7 +179,10 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                           </div>
                         )}
                       </div>
-                      <p className="border-t border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900">
+                      <p
+                        className="border-t border-slate-200 bg-white px-1.5 py-1 text-xs font-medium leading-tight text-slate-900 truncate"
+                        title={name}
+                      >
                         {name}
                         {!canOpen ? (
                           <span className="ml-2 text-xs font-normal text-amber-700">(sem slug)</span>
