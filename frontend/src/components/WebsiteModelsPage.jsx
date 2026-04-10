@@ -1,24 +1,41 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 
-function imagesFromDetail(d) {
-  if (!d || typeof d !== 'object') return [];
-  const media = d.media;
-  if (Array.isArray(media) && media.length > 0) {
-    return media
-      .map((x) => {
-        if (typeof x === 'string') return x.trim();
-        if (x && typeof x === 'object' && x.url) return String(x.url).trim();
-        if (x && typeof x === 'object' && x.src) return String(x.src).trim();
-        return '';
-      })
-      .filter(Boolean);
+/** Ordem preservada; sem sort/filter/reorganização. media tem prioridade se existir; senão images. */
+function websiteModelImages(model) {
+  if (!model || typeof model !== 'object') return [];
+  if (model.media != null) {
+    return Array.isArray(model.media) ? model.media : [];
   }
-  const imgs = d.images;
-  if (Array.isArray(imgs)) {
-    return imgs.map((u) => String(u || '').trim()).filter(Boolean);
+  return Array.isArray(model.images) ? model.images : [];
+}
+
+function itemToImageSrc(item) {
+  if (typeof item === 'string') return item;
+  if (item && typeof item === 'object') {
+    if (item.url != null) return String(item.url);
+    if (item.src != null) return String(item.src);
   }
-  return [];
+  return '';
+}
+
+/** Género para listagem: women / men; usa `category` e, se necessário, `categories`. */
+function websiteModelGender(m) {
+  if (!m || typeof m !== 'object') return '';
+  const c = String(m.category || '').trim().toLowerCase();
+  if (c === 'women' || c === 'men') return c;
+  const arr = Array.isArray(m.categories) ? m.categories : [];
+  for (const x of arr) {
+    const t = String(x || '').trim().toLowerCase();
+    if (t === 'women' || t === 'men') return t;
+  }
+  return '';
+}
+
+function hasCreatorsTag(m) {
+  if (!m || typeof m !== 'object') return false;
+  const arr = Array.isArray(m.categories) ? m.categories : [];
+  return arr.some((x) => String(x || '').trim().toLowerCase() === 'creators');
 }
 
 /**
@@ -33,6 +50,17 @@ export default function WebsiteModelsPage() {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+
+  const [siteGender, setSiteGender] = useState('women');
+  const [creatorsOnly, setCreatorsOnly] = useState(false);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((m) => {
+      if (websiteModelGender(m) !== siteGender) return false;
+      if (creatorsOnly && !hasCreatorsTag(m)) return false;
+      return true;
+    });
+  }, [rows, siteGender, creatorsOnly]);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,22 +187,23 @@ export default function WebsiteModelsPage() {
               <div>
                 <h5 className="mb-3 text-sm font-semibold text-slate-800">Imagens</h5>
                 {(() => {
-                  let imgs = imagesFromDetail(detail);
-                  if (imgs.length === 0 && detail.cover_image) {
-                    const c = String(detail.cover_image).trim();
-                    if (c) imgs = [c];
-                  }
-                  if (imgs.length === 0) {
+                  const items = websiteModelImages(detail);
+                  if (items.length === 0) {
                     return <p className="text-sm text-slate-500">Nenhuma imagem.</p>;
                   }
                   return (
                     <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {imgs.map((src, i) => (
+                      {items.map((item, i) => (
                         <li
-                          key={`${src}-${i}`}
+                          key={i}
                           className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
                         >
-                          <img src={src} alt="" className="aspect-[3/4] w-full object-cover" loading="lazy" />
+                          <img
+                            src={itemToImageSrc(item)}
+                            alt=""
+                            className="aspect-[3/4] w-full object-cover"
+                            loading="lazy"
+                          />
                         </li>
                       ))}
                     </ul>
@@ -193,8 +222,43 @@ export default function WebsiteModelsPage() {
           ) : rows.length === 0 ? (
             <p className="mt-6 text-sm text-slate-500">Nenhum modelo retornado.</p>
           ) : (
+            <>
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                  {[
+                    { key: 'women', label: 'Feminino' },
+                    { key: 'men', label: 'Masculino' },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSiteGender(key)}
+                      className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                        siteGender === key
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={creatorsOnly}
+                    onChange={(e) => setCreatorsOnly(e.target.checked)}
+                    className="rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                  />
+                  Creators
+                </label>
+              </div>
+
+              {filteredRows.length === 0 ? (
+                <p className="mt-6 text-sm text-slate-500">Nenhum modelo nesta seleção.</p>
+              ) : (
             <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {rows.map((m, idx) => {
+              {filteredRows.map((m, idx) => {
                 const name = m?.name != null ? String(m.name) : '—';
                 const slug = m?.slug != null ? String(m.slug).trim() : '';
                 const img =
@@ -236,6 +300,8 @@ export default function WebsiteModelsPage() {
                 );
               })}
             </ul>
+              )}
+            </>
           )}
         </>
       )}
