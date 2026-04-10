@@ -52,103 +52,50 @@ function createInitialForm() {
   };
 }
 
-/** Cópia rasa do array `media` do GET /website/models/:slug — mesma ordem, sem fallback para images/cover_image. */
-function cloneMediaArrayFromDetail(detail) {
+/**
+ * Igual ao site: `model.media` com itens → usar tal qual; senão `[cover_image, …images]`.
+ * Sem alterar ordem nem estrutura dos objetos vindos em `media`.
+ */
+function galleryItemsFromDetail(detail) {
   if (!detail || typeof detail !== 'object') return [];
   const m = detail.media;
-  if (!Array.isArray(m)) return [];
-  return m.slice();
+  if (Array.isArray(m) && m.length > 0) return m.slice();
+  const cover = detail.cover_image;
+  const images = Array.isArray(detail.images) ? detail.images : [];
+  return [cover, ...images];
 }
 
-/** Só `type === 'video'` desativa <img> (sem images[]/cover_image). */
-function isMediaItemVideo(item) {
-  return item != null && typeof item === 'object' && item.type === 'video';
-}
-
-/** Miniatura utilizável: URL absoluta http(s) (evita thumb inválido pós-migração B2). */
-function isHttpThumbUrl(thumb) {
-  const t = thumb == null ? '' : String(thumb).trim();
-  return t.length > 0 && /^https?:\/\//i.test(t);
-}
-
-/**
- * Src para <img> no editor de mídia. Sem images[]/cover_image.
- * — Vídeo (`type === 'video'`): sem src para <img>.
- * — Imagem: usar `thumb` só se for URL http(s); senão `item.url` como fallback (sempre que existir).
- */
-function resolveModelEditorMediaImageSrc(item, logMeta = {}) {
-  if (isMediaItemVideo(item)) {
-    // eslint-disable-next-line no-console -- log temporário para validar migração B2 / thumb
-    console.log('[Website editor media]', { ...logMeta, thumb: item?.thumb, url: item?.url, srcFinal: '' });
-    return '';
-  }
-  if (typeof item === 'string') {
-    const u = String(item).trim();
-    // eslint-disable-next-line no-console
-    console.log('[Website editor media]', { ...logMeta, thumb: '(item string)', url: u, srcFinal: u });
-    return u;
-  }
-  if (item && typeof item === 'object') {
-    const thumb = item.thumb != null ? String(item.thumb).trim() : '';
-    const url = item.url != null ? String(item.url).trim() : '';
-    let src = '';
-    if (isHttpThumbUrl(thumb)) {
-      src = thumb;
-    } else if (url) {
-      src = url;
-    } else if (thumb) {
-      src = thumb;
+/** Alinhado ao site: URL de vídeo para embed / leitura (YouTube, Vimeo, resto inalterado). */
+function parseVideoUrl(raw) {
+  if (raw == null) return '';
+  const url = String(raw).trim();
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') {
+      const id = u.pathname.replace(/^\//, '').slice(0, 11);
+      return id ? `https://www.youtube.com/embed/${id}` : url;
     }
-    // eslint-disable-next-line no-console
-    console.log('[Website editor media]', { ...logMeta, thumb, url, srcFinal: src });
-    return src;
+    if (host.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v) return `https://www.youtube.com/embed/${v}`;
+      const embed = u.pathname.match(/\/embed\/([^/?]+)/);
+      if (embed) return `https://www.youtube.com/embed/${embed[1]}`;
+    }
+    if (host.includes('vimeo.com')) {
+      const m = u.pathname.match(/\/(\d+)/);
+      if (m) return `https://player.vimeo.com/video/${m[1]}`;
+    }
+  } catch {
+    return url;
   }
-  // eslint-disable-next-line no-console
-  console.log('[Website editor media]', { ...logMeta, thumb: undefined, url: undefined, srcFinal: '' });
-  return '';
+  return url;
 }
 
-/** Grelha de thumbnails: colunas 280–320px, alinhamento consistente. */
-const MEDIA_THUMB_GRID_CLASS =
-  'grid w-full justify-center gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,320px))]';
-
-/** Área 3:4: imagem só com src válido; vídeo ou falha → placeholder (sem ícone partido). */
-function MediaThumbFrame({
-  src,
-  isVideo = false,
-  children,
-  videoLabel = 'Vídeo',
-  emptyLabel = 'Sem imagem',
-}) {
-  const [imgFailed, setImgFailed] = useState(false);
-  useEffect(() => {
-    setImgFailed(false);
-  }, [src]);
-  const showImg = Boolean(src) && !isVideo && !imgFailed;
-  return (
-    <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-100">
-      {isVideo ? (
-        <div className="flex h-full min-h-0 w-full items-center justify-center bg-gradient-to-b from-slate-200 to-slate-300/90 p-3 text-center">
-          <span className="text-xs font-medium text-slate-600">{videoLabel}</span>
-        </div>
-      ) : showImg ? (
-        <img
-          src={src}
-          alt=""
-          loading="lazy"
-          draggable={false}
-          onError={() => setImgFailed(true)}
-          className="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"
-        />
-      ) : (
-        <div className="flex h-full min-h-0 w-full items-center justify-center border border-dashed border-slate-200 bg-slate-50 p-2 text-center text-xs text-slate-500">
-          {emptyLabel}
-        </div>
-      )}
-      {children}
-    </div>
-  );
-}
+/** Grelha como no site institucional. */
+const WEBSITE_GALLERY_GRID_CLASS =
+  'grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1';
 
 /** Novo array com mesmos elementos; só muda a ordem. */
 function reorderApiMedia(arr, fromIndex, toIndex) {
@@ -259,7 +206,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const fileInputId = `${useId()}-files`;
   const isEdit = mode === 'edit';
   const [form, setForm] = useState(createInitialForm);
-  /** Em edição: itens exatamente como em `detail.media` da API (ordem preservada). */
+  /** Em edição: `media` da API ou fallback [cover_image, …images] — mesma ordem, objetos intocados. */
   const [apiMedia, setApiMedia] = useState([]);
   /** ID do modelo no site (GET /website/models/:slug) para PATCH .../admin/models/:id/media */
   const [websiteModelId, setWebsiteModelId] = useState(null);
@@ -313,7 +260,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         if (cancelled) return;
         const d = data && typeof data === 'object' ? data : null;
         setForm(mapDetailToForm(d));
-        setApiMedia(d ? cloneMediaArrayFromDetail(d) : []);
+        setApiMedia(d ? galleryItemsFromDetail(d) : []);
         setLocalMediaItems([]);
         setWebsiteModelId(
           d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
@@ -456,7 +403,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         const d = data && typeof data === 'object' ? data : null;
         setForm(mapDetailToForm(d));
-        setApiMedia(d ? cloneMediaArrayFromDetail(d) : []);
+        setApiMedia(d ? galleryItemsFromDetail(d) : []);
         setLocalMediaItems([]);
         setWebsiteModelId(
           d && d.id != null && String(d.id).trim() !== '' ? String(d.id) : null,
@@ -959,16 +906,21 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {isEdit ? (
               apiMedia.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  O endpoint não devolveu itens em <code className="rounded bg-slate-100 px-1">media</code>.
+                  Sem galeria: <code className="rounded bg-slate-100 px-1">media</code> vazio e sem{' '}
+                  <code className="rounded bg-slate-100 px-1">cover_image</code> /{' '}
+                  <code className="rounded bg-slate-100 px-1">images</code>.
                 </p>
               ) : (
-                <ul className={MEDIA_THUMB_GRID_CLASS}>
+                <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                   {apiMedia.map((item, index) => {
-                    const isVideo = isMediaItemVideo(item);
-                    const src = resolveModelEditorMediaImageSrc(item, { index });
+                    const isVideo = item && typeof item === 'object' && item.type === 'video';
                     const isCover = index === 0;
                     const polaroidOn =
                       item && typeof item === 'object' && (item.polaroid === true || item.polaroid === 'true');
+                    const flatSrc =
+                      typeof item === 'string'
+                        ? String(item).trim()
+                        : String((item && item.thumb) || (item && item.url) || '').trim();
                     return (
                       <li
                         key={index}
@@ -976,11 +928,44 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                         onDragStart={(e) => handleApiMediaDragStart(e, index)}
                         onDragOver={handleApiMediaDragOver}
                         onDrop={(e) => handleApiMediaDrop(e, index)}
-                        className={`min-w-0 w-full max-w-[320px] overflow-hidden rounded-xl border bg-white shadow-sm ${
+                        className={`min-w-0 overflow-hidden rounded-xl border bg-white shadow-sm ${
                           isCover ? 'border-amber-400 ring-2 ring-amber-300' : 'border-slate-200'
                         } ${polaroidOn ? 'ring-1 ring-sky-300' : ''}`}
                       >
-                        <MediaThumbFrame src={src} isVideo={isVideo} emptyLabel="Sem pré-visualização">
+                        <div
+                          className="relative w-full overflow-hidden bg-slate-100"
+                          style={{ aspectRatio: '4/5' }}
+                          {...(isVideo && item && typeof item === 'object' && item.url != null
+                            ? { 'data-video-embed': parseVideoUrl(item.url) }
+                            : {})}
+                        >
+                          {isVideo ? (
+                            item && typeof item === 'object' && item.thumb ? (
+                              <img
+                                src={String(item.thumb)}
+                                alt=""
+                                loading="lazy"
+                                draggable={false}
+                                className="absolute inset-0 h-full w-full object-cover object-top"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 flex items-center justify-center bg-slate-200 text-xs text-slate-500">
+                                Vídeo
+                              </div>
+                            )
+                          ) : flatSrc ? (
+                            <img
+                              src={flatSrc}
+                              alt=""
+                              loading="lazy"
+                              draggable={false}
+                              className="absolute inset-0 h-full w-full object-cover object-top"
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-xs text-slate-400">
+                              —
+                            </div>
+                          )}
                           <div className="pointer-events-none absolute left-2 top-2 z-[1] flex flex-wrap gap-1">
                             {isCover ? (
                               <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white shadow">
@@ -1001,7 +986,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                           >
                             ⋮⋮
                           </span>
-                        </MediaThumbFrame>
+                        </div>
                         <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
                           <button
                             type="button"
@@ -1040,17 +1025,33 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 Nenhuma imagem adicionada.
               </p>
             ) : (
-              <ul className={MEDIA_THUMB_GRID_CLASS}>
+              <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                 {localMediaItems.map((item, index) => (
                   <li
                     key={item.id}
-                    className="min-w-0 w-full max-w-[320px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                    className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
                   >
-                    <MediaThumbFrame src={item.preview} emptyLabel="Sem pré-visualização.">
+                    <div
+                      className="relative w-full overflow-hidden bg-slate-100"
+                      style={{ aspectRatio: '4/5' }}
+                    >
+                      {item.preview ? (
+                        <img
+                          src={item.preview}
+                          alt=""
+                          loading="lazy"
+                          draggable={false}
+                          className="absolute inset-0 h-full w-full object-cover object-top"
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
+                          —
+                        </div>
+                      )}
                       <span className="pointer-events-none absolute left-2 top-2 z-[1] rounded bg-black/60 px-2 py-0.5 text-xs text-white">
                         {index + 1}
                       </span>
-                    </MediaThumbFrame>
+                    </div>
                     <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
                       <button
                         type="button"
