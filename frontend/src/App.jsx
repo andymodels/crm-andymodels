@@ -611,6 +611,8 @@ function App({ authUser, onLogout = () => {} }) {
   const [cadastrosMenuOpen, setCadastrosMenuOpen] = useState(false);
   const [websiteMenuOpen, setWebsiteMenuOpen] = useState(false);
   const [websiteSubView, setWebsiteSubView] = useState('modelos');
+  /** Slug do modelo no site ao abrir edição a partir da lista (não é item do menu lateral). */
+  const [websiteEditSlug, setWebsiteEditSlug] = useState(null);
   const [tab, setTab] = useState('clientes');
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(cadastroConfig.bookers.form);
@@ -2449,6 +2451,7 @@ function App({ authUser, onLogout = () => {} }) {
     const labels = {
       modelos: 'Modelos',
       novo_modelo: 'Novo Modelo',
+      editar_modelo: 'Editar modelo',
       inscricoes: 'Inscrições',
       home: 'Home',
       instagram: 'Instagram',
@@ -2461,7 +2464,8 @@ function App({ authUser, onLogout = () => {} }) {
     if (module !== 'website') return '';
     const lines = {
       modelos: 'Catálogo do site institucional (somente leitura).',
-      novo_modelo: 'Formulário completo — gravação na API em breve.',
+      novo_modelo: '',
+      editar_modelo: '',
       inscricoes: 'Filtre por categoria e status; a listagem será integrada depois.',
       home: 'Página placeholder — sem alteração de dados ainda.',
       instagram: 'Página placeholder — sem alteração de dados ainda.',
@@ -2472,7 +2476,9 @@ function App({ authUser, onLogout = () => {} }) {
 
   const websiteBadgeLabel = useMemo(() => {
     if (module !== 'website') return '';
-    return websiteSubView === 'modelos' ? 'andymodels.com' : 'Website';
+    return websiteSubView === 'modelos' || websiteSubView === 'editar_modelo'
+      ? 'andymodels.com'
+      : 'Website';
   }, [module, websiteSubView]);
 
   return (
@@ -2530,8 +2536,12 @@ function App({ authUser, onLogout = () => {} }) {
                         setWebsiteMenuOpen(true);
                         setModule('website');
                         setWebsiteSubView(id);
+                        setWebsiteEditSlug(null);
                       }}
-                      className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(websiteSubView === id && module === 'website')}`}
+                      className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(
+                        (websiteSubView === id && module === 'website') ||
+                          (id === 'modelos' && module === 'website' && websiteSubView === 'editar_modelo'),
+                      )}`}
                     >
                       {label}
                     </button>
@@ -2692,7 +2702,7 @@ function App({ authUser, onLogout = () => {} }) {
                                     ? websiteMainTitle
                                     : 'Jobs / O.S.'}
                 </h2>
-                {module !== 'financeiro' ? (
+                {module !== 'financeiro' && !(module === 'website' && !String(websiteSubtitle || '').trim()) ? (
                 <p className="text-sm text-slate-500">
                   {module === 'cadastros'
                     ? cadastrosSubView === 'entrada'
@@ -3863,8 +3873,28 @@ function App({ authUser, onLogout = () => {} }) {
             </>
           )}
 
-          {module === 'website' && websiteSubView === 'modelos' && <WebsiteModelsPage />}
-          {module === 'website' && websiteSubView === 'novo_modelo' && <WebsiteModeloEditorPage />}
+          {module === 'website' && websiteSubView === 'modelos' && (
+            <WebsiteModelsPage
+              onOpenEdit={(slug) => {
+                setWebsiteEditSlug(slug);
+                setWebsiteSubView('editar_modelo');
+                setWebsiteMenuOpen(true);
+              }}
+            />
+          )}
+          {module === 'website' && websiteSubView === 'novo_modelo' && (
+            <WebsiteModeloEditorPage mode="create" />
+          )}
+          {module === 'website' && websiteSubView === 'editar_modelo' && websiteEditSlug && (
+            <WebsiteModeloEditorPage
+              mode="edit"
+              editSlug={websiteEditSlug}
+              onBackToList={() => {
+                setWebsiteSubView('modelos');
+                setWebsiteEditSlug(null);
+              }}
+            />
+          )}
           {module === 'website' && websiteSubView === 'inscricoes' && <WebsiteInscricoesPage />}
           {module === 'website' && websiteSubView === 'home' && <WebsitePlaceholderPage title="Home" />}
           {module === 'website' && websiteSubView === 'instagram' && (

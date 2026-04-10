@@ -1,24 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 
-/** Ordem preservada; sem sort/filter/reorganização. media tem prioridade se existir; senão images. */
-function websiteModelImages(model) {
-  if (!model || typeof model !== 'object') return [];
-  if (model.media != null) {
-    return Array.isArray(model.media) ? model.media : [];
-  }
-  return Array.isArray(model.images) ? model.images : [];
-}
-
-function itemToImageSrc(item) {
-  if (typeof item === 'string') return item;
-  if (item && typeof item === 'object') {
-    if (item.url != null) return String(item.url);
-    if (item.src != null) return String(item.src);
-  }
-  return '';
-}
-
 /** Género para listagem: women / men; usa `category` e, se necessário, `categories`. */
 function websiteModelGender(m) {
   if (!m || typeof m !== 'object') return '';
@@ -50,17 +32,13 @@ function prioritizeFeaturedStable(list) {
 }
 
 /**
- * Lista e detalhe de modelos do site (proxy CRM: /api/website/models, /api/website/models/:slug).
+ * Lista de modelos do site (proxy CRM: /api/website/models).
+ * Clicar num modelo abre o fluxo de edição no CRM (via onOpenEdit).
  */
-export default function WebsiteModelsPage() {
+export default function WebsiteModelsPage({ onOpenEdit }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const [selectedSlug, setSelectedSlug] = useState(null);
-  const [detail, setDetail] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState('');
 
   const [siteGender, setSiteGender] = useState('women');
   const [creatorsOnly, setCreatorsOnly] = useState(false);
@@ -105,128 +83,23 @@ export default function WebsiteModelsPage() {
     };
   }, []);
 
-  const loadDetail = useCallback(async (slug) => {
-    const s = String(slug || '').trim();
-    if (!s) return;
-    setSelectedSlug(s);
-    setDetail(null);
-    setDetailError('');
-    setDetailLoading(true);
-    try {
-      const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(s)}`);
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      let data;
-      try {
-        data = raw ? JSON.parse(raw) : null;
-      } catch {
-        throw new Error('Resposta inválida do servidor.');
-      }
-      if (!r.ok) {
-        const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
-        throw new Error(msg);
-      }
-      setDetail(data && typeof data === 'object' ? data : null);
-    } catch (e) {
-      setDetailError(e?.message ? String(e.message) : 'Erro ao carregar detalhe.');
-      setDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
-
-  const closeDetail = useCallback(() => {
-    setSelectedSlug(null);
-    setDetail(null);
-    setDetailError('');
-  }, []);
+  const openEdit = useCallback(
+    (slug) => {
+      const s = String(slug || '').trim();
+      if (!s || typeof onOpenEdit !== 'function') return;
+      onOpenEdit(s);
+    },
+    [onOpenEdit],
+  );
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="text-base font-semibold text-slate-800">Modelos no site</h3>
       <p className="mt-1 text-sm text-slate-500">
-        Dados públicos de andymodels.com (somente leitura). Clique num modelo para ver o detalhe.
+        Dados públicos de andymodels.com. Clique num modelo para abrir a ficha de edição.
       </p>
 
-      {selectedSlug ? (
-        <div className="mt-6">
-          <button
-            type="button"
-            onClick={closeDetail}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            ← Voltar à lista
-          </button>
-
-          {detailLoading ? (
-            <p className="mt-6 text-sm text-slate-500">A carregar detalhe…</p>
-          ) : detailError ? (
-            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{detailError}</p>
-          ) : detail ? (
-            <div className="mt-6 space-y-6">
-              <div>
-                <h4 className="text-xl font-semibold text-slate-900">
-                  {detail.name != null ? String(detail.name) : '—'}
-                </h4>
-                {detail.slug != null ? (
-                  <p className="text-sm text-slate-500">/{String(detail.slug)}</p>
-                ) : null}
-              </div>
-
-              <div>
-                <h5 className="mb-2 text-sm font-semibold text-slate-800">Medidas</h5>
-                <dl className="grid max-w-md grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                  {[
-                    ['Altura', detail.height],
-                    ['Busto', detail.bust],
-                    ['Cintura', detail.waist],
-                    ['Quadril', detail.hips],
-                    ['Sapato', detail.shoes],
-                    ['Olhos', detail.eyes],
-                    ['Cabelo', detail.hair],
-                    ['Idade', detail.age],
-                  ].map(([label, val]) => (
-                    <div key={label} className="contents">
-                      <dt className="text-slate-500">{label}</dt>
-                      <dd className="font-medium text-slate-900">
-                        {val != null && String(val).trim() !== '' ? String(val) : '—'}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-
-              <div>
-                <h5 className="mb-3 text-sm font-semibold text-slate-800">Imagens</h5>
-                {(() => {
-                  const items = websiteModelImages(detail);
-                  if (items.length === 0) {
-                    return <p className="text-sm text-slate-500">Nenhuma imagem.</p>;
-                  }
-                  return (
-                    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {items.map((item, i) => (
-                        <li
-                          key={i}
-                          className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100"
-                        >
-                          <img
-                            src={itemToImageSrc(item)}
-                            alt=""
-                            className="aspect-[3/4] w-full object-cover"
-                            loading="lazy"
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  );
-                })()}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <>
+      <>
           {loading ? (
             <p className="mt-6 text-sm text-slate-500">Carregando…</p>
           ) : error ? (
@@ -284,7 +157,7 @@ export default function WebsiteModelsPage() {
                     <button
                       type="button"
                       disabled={!canOpen}
-                      onClick={() => canOpen && loadDetail(slug)}
+                      onClick={() => canOpen && openEdit(slug)}
                       className={`w-full text-left ${canOpen ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-80'}`}
                     >
                       <div className="aspect-[3/4] w-full overflow-hidden bg-slate-200">
@@ -315,8 +188,7 @@ export default function WebsiteModelsPage() {
               )}
             </>
           )}
-        </>
-      )}
+      </>
     </section>
   );
 }

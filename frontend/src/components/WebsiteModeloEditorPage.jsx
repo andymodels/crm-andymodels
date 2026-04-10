@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
+import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits } from '../utils/brValidators';
 
 const emptyFormaRecebimento = () => ({
@@ -51,6 +52,105 @@ function createInitialForm() {
   };
 }
 
+/** Cópia rasa do array `media` do GET /website/models/:slug — mesma ordem, sem fallback para images/cover_image. */
+function cloneMediaArrayFromDetail(detail) {
+  if (!detail || typeof detail !== 'object') return [];
+  const m = detail.media;
+  if (!Array.isArray(m)) return [];
+  return m.slice();
+}
+
+/** Resolve URL só para o elemento <img> — não altera o array guardado em estado. */
+function itemToImageSrc(item) {
+  if (typeof item === 'string') return item;
+  if (item && typeof item === 'object') {
+    if (item.url != null) return String(item.url);
+    if (item.src != null) return String(item.src);
+  }
+  return '';
+}
+
+/** Novo array com mesmos elementos; só muda a ordem. */
+function reorderApiMedia(arr, fromIndex, toIndex) {
+  if (fromIndex === toIndex) return arr;
+  if (fromIndex < 0 || toIndex < 0 || fromIndex >= arr.length || toIndex >= arr.length) return arr;
+  const next = [...arr];
+  const [removed] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, removed);
+  return next;
+}
+
+/** Novo array: item em `index` passa para índice 0 (capa). */
+function moveToCover(arr, index) {
+  if (index <= 0 || index >= arr.length) return arr;
+  const next = [...arr];
+  const [removed] = next.splice(index, 1);
+  next.unshift(removed);
+  return next;
+}
+
+/** Novo array sem o índice. */
+function removeApiMediaAt(arr, index) {
+  if (index < 0 || index >= arr.length) return arr;
+  return arr.filter((_, i) => i !== index);
+}
+
+/** Novo array; no índice, cópia rasa do objeto com `polaroid` alternado. */
+function togglePolaroidAt(arr, index) {
+  if (index < 0 || index >= arr.length) return arr;
+  const next = [...arr];
+  const el = next[index];
+  if (!el || typeof el !== 'object') return arr;
+  next[index] = Object.assign({}, el, { polaroid: !Boolean(el.polaroid) });
+  return next;
+}
+
+function mapDetailToForm(detail) {
+  const base = createInitialForm();
+  if (!detail || typeof detail !== 'object') return base;
+  const cats = Array.isArray(detail.categories) ? detail.categories.map((c) => String(c).toLowerCase()) : [];
+  const cat = String(detail.category || '').toLowerCase();
+  const has = (x) => cats.includes(x) || cat === x;
+  return {
+    ...base,
+    nome: detail.name != null ? String(detail.name) : '',
+    bio:
+      detail.bio != null
+        ? String(detail.bio)
+        : detail.description != null
+          ? String(detail.description)
+          : '',
+    featured: detail.featured === true,
+    ativo: detail.active !== false && detail.ativo !== false,
+    catFeminino: has('women') || has('feminino'),
+    catMasculino: has('men') || has('masculino'),
+    catCreators: has('creators'),
+    medida_altura: detail.height != null ? String(detail.height) : '',
+    medida_busto: detail.bust != null ? String(detail.bust) : '',
+    medida_torax:
+      detail.chest != null
+        ? String(detail.chest)
+        : detail.torax != null
+          ? String(detail.torax)
+          : '',
+    medida_cintura: detail.waist != null ? String(detail.waist) : '',
+    medida_quadril: detail.hips != null ? String(detail.hips) : '',
+    medida_sapato: detail.shoes != null ? String(detail.shoes) : '',
+    medida_cabelo: detail.hair != null ? String(detail.hair) : '',
+    medida_olhos: detail.eyes != null ? String(detail.eyes) : '',
+    instagram: detail.instagram != null ? String(detail.instagram) : '',
+    tiktok: detail.tiktok != null ? String(detail.tiktok) : '',
+    video_url:
+      detail.video_url != null
+        ? String(detail.video_url)
+        : detail.video != null
+          ? String(detail.video)
+          : '',
+    slug_site: detail.slug != null ? String(detail.slug) : '',
+    observacoes: detail.observacoes != null ? String(detail.observacoes) : '',
+  };
+}
+
 function Section({ title, children, className = '' }) {
   return (
     <section className={`rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm ${className}`}>
@@ -72,19 +172,72 @@ function Field({ label, children, className = '' }) {
 }
 
 /**
- * Formulário completo Novo modelo / Editar modelo (Website).
- * Estado local apenas — sem persistência na API.
+ * Formulário Website — criação (vazio) ou edição (carrega GET público por slug).
+ * Sem persistência de gravação.
  */
-export default function WebsiteModeloEditorPage() {
-  const formId = useId();
-  const fileInputId = `${formId}-files`;
-  const [modo, setModo] = useState('novo');
+export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = '', onBackToList }) {
+  const fileInputId = `${useId()}-files`;
+  const isEdit = mode === 'edit';
   const [form, setForm] = useState(createInitialForm);
-  const [mediaItems, setMediaItems] = useState([]);
-  const mediaItemsRef = useRef([]);
+  /** Em edição: itens exatamente como em `detail.media` da API (ordem preservada). */
+  const [apiMedia, setApiMedia] = useState([]);
+  /** Em criação: pré-visualizações locais (ficheiros). */
+  const [localMediaItems, setLocalMediaItems] = useState([]);
+  const [loadLoading, setLoadLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
+  const localMediaRef = useRef([]);
   useEffect(() => {
-    mediaItemsRef.current = mediaItems;
-  }, [mediaItems]);
+    localMediaRef.current = localMediaItems;
+  }, [localMediaItems]);
+
+  useEffect(() => {
+    if (!isEdit || !String(editSlug || '').trim()) {
+      setForm(createInitialForm());
+      setApiMedia([]);
+      setLocalMediaItems([]);
+      setLoadError('');
+      setLoadLoading(false);
+      setEditBoot(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setEditBoot(true);
+      setLoadLoading(true);
+      setLoadError('');
+      try {
+        const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(String(editSlug).trim())}`);
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        let data;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          throw new Error('Resposta inválida do servidor.');
+        }
+        if (!r.ok) {
+          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        if (cancelled) return;
+        const d = data && typeof data === 'object' ? data : null;
+        setForm(mapDetailToForm(d));
+        setApiMedia(d ? cloneMediaArrayFromDetail(d) : []);
+        setLocalMediaItems([]);
+      } catch (e) {
+        if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
+      } finally {
+        if (!cancelled) {
+          setLoadLoading(false);
+          setEditBoot(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEdit, editSlug]);
 
   const setField = useCallback((key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -139,9 +292,10 @@ export default function WebsiteModeloEditorPage() {
     });
 
   const onPickFiles = (e) => {
+    if (isEdit) return;
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    setMediaItems((prev) => {
+    setLocalMediaItems((prev) => {
       const next = [...prev];
       for (const f of files) {
         const id =
@@ -155,16 +309,16 @@ export default function WebsiteModeloEditorPage() {
     e.target.value = '';
   };
 
-  const removeMedia = (id) => {
-    setMediaItems((prev) => {
+  const removeLocalMedia = (id) => {
+    setLocalMediaItems((prev) => {
       const item = prev.find((x) => x.id === id);
       if (item?.preview?.startsWith('blob:')) URL.revokeObjectURL(item.preview);
       return prev.filter((x) => x.id !== id);
     });
   };
 
-  const moveMedia = (index, delta) => {
-    setMediaItems((prev) => {
+  const moveLocalMedia = (index, delta) => {
+    setLocalMediaItems((prev) => {
       const j = index + delta;
       if (j < 0 || j >= prev.length) return prev;
       const next = [...prev];
@@ -175,7 +329,7 @@ export default function WebsiteModeloEditorPage() {
 
   useEffect(() => {
     return () => {
-      mediaItemsRef.current.forEach((m) => {
+      localMediaRef.current.forEach((m) => {
         if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
       });
     };
@@ -185,59 +339,120 @@ export default function WebsiteModeloEditorPage() {
     e.preventDefault();
   };
 
+  const reloadEdit = useCallback(() => {
+    if (!isEdit || !String(editSlug || '').trim()) return;
+    const slug = String(editSlug).trim();
+    setLoadLoading(true);
+    setLoadError('');
+    (async () => {
+      try {
+        const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        let data;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          throw new Error('Resposta inválida do servidor.');
+        }
+        if (!r.ok) {
+          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        const d = data && typeof data === 'object' ? data : null;
+        setForm(mapDetailToForm(d));
+        setApiMedia(d ? cloneMediaArrayFromDetail(d) : []);
+        setLocalMediaItems([]);
+      } catch (e) {
+        setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
+      } finally {
+        setLoadLoading(false);
+      }
+    })();
+  }, [isEdit, editSlug]);
+
+  const clearForm = () => {
+    if (isEdit) {
+      reloadEdit();
+      return;
+    }
+    setForm(createInitialForm());
+    setApiMedia([]);
+    setLocalMediaItems((prev) => {
+      prev.forEach((m) => {
+        if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
+      });
+      return [];
+    });
+  };
+
+  const handleApiMediaDragStart = useCallback((e, index) => {
+    e.dataTransfer.setData('text/plain', String(index));
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleApiMediaDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleApiMediaDrop = useCallback((e, dropIndex) => {
+    e.preventDefault();
+    const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (Number.isNaN(from)) return;
+    setApiMedia((prev) => reorderApiMedia(prev, from, dropIndex));
+  }, []);
+
+  const handleApiMediaSetCover = useCallback((index) => {
+    setApiMedia((prev) => moveToCover(prev, index));
+  }, []);
+
+  const handleApiMediaTogglePolaroid = useCallback((index) => {
+    setApiMedia((prev) => togglePolaroidAt(prev, index));
+  }, []);
+
+  const handleApiMediaRemove = useCallback((index) => {
+    setApiMedia((prev) => removeApiMediaAt(prev, index));
+  }, []);
+
   const formas = form.formas_pagamento?.length ? form.formas_pagamento : [emptyFormaRecebimento()];
+
+  if (isEdit && editBoot) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
+        A carregar modelo…
+      </div>
+    );
+  }
+
+  if (isEdit && loadError) {
+    return (
+      <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => onBackToList && onBackToList()}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700"
+        >
+          ← Voltar à lista
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="text-base font-semibold text-slate-800">
-              {modo === 'novo' ? 'Novo modelo' : 'Editar modelo'}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Campos alinhados ao cadastro de modelos do CRM e às categorias do site (women / men / creators). A
-              gravação será ligada à API num passo seguinte.
-            </p>
-          </div>
-          <div className="inline-flex shrink-0 rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-            <button
-              type="button"
-              onClick={() => setModo('novo')}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                modo === 'novo' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Novo modelo
-            </button>
-            <button
-              type="button"
-              onClick={() => setModo('editar')}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                modo === 'editar' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Editar modelo
-            </button>
-          </div>
+      {isEdit ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onBackToList && onBackToList()}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            ← Voltar à lista
+          </button>
         </div>
-
-        {modo === 'editar' ? (
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-950">
-            <span className="font-medium">Identificação no site:</span> use o slug para localizar o registo quando a API
-            existir.
-            <label className="mt-2 block max-w-md">
-              <span className="mb-1 block text-xs font-medium text-slate-700">Slug / URL no site</span>
-              <input
-                value={form.slug_site}
-                onChange={(e) => setField('slug_site', e.target.value)}
-                placeholder="ex.: nome-da-modelo"
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       <form onSubmit={onSubmit} className="space-y-5">
         <Section title="Identificação e site">
@@ -247,6 +462,15 @@ export default function WebsiteModeloEditorPage() {
               onChange={(e) => setField('nome', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="Nome completo ou artístico"
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Slug (URL no site)" className="md:col-span-2">
+            <input
+              value={form.slug_site}
+              onChange={(e) => setField('slug_site', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="ex.: nome-da-modelo"
               autoComplete="off"
             />
           </Field>
@@ -585,24 +809,116 @@ export default function WebsiteModeloEditorPage() {
             Mídia
           </h4>
           <div className="mt-4 space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <input id={fileInputId} type="file" accept="image/*" multiple className="hidden" onChange={onPickFiles} />
-              <label
-                htmlFor={fileInputId}
-                className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
-              >
-                Adicionar imagens
-              </label>
-              <span className="text-xs text-slate-500">Pré-visualização local; reordene com os botões em cada cartão.</span>
-            </div>
+            {isEdit ? (
+              <p className="text-xs text-slate-500">
+                Edição local do array <code className="rounded bg-slate-100 px-1">media</code> (arrastar para
+                reordenar; gravar no servidor ainda não disponível).
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <input id={fileInputId} type="file" accept="image/*" multiple className="hidden" onChange={onPickFiles} />
+                <label
+                  htmlFor={fileInputId}
+                  className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+                >
+                  Adicionar imagens
+                </label>
+                <span className="text-xs text-slate-500">Pré-visualização local; reordene com os botões em cada cartão.</span>
+              </div>
+            )}
 
-            {mediaItems.length === 0 ? (
+            {isEdit ? (
+              apiMedia.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  O endpoint não devolveu itens em <code className="rounded bg-slate-100 px-1">media</code>.
+                </p>
+              ) : (
+                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {apiMedia.map((item, index) => {
+                    const src = itemToImageSrc(item);
+                    const isCover = index === 0;
+                    const polaroidOn =
+                      item && typeof item === 'object' && (item.polaroid === true || item.polaroid === 'true');
+                    return (
+                      <li
+                        key={index}
+                        draggable
+                        onDragStart={(e) => handleApiMediaDragStart(e, index)}
+                        onDragOver={handleApiMediaDragOver}
+                        onDrop={(e) => handleApiMediaDrop(e, index)}
+                        className={`overflow-hidden rounded-xl border bg-white shadow-sm ${
+                          isCover ? 'border-amber-400 ring-2 ring-amber-300' : 'border-slate-200'
+                        } ${polaroidOn ? 'ring-1 ring-sky-300' : ''}`}
+                      >
+                        <div className="relative aspect-[3/4] w-full bg-slate-100">
+                          {src ? (
+                            <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />
+                          ) : (
+                            <div className="flex h-full items-center justify-center p-2 text-center text-xs text-slate-500">
+                              Sem URL de imagem neste item.
+                            </div>
+                          )}
+                          <div className="absolute left-2 top-2 flex flex-wrap gap-1">
+                            {isCover ? (
+                              <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white shadow">
+                                Capa
+                              </span>
+                            ) : (
+                              <span className="rounded bg-black/60 px-2 py-0.5 text-xs text-white">{index + 1}</span>
+                            )}
+                            {polaroidOn ? (
+                              <span className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white shadow">
+                                Polaroid
+                              </span>
+                            ) : null}
+                          </div>
+                          <span
+                            className="absolute bottom-2 right-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white"
+                            title="Arrastar para reordenar"
+                          >
+                            ⋮⋮
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
+                          <button
+                            type="button"
+                            disabled={isCover}
+                            onClick={() => handleApiMediaSetCover(index)}
+                            className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-950 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Capa
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApiMediaTogglePolaroid(index)}
+                            className={`rounded border px-2 py-1 text-xs font-medium ${
+                              polaroidOn
+                                ? 'border-sky-600 bg-sky-600 text-white shadow-sm'
+                                : 'border-sky-300 bg-sky-50 text-sky-900'
+                            }`}
+                          >
+                            Polaroid
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApiMediaRemove(index)}
+                            className="ml-auto rounded border border-red-200 px-2 py-1 text-xs text-red-700"
+                          >
+                            Apagar
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            ) : localMediaItems.length === 0 ? (
               <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
                 Nenhuma imagem adicionada.
               </p>
             ) : (
               <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {mediaItems.map((item, index) => (
+                {localMediaItems.map((item, index) => (
                   <li
                     key={item.id}
                     className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
@@ -617,7 +933,7 @@ export default function WebsiteModeloEditorPage() {
                       <button
                         type="button"
                         disabled={index === 0}
-                        onClick={() => moveMedia(index, -1)}
+                        onClick={() => moveLocalMedia(index, -1)}
                         className="rounded border border-slate-200 px-2 py-1 text-xs disabled:opacity-40"
                         title="Mover para cima"
                       >
@@ -625,8 +941,8 @@ export default function WebsiteModeloEditorPage() {
                       </button>
                       <button
                         type="button"
-                        disabled={index === mediaItems.length - 1}
-                        onClick={() => moveMedia(index, 1)}
+                        disabled={index === localMediaItems.length - 1}
+                        onClick={() => moveLocalMedia(index, 1)}
                         className="rounded border border-slate-200 px-2 py-1 text-xs disabled:opacity-40"
                         title="Mover para baixo"
                       >
@@ -634,7 +950,7 @@ export default function WebsiteModeloEditorPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => removeMedia(item.id)}
+                        onClick={() => removeLocalMedia(item.id)}
                         className="ml-auto rounded border border-red-200 px-2 py-1 text-xs text-red-700"
                       >
                         Remover
@@ -659,22 +975,13 @@ export default function WebsiteModeloEditorPage() {
           </div>
         </section>
 
-        <div className="flex flex-wrap items-center justify-end gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-4">
           <button
             type="button"
-            onClick={() => {
-              setForm(createInitialForm());
-              setMediaItems((prev) => {
-                prev.forEach((m) => {
-                  if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
-                });
-                return [];
-              });
-              setModo('novo');
-            }}
+            onClick={clearForm}
             className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            Limpar formulário
+            {isEdit ? 'Repor dados do site' : 'Limpar formulário'}
           </button>
           <button
             type="submit"
