@@ -25,6 +25,50 @@ function websiteAdminBearerToken() {
   ).trim();
 }
 
+/** Ative DEBUG_WEBSITE_PROXY=1 no Render/.env para ver URL, método e corpo (nunca o segredo em claro). */
+function isDebugWebsiteProxy() {
+  return String(process.env.DEBUG_WEBSITE_PROXY || '').trim() === '1';
+}
+
+function safeHeadersForLog(headers) {
+  const h = { ...headers };
+  if (h.Authorization) {
+    const s = String(h.Authorization);
+    h.Authorization = s.startsWith('Bearer ')
+      ? `Bearer <redacted, ${s.length} chars>`
+      : '<redacted>';
+  }
+  return h;
+}
+
+function logWebsiteProxyOutgoing(method, urlString, headers, bodyStr) {
+  if (!isDebugWebsiteProxy()) return;
+  const token = websiteAdminBearerToken();
+  const bodyPreview =
+    bodyStr.length > 6000 ? `${bodyStr.slice(0, 6000)}… (+${bodyStr.length - 6000} chars)` : bodyStr;
+  console.log(
+    '[website-proxy] outgoing',
+    JSON.stringify(
+      {
+        method,
+        url: urlString,
+        headers: safeHeadersForLog(headers),
+        bodyLength: Buffer.byteLength(bodyStr, 'utf8'),
+        body: bodyPreview,
+        adminBearerConfigured: Boolean(token),
+        adminBearerLength: token ? token.length : 0,
+      },
+      null,
+      0,
+    ),
+  );
+}
+
+function logWebsiteProxyResponse(statusCode, rawPreview) {
+  if (!isDebugWebsiteProxy()) return;
+  console.log('[website-proxy] response', JSON.stringify({ statusCode, rawPreview }));
+}
+
 /** GET com Bearer admin do site (ex.: inscrições). */
 function fetchWebsiteAdminJson(url) {
   return new Promise((resolve, reject) => {
@@ -90,6 +134,8 @@ function websiteJsonRequest(method, urlString, bodyObj) {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  logWebsiteProxyOutgoing(m, urlString, headers, body);
+
   if (typeof fetch === 'function') {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 25_000);
@@ -100,7 +146,14 @@ function websiteJsonRequest(method, urlString, bodyObj) {
       redirect: 'follow',
       signal: ctrl.signal,
     })
-      .then((res) => res.text().then((raw) => ({ statusCode: res.status, raw })))
+      .then((res) =>
+        res.text().then((raw) => {
+          const preview =
+            raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
+          logWebsiteProxyResponse(res.status, preview);
+          return { statusCode: res.status, raw };
+        }),
+      )
       .finally(() => clearTimeout(tid))
       .catch((e) => {
         if (e && e.name === 'AbortError') throw new Error('Timeout ao contactar o website.');
@@ -130,6 +183,9 @@ function websiteJsonRequest(method, urlString, bodyObj) {
         raw += chunk;
       });
       res.on('end', () => {
+        const preview =
+          raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
+        logWebsiteProxyResponse(res.statusCode || 0, preview);
         resolve({ statusCode: res.statusCode || 0, raw });
       });
     });
@@ -144,6 +200,23 @@ function websiteJsonRequest(method, urlString, bodyObj) {
 
 function patchWebsiteJson(urlString, bodyObj) {
   return websiteJsonRequest('PATCH', urlString, bodyObj);
+}
+
+/**
+ * A API pública do site usa featured/active como 0/1; boolean + slug null costuma quebrar o admin.
+ */
+function normalizeWebsiteModelPatchBody(body) {
+  if (!body || typeof body !== 'object') return {};
+  const out = { ...body };
+  if (typeof out.featured === 'boolean') out.featured = out.featured ? 1 : 0;
+  if (typeof out.active === 'boolean') out.active = out.active ? 1 : 0;
+  if (out.slug == null || String(out.slug).trim() === '') delete out.slug;
+  const torax = out.torax != null ? String(out.torax).trim() : '';
+  if (torax && (out.chest == null || String(out.chest).trim() === '')) out.chest = torax;
+  for (const k of Object.keys(out)) {
+    if (out[k] === null || out[k] === undefined) delete out[k];
+  }
+  return out;
 }
 
 function websiteDeleteRequest(urlString) {
@@ -312,7 +385,14 @@ router.patch('/admin/models/:id', async (req, res, next) => {
       return res.status(400).json({ message: 'Body invalido.' });
     }
     const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
-    const { statusCode, raw } = await patchWebsiteJson(url, req.body);
+    const payload = normalizeWebsiteModelPatchBody(req.body);
+    let { statusCode, raw } = await patchWebsiteJson(url, payload);
+    /** Alguns deploys do site respondem 404 a PATCH com corpo que o handler não aceita; PUT costuma ser o update “completo”. */
+    if (statusCode === 404 && String(raw || '').includes('<')) {
+      const second = await websiteJsonRequest('PUT', url, payload);
+      statusCode = second.statusCode;
+      raw = second.raw;
+    }
     return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);

@@ -169,11 +169,12 @@ function formToWebsiteModelPatch(form) {
       : 'creators';
 
   const trim = (s) => (s != null ? String(s).trim() : '');
-  return {
+  /** API pública do site usa 0/1; boolean + slug null a partir do CRM pode falhar no admin. */
+  const out = {
     name: trim(form.nome),
     bio: trim(form.bio),
-    featured: Boolean(form.featured),
-    active: Boolean(form.ativo),
+    featured: form.featured ? 1 : 0,
+    active: form.ativo ? 1 : 0,
     category,
     categories,
     height: trim(form.medida_altura) || null,
@@ -187,10 +188,12 @@ function formToWebsiteModelPatch(form) {
     instagram: trim(form.instagram) || null,
     tiktok: trim(form.tiktok) || null,
     video_url: trim(form.video_url) || null,
-    slug: trim(form.slug_site) || null,
     model_status: trim(form.model_status) || null,
     city: trim(form.city) || null,
   };
+  const slug = trim(form.slug_site);
+  if (slug) out.slug = slug;
+  return out;
 }
 
 function mapDetailToForm(detail) {
