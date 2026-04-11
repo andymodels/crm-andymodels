@@ -5,8 +5,14 @@
 
 const https = require('https');
 const express = require('express');
+const multer = require('multer');
 
 const router = express.Router();
+
+const websiteModelUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 35 * 1024 * 1024, files: 40 },
+});
 
 /** Base do site (lista pública, admin). Override: WEBSITE_ORIGIN no .env (ex.: staging). */
 function getWebsiteOrigin() {
@@ -124,7 +130,8 @@ function fetchWebsiteJson(url) {
  * Usa `fetch` quando existe (Node 18+): segue redirecionamentos (www, HTTPS).
  */
 function websiteJsonRequest(method, urlString, bodyObj) {
-  const m = String(method || 'PATCH').toUpperCase() === 'PUT' ? 'PUT' : 'PATCH';
+  const rawM = String(method || 'PATCH').toUpperCase();
+  const m = ['PATCH', 'PUT', 'POST'].includes(rawM) ? rawM : 'PATCH';
   const body = JSON.stringify(bodyObj ?? {});
   const token = websiteAdminBearerToken();
   const headers = {
@@ -210,6 +217,19 @@ function normalizeWebsiteModelPatchBody(body) {
   const out = { ...body };
   if (typeof out.featured === 'boolean') out.featured = out.featured ? 1 : 0;
   if (typeof out.active === 'boolean') out.active = out.active ? 1 : 0;
+  if (typeof out.creator === 'boolean') out.creator = out.creator ? 1 : 0;
+  if (out.featured !== undefined && out.featured !== null && typeof out.featured !== 'boolean') {
+    const n = Number(out.featured);
+    if (!Number.isNaN(n)) out.featured = n ? 1 : 0;
+  }
+  if (out.active !== undefined && out.active !== null && typeof out.active !== 'boolean') {
+    const n = Number(out.active);
+    if (!Number.isNaN(n)) out.active = n ? 1 : 0;
+  }
+  if (out.creator !== undefined && out.creator !== null && typeof out.creator !== 'boolean') {
+    const n = Number(out.creator);
+    if (!Number.isNaN(n)) out.creator = n ? 1 : 0;
+  }
   if (out.slug == null || String(out.slug).trim() === '') delete out.slug;
   const torax = out.torax != null ? String(out.torax).trim() : '';
   if (torax && (out.chest == null || String(out.chest).trim() === '')) out.chest = torax;
@@ -350,6 +370,87 @@ router.get('/website/models/:slug', async (req, res, next) => {
 });
 
 /**
+ * Cria modelo no site: POST https://www.andymodels.com/api/admin/models
+ * (Body alinhado ao PATCH; o site deve devolver JSON com `id`.)
+ */
+router.post('/admin/models', async (req, res, next) => {
+  try {
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ message: 'Body invalido.' });
+    }
+    const url = `${getWebsiteOrigin()}/api/admin/models`;
+    const payload = normalizeWebsiteModelPatchBody(req.body);
+    if (isDebugWebsiteProxy()) {
+      console.log('PAYLOAD ENVIADO:', payload);
+    }
+    const { statusCode, raw } = await websiteJsonRequest('POST', url, payload);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/**
+ * Upload de ficheiros para a galeria no site (multipart → mesmo path no origin).
+ * Encaminha para POST …/api/admin/models/:id/media/upload (B2 no servidor do site).
+ */
+router.post(
+  '/admin/models/:id/media/upload',
+  websiteModelUpload.array('files', 40),
+  async (req, res, next) => {
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) {
+        return res.status(400).json({ message: 'ID invalido.' });
+      }
+      const files = req.files;
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: 'Envie pelo menos um ficheiro (campo files).' });
+      }
+      const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}/media/upload`;
+      const token = websiteAdminBearerToken();
+      if (typeof fetch !== 'function') {
+        return res.status(501).json({
+          message: 'Upload multipart requer Node 18+ (fetch). Atualize o runtime do servidor.',
+        });
+      }
+      const fd = new FormData();
+      for (const f of files) {
+        const blob = new Blob([f.buffer], { type: f.mimetype || 'application/octet-stream' });
+        fd.append('files', blob, f.originalname);
+      }
+      const headers = { Accept: 'application/json', 'User-Agent': 'AndyModels-CRM/1.0' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      if (isDebugWebsiteProxy()) {
+        console.log(
+          '[website-proxy] outgoing',
+          JSON.stringify({ method: 'POST', url, multipartFiles: files.length }, null, 0),
+        );
+      }
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 120_000);
+      let statusCode;
+      let raw;
+      try {
+        const r = await fetch(url, { method: 'POST', headers, body: fd, signal: ctrl.signal });
+        statusCode = r.status;
+        raw = await r.text();
+      } finally {
+        clearTimeout(tid);
+      }
+      const preview = raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
+      logWebsiteProxyResponse(statusCode, preview);
+      return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        return res.status(504).json({ message: 'Timeout ao enviar ficheiros para o website.' });
+      }
+      return next(e);
+    }
+  },
+);
+
+/**
  * Atualiza apenas media do modelo no site: PATCH https://www.andymodels.com/api/admin/models/:id/media
  * Body: { media: [...] } — repassado sem outros campos.
  * (Registado antes de /admin/models/:id para evitar ambiguidade.)
@@ -386,6 +487,9 @@ router.patch('/admin/models/:id', async (req, res, next) => {
     }
     const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
     const payload = normalizeWebsiteModelPatchBody(req.body);
+    if (isDebugWebsiteProxy()) {
+      console.log('PAYLOAD ENVIADO:', payload);
+    }
     let { statusCode, raw } = await patchWebsiteJson(url, payload);
     /** Alguns deploys do site respondem 404 a PATCH com corpo que o handler não aceita; PUT costuma ser o update “completo”. */
     if (statusCode === 404 && String(raw || '').includes('<')) {

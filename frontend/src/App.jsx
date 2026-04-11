@@ -3883,7 +3883,12 @@ function App({ authUser, onLogout = () => {} }) {
             />
           )}
           {module === 'website' && websiteSubView === 'novo_modelo' && (
-            <WebsiteModeloEditorPage mode="create" />
+            <WebsiteModeloEditorPage
+              mode="create"
+              onBackToList={() => {
+                setWebsiteSubView('modelos');
+              }}
+            />
           )}
           {module === 'website' && websiteSubView === 'editar_modelo' && websiteEditSlug && (
             <WebsiteModeloEditorPage

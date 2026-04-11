@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
-import { onlyDigits } from '../utils/brValidators';
+import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
 const emptyFormaRecebimento = () => ({
@@ -20,7 +20,7 @@ function createInitialForm() {
     bio: '',
     featured: false,
     ativo: true,
-    catFeminino: false,
+    catFeminino: true,
     catMasculino: false,
     catCreators: false,
     medida_altura: '',
@@ -31,7 +31,6 @@ function createInitialForm() {
     medida_sapato: '',
     medida_cabelo: '',
     medida_olhos: '',
-    status_cadastro: 'pendente',
     telefones: [''],
     emails: [''],
     instagram: '',
@@ -50,10 +49,58 @@ function createInitialForm() {
     observacoes: '',
     video_url: '',
     slug_site: '',
-    /** GET /api/models/:slug — nomes iguais à API pública do site */
-    model_status: '',
-    city: '',
+    /** GET/PATCH — texto único opcional exibido no site (ex.: public_info) */
+    public_info: '',
   };
+}
+
+function instagramUsernameFromStored(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  try {
+    const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, '')}`);
+    if (!u.hostname.includes('instagram.com')) return s.replace(/^@/, '');
+    const path = u.pathname.replace(/^\//, '').replace(/\/$/, '');
+    return path || '';
+  } catch {
+    return s.replace(/^@/, '').replace(/^instagram\.com\//i, '');
+  }
+}
+
+function instagramUrlFromUsername(username) {
+  const u = String(username || '')
+    .trim()
+    .replace(/^@/, '')
+    .replace(/^(https?:\/\/)?(www\.)?instagram\.com\//i, '');
+  if (!u) return '';
+  return `https://instagram.com/${u}`;
+}
+
+/** Novos itens de imagem devolvidos pelo upload no site (sem prefixar galeria anterior). */
+function extractNewMediaItemsFromUploadJson(uploadJson) {
+  const items = [];
+  const data = uploadJson && typeof uploadJson === 'object' ? uploadJson : {};
+  if (Array.isArray(data.urls)) {
+    for (const u of data.urls) {
+      const url = String(u || '').trim();
+      if (url) items.push({ type: 'image', url, thumb: url });
+    }
+  }
+  if (items.length === 0 && Array.isArray(data.media)) {
+    return data.media.filter(Boolean);
+  }
+  if (items.length === 0 && Array.isArray(data.files)) {
+    for (const f of data.files) {
+      const url =
+        f && typeof f === 'object' ? String(f.url || f.src || '').trim() : String(f || '').trim();
+      if (url) items.push({ type: 'image', url, thumb: url });
+    }
+  }
+  if (items.length === 0 && data.url) {
+    const url = String(data.url).trim();
+    if (url) items.push({ type: 'image', url, thumb: url });
+  }
+  return items;
 }
 
 /** Apenas `model.media` da API, sem cover_image/images/concatenações. */
@@ -84,6 +131,9 @@ function parseVideoUrl(raw) {
     if (host.includes('vimeo.com')) {
       const m = u.pathname.match(/\/(\d+)/);
       if (m) return `https://player.vimeo.com/video/${m[1]}`;
+    }
+    if (host.includes('instagram.com')) {
+      return url;
     }
   } catch {
     return url;
@@ -155,42 +205,62 @@ function togglePolaroidAt(arr, index) {
   return next;
 }
 
-/** Corpo PATCH /api/admin/models/:id — nomes alinhados ao GET público do site. */
+/** Corpo PATCH/POST /api/admin/models — nomes alinhados ao GET público do site. */
 function formToWebsiteModelPatch(form) {
-  const categories = [];
-  if (form.catFeminino) categories.push('women');
-  if (form.catMasculino) categories.push('men');
-  if (form.catCreators) categories.push('creators');
-  if (categories.length === 0) categories.push('women');
-  const category = categories.includes('women')
-    ? 'women'
-    : categories.includes('men')
-      ? 'men'
-      : 'creators';
-
   const trim = (s) => (s != null ? String(s).trim() : '');
-  /** API pública do site usa 0/1; boolean + slug null a partir do CRM pode falhar no admin. */
+  const category = form.catMasculino ? 'men' : 'women';
+  const creator = form.catCreators ? 1 : 0;
+  const categories = [category];
+  if (form.catCreators) categories.push('creators');
+
+  const bioText = trim(form.bio);
+  let ig = trim(form.instagram);
+  if (ig) {
+    if (!/^https?:\/\//i.test(ig)) {
+      ig = instagramUrlFromUsername(ig);
+    }
+  } else {
+    ig = '';
+  }
+
   const out = {
     name: trim(form.nome),
-    bio: trim(form.bio),
+    bio: bioText,
+    description: bioText,
     featured: form.featured ? 1 : 0,
     active: form.ativo ? 1 : 0,
     category,
+    creator,
     categories,
-    height: trim(form.medida_altura) || null,
-    bust: trim(form.medida_busto) || null,
-    torax: trim(form.medida_torax) || null,
-    waist: trim(form.medida_cintura) || null,
-    hips: trim(form.medida_quadril) || null,
     shoes: trim(form.medida_sapato) || null,
     hair: trim(form.medida_cabelo) || null,
     eyes: trim(form.medida_olhos) || null,
-    instagram: trim(form.instagram) || null,
+    waist: trim(form.medida_cintura) || null,
+    instagram: ig || null,
     tiktok: trim(form.tiktok) || null,
     video_url: trim(form.video_url) || null,
-    model_status: trim(form.model_status) || null,
-    city: trim(form.city) || null,
   };
+
+  const pi = trim(form.public_info);
+  if (pi) out.public_info = pi;
+
+  if (category === 'women') {
+    out.height = trim(form.medida_altura) || null;
+    out.bust = trim(form.medida_busto) || null;
+    out.waist = trim(form.medida_cintura) || null;
+    out.hips = trim(form.medida_quadril) || null;
+    out.torax = '';
+    out.chest = '';
+  } else {
+    out.height = trim(form.medida_altura) || null;
+    const tx = trim(form.medida_torax);
+    out.torax = tx;
+    out.chest = tx;
+    out.waist = trim(form.medida_cintura) || null;
+    out.bust = '';
+    out.hips = '';
+  }
+
   const slug = trim(form.slug_site);
   if (slug) out.slug = slug;
   return out;
@@ -202,6 +272,23 @@ function mapDetailToForm(detail) {
   const cats = Array.isArray(detail.categories) ? detail.categories.map((c) => String(c).toLowerCase()) : [];
   const cat = String(detail.category || '').toLowerCase();
   const has = (x) => cats.includes(x) || cat === x;
+  const creatorFlag =
+    detail.creator === 1 ||
+    detail.creator === true ||
+    Number(detail.creator) === 1 ||
+    has('creators');
+  const isMen = has('men') || has('masculino') || cat === 'men' || cat === 'masculino';
+
+  const legacyPublic =
+    detail.public_info != null && String(detail.public_info).trim() !== ''
+      ? String(detail.public_info)
+      : [detail.model_status, detail.city]
+          .filter((x) => x != null && String(x).trim() !== '')
+          .map((x) => String(x).trim())
+          .join(' · ');
+
+  const igStored = detail.instagram != null ? String(detail.instagram) : '';
+
   return {
     ...base,
     nome: detail.name != null ? String(detail.name) : '',
@@ -211,11 +298,11 @@ function mapDetailToForm(detail) {
         : detail.description != null
           ? String(detail.description)
           : '',
-    featured: detail.featured === true,
-    ativo: detail.active !== false && detail.ativo !== false,
-    catFeminino: has('women') || has('feminino'),
-    catMasculino: has('men') || has('masculino'),
-    catCreators: has('creators'),
+    featured: Number(detail.featured) === 1 || detail.featured === true,
+    ativo: !(Number(detail.active) === 0 || detail.active === false || detail.ativo === false),
+    catFeminino: !isMen,
+    catMasculino: isMen,
+    catCreators: creatorFlag,
     medida_altura: detail.height != null ? String(detail.height) : '',
     medida_busto: detail.bust != null ? String(detail.bust) : '',
     medida_torax:
@@ -229,7 +316,7 @@ function mapDetailToForm(detail) {
     medida_sapato: detail.shoes != null ? String(detail.shoes) : '',
     medida_cabelo: detail.hair != null ? String(detail.hair) : '',
     medida_olhos: detail.eyes != null ? String(detail.eyes) : '',
-    instagram: detail.instagram != null ? String(detail.instagram) : '',
+    instagram: instagramUsernameFromStored(igStored),
     tiktok: detail.tiktok != null ? String(detail.tiktok) : '',
     video_url:
       detail.video_url != null
@@ -239,8 +326,7 @@ function mapDetailToForm(detail) {
           : '',
     slug_site: detail.slug != null ? String(detail.slug) : '',
     observacoes: detail.observacoes != null ? String(detail.observacoes) : '',
-    model_status: detail.model_status != null ? String(detail.model_status) : '',
-    city: detail.city != null ? String(detail.city) : '',
+    public_info: legacyPublic,
   };
 }
 
@@ -286,10 +372,36 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
+  const cepLookupRef = useRef(null);
   const localMediaRef = useRef([]);
   useEffect(() => {
     localMediaRef.current = localMediaItems;
   }, [localMediaItems]);
+
+  useEffect(() => {
+    const d = onlyDigits(form.cep);
+    if (d.length !== 8) return undefined;
+    if (cepLookupRef.current) clearTimeout(cepLookupRef.current);
+    cepLookupRef.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`https://viacep.com.br/ws/${d}/json/`);
+        const data = await r.json();
+        if (data.erro) return;
+        setForm((p) => ({
+          ...p,
+          logradouro: data.logradouro ? String(data.logradouro) : p.logradouro,
+          bairro: data.bairro ? String(data.bairro) : p.bairro,
+          cidade: data.localidade ? String(data.localidade) : p.cidade,
+          uf: data.uf ? String(data.uf).toUpperCase().slice(0, 2) : p.uf,
+        }));
+      } catch {
+        /* ignorar rede */
+      }
+    }, 450);
+    return () => {
+      if (cepLookupRef.current) clearTimeout(cepLookupRef.current);
+    };
+  }, [form.cep]);
 
   useEffect(() => {
     if (!isEdit || !String(editSlug || '').trim()) {
@@ -357,7 +469,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const updateTelefone = (i, v) =>
     setForm((p) => {
       const t = [...normalizeList(p.telefones)];
-      t[i] = v;
+      t[i] = formatPhoneBRMask(v);
       return { ...p, telefones: t };
     });
   const removeTelefone = (i) =>
@@ -400,7 +512,6 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     });
 
   const onPickFiles = (e) => {
-    if (isEdit) return;
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     setLocalMediaItems((prev) => {
@@ -410,7 +521,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        next.push({ id, preview: URL.createObjectURL(f), name: f.name });
+        next.push({ id, preview: URL.createObjectURL(f), name: f.name, file: f, polaroid: false });
       }
       return next;
     });
@@ -425,15 +536,33 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     });
   }, []);
 
-  const moveLocalMedia = (index, delta) => {
+  const setLocalCover = useCallback((index) => {
+    setLocalMediaItems((prev) => moveToCover(prev, index));
+  }, []);
+
+  const toggleLocalPolaroid = useCallback((index) => {
     setLocalMediaItems((prev) => {
-      const j = index + delta;
-      if (j < 0 || j >= prev.length) return prev;
+      if (index < 0 || index >= prev.length) return prev;
       const next = [...prev];
-      [next[index], next[j]] = [next[j], next[index]];
+      const el = next[index];
+      next[index] = { ...el, polaroid: !Boolean(el.polaroid) };
       return next;
     });
-  };
+  }, []);
+
+  const handleLocalDragStart = useCallback((e, index) => {
+    e.dataTransfer.setData('text/plain', `local:${index}`);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleLocalDrop = useCallback((e, dropIndex) => {
+    e.preventDefault();
+    const plain = e.dataTransfer.getData('text/plain');
+    if (!plain.startsWith('local:')) return;
+    const from = parseInt(plain.slice(6), 10);
+    if (Number.isNaN(from)) return;
+    setLocalMediaItems((prev) => reorderApiMedia(prev, from, dropIndex));
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -447,40 +576,111 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     e.preventDefault();
   };
 
-  /** Um único fluxo: dados do modelo + array media no site (texto, medidas, fotos, ordem, etc.). */
+  /** Um único fluxo: POST ou PATCH modelo + upload de ficheiros + PATCH media (mesmo payload em criar/editar). */
   const saveAllToSite = useCallback(async () => {
-    if (!isEdit || websiteModelId == null || Number.isNaN(websiteModelId)) {
-      window.alert('ID do modelo no site não disponível. Recarregue a página.');
-      return;
-    }
     setSaveSaving(true);
     setSaveError('');
     setSaveOk('');
-    const id = websiteModelId;
     try {
-      const patchBody = formToWebsiteModelPatch(form);
-      const r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patchBody),
-      });
-      const raw1 = await r1.text();
-      throwIfHtmlOrCannotPost(raw1, r1.status);
-      let data1;
-      try {
-        data1 = raw1 ? JSON.parse(raw1) : {};
-      } catch {
-        throw new Error('Resposta inválida do servidor ao salvar.');
-      }
-      if (!r1.ok) {
-        const msg = data1 && typeof data1.message === 'string' ? data1.message : `HTTP ${r1.status}`;
-        throw new Error(`[Dados do modelo] ${msg}`);
+      const emails = normalizeList(form.emails).map((x) => String(x || '').trim().toLowerCase());
+      for (let i = 0; i < emails.length; i += 1) {
+        if (emails[i] && !isValidEmail(emails[i])) {
+          throw new Error(`E-mail ${i + 1} com formato inválido.`);
+        }
       }
 
+      const patchBody = formToWebsiteModelPatch(form);
+      console.log('PAYLOAD FINAL MODELO:', patchBody);
+      let id = websiteModelId;
+      /** Após o primeiro POST em «Novo modelo», passa a atualizar com PATCH (mesmo formulário). */
+      const hasSiteId = id != null && !Number.isNaN(Number(id));
+      const shouldPatch = isEdit || hasSiteId;
+
+      if (shouldPatch) {
+        if (id == null || Number.isNaN(Number(id))) {
+          throw new Error('ID do modelo no site não disponível. Recarregue a página.');
+        }
+        const r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patchBody),
+        });
+        const raw1 = await r1.text();
+        throwIfHtmlOrCannotPost(raw1, r1.status);
+        let data1;
+        try {
+          data1 = raw1 ? JSON.parse(raw1) : {};
+        } catch {
+          throw new Error('Resposta inválida do servidor ao salvar.');
+        }
+        if (!r1.ok) {
+          const msg = data1 && typeof data1.message === 'string' ? data1.message : `HTTP ${r1.status}`;
+          throw new Error(`[Dados do modelo] ${msg}`);
+        }
+      } else {
+        const r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patchBody),
+        });
+        const raw0 = await r0.text();
+        throwIfHtmlOrCannotPost(raw0, r0.status);
+        let data0;
+        try {
+          data0 = raw0 ? JSON.parse(raw0) : {};
+        } catch {
+          throw new Error('Resposta inválida ao criar modelo no site.');
+        }
+        if (!r0.ok) {
+          const msg = data0 && typeof data0.message === 'string' ? data0.message : `HTTP ${r0.status}`;
+          throw new Error(`[Criar modelo] ${msg}`);
+        }
+        const newId = data0.id != null ? Number(data0.id) : NaN;
+        if (Number.isNaN(newId)) {
+          throw new Error('O site não devolveu o ID do novo modelo. Confirme POST /api/admin/models no servidor do site.');
+        }
+        id = newId;
+        setWebsiteModelId(newId);
+      }
+
+      let media = [...apiMedia];
+      const pendingFiles = localMediaItems.filter((x) => x.file instanceof File);
+      if (pendingFiles.length > 0) {
+        const fd = new FormData();
+        pendingFiles.forEach((x) => fd.append('files', x.file, x.file.name));
+        const ru = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media/upload`, {
+          method: 'POST',
+          body: fd,
+        });
+        const rawu = await ru.text();
+        throwIfHtmlOrCannotPost(rawu, ru.status);
+        let upData;
+        try {
+          upData = rawu ? JSON.parse(rawu) : {};
+        } catch {
+          upData = {};
+        }
+        if (!ru.ok) {
+          const msg = upData && typeof upData.message === 'string' ? upData.message : `HTTP ${ru.status}`;
+          throw new Error(`[Upload de imagens] ${msg}`);
+        }
+        let newItems = extractNewMediaItemsFromUploadJson(upData);
+        const pendingMeta = localMediaItems.filter((x) => x.file instanceof File);
+        newItems = newItems.map((it, i) => (pendingMeta[i]?.polaroid ? { ...it, polaroid: true } : it));
+        media = [...apiMedia, ...newItems];
+        setLocalMediaItems((prev) => {
+          prev.forEach((m) => {
+            if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
+          });
+          return [];
+        });
+      }
+
+      console.log('PAYLOAD FINAL MÍDIA:', { media });
       const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media: apiMedia }),
+        body: JSON.stringify({ media }),
       });
       const raw2 = await r2.text();
       throwIfHtmlOrCannotPost(raw2, r2.status);
@@ -495,16 +695,18 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         throw new Error(`[Galeria / mídia] ${msg}`);
       }
 
+      setApiMedia(media);
       setSaveOk('Salvo no site.');
     } catch (e) {
       setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
     } finally {
       setSaveSaving(false);
     }
-  }, [isEdit, websiteModelId, form, apiMedia]);
+  }, [isEdit, websiteModelId, form, apiMedia, localMediaItems]);
 
   const clearForm = () => {
     setForm(createInitialForm());
+    setWebsiteModelId(null);
     setApiMedia([]);
     setLocalMediaItems((prev) => {
       prev.forEach((m) => {
@@ -591,6 +793,16 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
 
   const formas = form.formas_pagamento?.length ? form.formas_pagamento : [emptyFormaRecebimento()];
 
+  const setGenderWomen = () => setForm((p) => ({ ...p, catFeminino: true, catMasculino: false }));
+  const setGenderMen = () => setForm((p) => ({ ...p, catFeminino: false, catMasculino: true }));
+
+  const addVideoToGallery = () => {
+    const raw = String(form.video_url || '').trim();
+    if (!raw) return;
+    const u = parseVideoUrl(raw);
+    setApiMedia((prev) => [...prev, { type: 'video', url: u || raw, thumb: '' }]);
+  };
+
   if (isEdit && editBoot) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
@@ -614,8 +826,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     );
   }
 
-  const saveDisabled = saveSaving || loadLoading || websiteModelId == null;
-  const saveBar = isEdit ? (
+  const saveDisabled =
+    saveSaving || loadLoading || (isEdit && (websiteModelId == null || Number.isNaN(Number(websiteModelId))));
+  const saveBar = (
     <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 shadow-sm">
       <div className="flex flex-wrap justify-end gap-2">
         <button
@@ -634,22 +847,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{saveOk}</p>
       ) : null}
     </div>
-  ) : null;
+  );
 
   return (
     <div className="space-y-5">
-      {isEdit ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => onBackToList && onBackToList()}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            ← Voltar à lista
-          </button>
-        </div>
-      ) : null}
-
       <form onSubmit={onSubmit} className="space-y-5">
         <Section title="Identificação e site">
           <Field label="Nome" className="md:col-span-2">
@@ -687,7 +888,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 onChange={(e) => setField('featured', e.target.checked)}
                 className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
               />
-              Destaque (featured)
+              Destaque na Home
             </label>
             <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
               <input
@@ -696,100 +897,93 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 onChange={(e) => setField('ativo', e.target.checked)}
                 className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
               />
-              Ativo
+              Ativo no site
             </label>
           </div>
           <div className="md:col-span-2">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Categoria no site</p>
-            <div className="flex flex-wrap gap-4">
-              {[
-                { key: 'catFeminino', label: 'Feminino', hint: 'women' },
-                { key: 'catMasculino', label: 'Masculino', hint: 'men' },
-                { key: 'catCreators', label: 'Creators', hint: 'creators' },
-              ].map(({ key, label, hint }) => (
-                <label key={key} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-6">
+              <div className="flex flex-wrap gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
                   <input
-                    type="checkbox"
-                    checked={Boolean(form[key])}
-                    onChange={(e) => setField(key, e.target.checked)}
-                    className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+                    type="radio"
+                    name="website-model-gender"
+                    checked={form.catFeminino}
+                    onChange={setGenderWomen}
+                    className="border-slate-300 text-amber-600 focus:ring-amber-400"
                   />
-                  {label}
-                  <span className="text-xs text-slate-400">({hint})</span>
+                  Feminino
                 </label>
-              ))}
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="radio"
+                    name="website-model-gender"
+                    checked={form.catMasculino}
+                    onChange={setGenderMen}
+                    className="border-slate-300 text-amber-600 focus:ring-amber-400"
+                  />
+                  Masculino
+                </label>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={form.catCreators}
+                  onChange={(e) => setField('catCreators', e.target.checked)}
+                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+                />
+                Creators (adicional — continua nas listagens de creators quando marcado)
+              </label>
             </div>
           </div>
-          <div className="md:col-span-2">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Status no site (API pública)
-            </p>
-            <p className="mb-3 text-xs text-slate-500">
-              Campos <code className="rounded bg-slate-100 px-1">model_status</code> e{' '}
-              <code className="rounded bg-slate-100 px-1">city</code> como em GET{' '}
-              <code className="rounded bg-slate-100 px-1">/api/models/:slug</code>.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Status do modelo">
-                <input
-                  value={form.model_status}
-                  onChange={(e) => setField('model_status', e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="ex.: In Town"
-                  autoComplete="off"
-                  name="model_status"
-                />
-              </Field>
-              <Field label="Cidade / localização pública">
-                <input
-                  value={form.city}
-                  onChange={(e) => setField('city', e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="Cidade no perfil público"
-                  autoComplete="off"
-                  name="city"
-                />
-              </Field>
-            </div>
-          </div>
+          <Field label="Informação pública" className="md:col-span-2">
+            <input
+              value={form.public_info}
+              onChange={(e) => setField('public_info', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Opcional — ex.: Aracruz ES, Em temporada na Europa… (vazio não aparece no site)"
+              autoComplete="off"
+            />
+          </Field>
         </Section>
 
         <Section title="Medidas principais">
-          {[
-            ['medida_altura', 'Altura'],
-            ['medida_busto', 'Busto'],
-            ['medida_torax', 'Tórax'],
-            ['medida_cintura', 'Cintura'],
-            ['medida_quadril', 'Quadril'],
-            ['medida_sapato', 'Sapato'],
-            ['medida_cabelo', 'Cabelo'],
-            ['medida_olhos', 'Olhos'],
-          ].map(([k, lab]) => (
-            <Field key={k} label={lab}>
-              <input
-                value={form[k]}
-                onChange={(e) => setField(k, e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="—"
-              />
-            </Field>
-          ))}
-        </Section>
-
-        <Section title="Status do modelo">
-          <Field label="Status do cadastro">
-            <select
-              value={form.status_cadastro}
-              onChange={(e) => setField('status_cadastro', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            >
-              <option value="pendente">Pendente</option>
-              <option value="aprovado">Aprovado</option>
-            </select>
-          </Field>
-          <p className="text-xs text-slate-500 md:col-span-2">
-            Mesmos valores usados no CRM (<code className="rounded bg-slate-100 px-1">status_cadastro</code>).
-          </p>
+          {form.catFeminino
+            ? [
+                ['medida_altura', 'Altura'],
+                ['medida_busto', 'Busto'],
+                ['medida_cintura', 'Cintura'],
+                ['medida_quadril', 'Quadril'],
+                ['medida_sapato', 'Sapato'],
+                ['medida_cabelo', 'Cabelo'],
+                ['medida_olhos', 'Olhos'],
+              ].map(([k, lab]) => (
+                <Field key={k} label={lab}>
+                  <input
+                    value={form[k]}
+                    onChange={(e) => setField(k, e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder="—"
+                  />
+                </Field>
+              ))
+            : [
+                ['medida_altura', 'Altura'],
+                ['medida_torax', 'Tórax'],
+                ['medida_cintura', 'Cintura'],
+                ['medida_sapato', 'Sapato'],
+                ['medida_cabelo', 'Cabelo'],
+                ['medida_olhos', 'Olhos'],
+              ].map(([k, lab]) => (
+                <Field key={k} label={lab}>
+                  <input
+                    value={form[k]}
+                    onChange={(e) => setField(k, e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    placeholder="—"
+                  />
+                </Field>
+              ))}
         </Section>
 
         <Section title="Contato">
@@ -813,13 +1007,17 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               onRemove={removeEmail}
             />
           </div>
-          <Field label="Instagram">
-            <input
-              value={form.instagram}
-              onChange={(e) => setField('instagram', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="@usuario ou URL"
-            />
+          <Field label="Instagram" className="md:col-span-2">
+            <div className="flex max-w-xl flex-wrap items-center gap-0.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+              <span className="shrink-0 select-none text-slate-500">https://instagram.com/</span>
+              <input
+                value={form.instagram}
+                onChange={(e) => setField('instagram', e.target.value.replace(/^@/, '').trim())}
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-slate-900 outline-none ring-0"
+                placeholder="usuario"
+                autoComplete="off"
+              />
+            </div>
           </Field>
           <Field label="TikTok">
             <input
@@ -860,7 +1058,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           <Field label="CEP">
             <input
               value={form.cep}
-              onChange={(e) => setField('cep', e.target.value)}
+              onChange={(e) => setField('cep', formatCEPMask(e.target.value))}
+              inputMode="numeric"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="00000-000"
             />
@@ -1032,12 +1231,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           </Field>
         </Section>
 
-        {saveBar}
-
         <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
           <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-200 pb-2">
             <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mídia</h4>
-            {isEdit && apiMedia.length > 0 && apiMediaSelected.size >= 2 ? (
+            {apiMedia.length > 0 && apiMediaSelected.size >= 2 ? (
               <button
                 type="button"
                 onClick={removeSelectedApiMedia}
@@ -1048,25 +1245,62 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             ) : null}
           </div>
           <div className="mt-4 space-y-4">
-            {!isEdit ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <input id={fileInputId} type="file" accept="image/*" multiple className="hidden" onChange={onPickFiles} />
-                <label
-                  htmlFor={fileInputId}
-                  className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
-                >
-                  Adicionar imagens
-                </label>
-                <span className="text-xs text-slate-500">Pré-visualização local; reordene com os botões em cada cartão.</span>
-              </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                id={fileInputId}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={onPickFiles}
+              />
+              <label
+                htmlFor={fileInputId}
+                className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+              >
+                Adicionar imagens
+              </label>
+              <span className="text-xs text-slate-500">
+                Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Novas fotos (ainda não enviadas) são
+                carregadas ao clicar em Salvar.
+              </span>
+            </div>
+
+            {localMediaItems.length > 0 ? (
+              <p className="text-xs text-amber-800">
+                {localMediaItems.length} ficheiro(s) pendente(s) de envio — clique em Salvar para enviar ao site.
+              </p>
             ) : null}
 
-            {isEdit ? (
-              apiMedia.length === 0 ? (
-                <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  Sem fotos na galeria.
-                </p>
-              ) : (
+            <div className="flex max-w-xl flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+              <label className="block min-w-[200px] flex-1 text-sm text-slate-600">
+                <span className="mb-1 block font-medium text-slate-800">Vídeo (URL)</span>
+                <input
+                  value={form.video_url}
+                  onChange={(e) => setField('video_url', e.target.value)}
+                  type="url"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="YouTube, Instagram…"
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Enviado no perfil do modelo. «Adicionar à galeria» inclui o mesmo URL na grelha abaixo.
+                </span>
+              </label>
+              <button
+                type="button"
+                onClick={addVideoToGallery}
+                className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              >
+                Adicionar à galeria
+              </button>
+            </div>
+
+            {apiMedia.length === 0 && localMediaItems.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                Nenhuma imagem ou vídeo na galeria. Adicione imagens ou use o vídeo acima.
+              </p>
+            ) : null}
+            {apiMedia.length > 0 ? (
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                   {apiMedia.map((item, index) => {
                     const isVideo = item && typeof item === 'object' && item.type === 'video';
@@ -1186,95 +1420,118 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                     );
                   })}
                 </ul>
-              )
-            ) : localMediaItems.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                Nenhuma imagem adicionada.
-              </p>
-            ) : (
-              <ul className={WEBSITE_GALLERY_GRID_CLASS}>
-                {localMediaItems.map((item, index) => (
-                  <li
-                    key={item.id}
-                    className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
-                  >
-                    <div
-                      className="relative w-full overflow-hidden bg-slate-100"
-                      style={{ aspectRatio: '4/5' }}
-                    >
-                      {item.preview ? (
-                        <img
-                          src={item.preview}
-                          alt=""
-                          loading="lazy"
-                          draggable={false}
-                          className="absolute inset-0 h-full w-full object-cover object-top"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
-                          —
+            ) : null}
+            {localMediaItems.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-slate-700">Novas imagens (ainda não enviadas ao site)</p>
+                <ul className={WEBSITE_GALLERY_GRID_CLASS}>
+                  {localMediaItems.map((item, index) => {
+                    const isCover = index === 0;
+                    const polaroidOn = item.polaroid === true || item.polaroid === 'true';
+                    return (
+                      <li
+                        key={item.id}
+                        draggable
+                        onDragStart={(e) => handleLocalDragStart(e, index)}
+                        onDragOver={handleApiMediaDragOver}
+                        onDrop={(e) => handleLocalDrop(e, index)}
+                        className={`min-w-0 overflow-hidden rounded-xl border bg-white shadow-sm ${
+                          isCover ? 'border-amber-400 ring-2 ring-amber-300' : 'border-slate-200'
+                        } ${polaroidOn ? 'ring-1 ring-sky-300' : ''}`}
+                      >
+                        <div className="relative w-full overflow-hidden bg-slate-100" style={{ aspectRatio: '4/5' }}>
+                          {item.preview ? (
+                            <img
+                              src={item.preview}
+                              alt=""
+                              loading="lazy"
+                              draggable={false}
+                              className="absolute inset-0 h-full w-full object-cover object-top"
+                            />
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
+                              —
+                            </div>
+                          )}
+                          <div className="pointer-events-none absolute left-2 top-2 z-[2] flex max-w-[calc(100%-0.5rem)] flex-wrap items-center gap-1">
+                            <span className="rounded bg-emerald-700 px-2 py-0.5 text-[10px] font-semibold text-white shadow">
+                              Novo
+                            </span>
+                            {isCover ? (
+                              <span className="rounded bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white shadow">
+                                Capa
+                              </span>
+                            ) : (
+                              <span className="rounded bg-black/60 px-2 py-0.5 text-xs text-white">{index + 1}</span>
+                            )}
+                            {polaroidOn ? (
+                              <span className="rounded bg-sky-600 px-2 py-0.5 text-xs font-medium text-white shadow">
+                                Polaroid
+                              </span>
+                            ) : null}
+                          </div>
+                          <span className="pointer-events-none absolute bottom-2 right-2 z-[1] rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white">
+                            ⋮⋮
+                          </span>
                         </div>
-                      )}
-                      <span className="pointer-events-none absolute left-2 top-2 z-[1] rounded bg-black/60 px-2 py-0.5 text-xs text-white">
-                        {index + 1}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1 border-t border-slate-200 p-2">
-                      <button
-                        type="button"
-                        disabled={index === 0}
-                        onClick={() => moveLocalMedia(index, -1)}
-                        className="rounded border border-slate-200 px-2 py-1 text-xs disabled:opacity-40"
-                        title="Mover para cima"
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        disabled={index === localMediaItems.length - 1}
-                        onClick={() => moveLocalMedia(index, 1)}
-                        className="rounded border border-slate-200 px-2 py-1 text-xs disabled:opacity-40"
-                        title="Mover para baixo"
-                      >
-                        ↓
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!confirm('Tem certeza que deseja apagar esta foto?')) return;
-                          removeLocalMediaConfirmed(item.id);
-                        }}
-                        className="ml-auto rounded border border-red-200 px-2 py-1 text-xs text-red-700"
-                      >
-                        Remover
-                      </button>
-                    </div>
-                    {item.name ? <p className="truncate px-2 pb-2 text-xs text-slate-500">{item.name}</p> : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            <label className="block max-w-xl text-sm text-slate-600">
-              <span className="mb-1 block font-medium text-slate-800">Vídeo (URL)</span>
-              <input
-                value={form.video_url}
-                onChange={(e) => setField('video_url', e.target.value)}
-                type="url"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                placeholder="https://…"
-              />
-            </label>
+                        <div
+                          className="grid grid-cols-3 gap-0.5 border-t border-slate-200 p-1"
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            disabled={isCover}
+                            onClick={() => setLocalCover(index)}
+                            className="min-w-0 rounded border border-amber-300 bg-amber-50 px-0.5 py-1 text-center text-[10px] font-medium leading-tight text-amber-950 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Capa
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleLocalPolaroid(index)}
+                            className={`min-w-0 rounded border px-0.5 py-1 text-center text-[10px] font-medium leading-tight ${
+                              polaroidOn
+                                ? 'border-sky-600 bg-sky-600 text-white shadow-sm'
+                                : 'border-sky-300 bg-sky-50 text-sky-900'
+                            }`}
+                          >
+                            Polaroid
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!confirm('Tem certeza que deseja apagar esta foto?')) return;
+                              removeLocalMediaConfirmed(item.id);
+                            }}
+                            className="min-w-0 rounded border border-red-200 px-0.5 py-1 text-center text-[10px] leading-tight text-red-700"
+                          >
+                            Apagar
+                          </button>
+                        </div>
+                        {item.name ? <p className="truncate px-2 pb-2 text-xs text-slate-500">{item.name}</p> : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </section>
 
-        {isEdit ? (
-          <div className="sticky bottom-0 z-10 mt-6 border-t border-slate-200 bg-white/95 py-4 backdrop-blur supports-[backdrop-filter]:bg-white/80">
-            {saveBar}
-          </div>
-        ) : (
-          <div className="flex flex-col items-end gap-2 border-t border-slate-200 pt-4">
-            <div className="flex flex-wrap items-center justify-end gap-3">
+        <div className="sticky bottom-0 z-10 mt-6 border-t border-slate-200 bg-white/95 py-4 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            {onBackToList ? (
+              <button
+                type="button"
+                onClick={() => onBackToList()}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                ← Voltar à lista
+              </button>
+            ) : (
+              <span />
+            )}
+            {!isEdit ? (
               <button
                 type="button"
                 onClick={clearForm}
@@ -1282,16 +1539,12 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               >
                 Limpar formulário
               </button>
-              <button
-                type="button"
-                disabled
-                className="cursor-not-allowed rounded-lg bg-slate-300 px-4 py-2 text-sm font-semibold text-slate-600"
-              >
-                Salvar (em breve)
-              </button>
-            </div>
+            ) : (
+              <span />
+            )}
           </div>
-        )}
+          {saveBar}
+        </div>
       </form>
 
     </div>
