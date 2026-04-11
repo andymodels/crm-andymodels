@@ -18,7 +18,6 @@ function formatCityState(row) {
   return '—';
 }
 
-/** URLs de fotos (apenas strings; ignora thumb_url e campos técnicos). */
 function photoUrlsFromItem(item) {
   if (!item || !Array.isArray(item.photos)) return [];
   return item.photos
@@ -33,7 +32,7 @@ function photoUrlsFromItem(item) {
 function FieldRow({ label, value }) {
   const v = value != null && String(value).trim() !== '' ? String(value) : '—';
   return (
-    <div className="grid gap-1 border-b border-slate-100 py-2.5 sm:grid-cols-[120px_1fr]">
+    <div className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[118px_1fr]">
       <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
       <dd className="text-sm text-slate-900">{v}</dd>
     </div>
@@ -48,7 +47,6 @@ export default function WebsiteInscricoesPage() {
   const [notes, setNotes] = useState('');
   const [mutationLoading, setMutationLoading] = useState(false);
   const [mutationError, setMutationError] = useState('');
-  /** Índice na grelha ou null se o lightbox estiver fechado */
   const [lightboxIndex, setLightboxIndex] = useState(null);
 
   const load = useCallback(async (opts = {}) => {
@@ -139,6 +137,33 @@ export default function WebsiteInscricoesPage() {
       if (id == null) return;
       const found = list?.find((x) => x != null && String(x.id) === String(id));
       setDetail(found || null);
+    },
+    [load],
+  );
+
+  /** Abre o detalhe e, se ainda não vista, marca como “em avaliação” no servidor. */
+  const openInscription = useCallback(
+    (row) => {
+      setDetail(row);
+      setLightboxIndex(null);
+      if (String(row.status || '').trim() !== 'new') return;
+      (async () => {
+        try {
+          const r = await fetchWithAuth(`${APPLICATIONS_ADMIN}/${encodeURIComponent(String(row.id))}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ status: 'reviewing' }),
+          });
+          const raw = await r.text();
+          throwIfHtmlOrCannotPost(raw, r.status);
+          if (!r.ok) return;
+          const list = await load({ silent: true });
+          const found = list?.find((x) => x != null && String(x.id) === String(row.id));
+          if (found) setDetail(found);
+        } catch {
+          /* falha ao marcar como vista: mantém o modal aberto */
+        }
+      })();
     },
     [load],
   );
@@ -278,20 +303,29 @@ export default function WebsiteInscricoesPage() {
                       key={row.id}
                       role="button"
                       tabIndex={0}
-                      onClick={() => setDetail(row)}
+                      onClick={() => openInscription(row)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          setDetail(row);
+                          openInscription(row);
                         }
                       }}
                       className={`cursor-pointer border-b border-slate-100 transition-colors last:border-b-0 ${
                         isNew
-                          ? 'bg-slate-100/95 text-slate-900 shadow-[inset_3px_0_0_0_rgb(245,158,11)] hover:bg-slate-100'
-                          : 'bg-white hover:bg-slate-50/80'
+                          ? 'bg-slate-100/95 text-slate-900 shadow-[inset_4px_0_0_0_rgb(245,158,11)] hover:bg-slate-100'
+                          : 'bg-white hover:bg-slate-50/90'
                       }`}
                     >
-                      <td className="px-3 py-2.5 font-medium">{row.name != null ? String(row.name) : '—'}</td>
+                      <td className="px-3 py-2.5">
+                        <span className="inline-flex flex-wrap items-center gap-2 font-medium">
+                          {row.name != null ? String(row.name) : '—'}
+                          {isNew ? (
+                            <span className="rounded-full bg-amber-500/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+                              Novo
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
                       <td className="px-3 py-2.5 text-slate-700">{formatCityState(row)}</td>
                       <td className="px-3 py-2.5 text-slate-600">{formatListDate(row.created_at)}</td>
                     </tr>
@@ -303,105 +337,117 @@ export default function WebsiteInscricoesPage() {
         )}
       </div>
 
-      {/* Painel lateral — detalhe */}
+      {/* Modal central */}
       {detail ? (
         <div
-          className="fixed inset-0 z-50 flex justify-end bg-black/40"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="inscricao-detail-title"
           onClick={() => setDetail(null)}
         >
           <div
-            className="flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl sm:max-w-lg"
+            className="relative flex max-h-[min(90vh,920px)] w-full min-w-0 max-w-[1100px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
-              <h4 id="inscricao-detail-title" className="pr-2 text-base font-semibold text-slate-900">
-                {detail.name ? String(detail.name) : 'Inscrição'}
-              </h4>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  disabled={mutationLoading}
-                  onClick={handleDelete}
-                  className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-                >
-                  Excluir
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDetail(null)}
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  aria-label="Fechar"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={() => setDetail(null)}
+              className="absolute right-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-lg text-slate-600 shadow-sm hover:bg-slate-50"
+              aria-label="Fechar"
+            >
+              ✕
+            </button>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-              {mutationError ? (
-                <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {mutationError}
-                </p>
-              ) : null}
-
-              <dl>
-                <FieldRow label="Nome" value={detail.name} />
-                <FieldRow label="Idade" value={detail.age} />
-                <FieldRow label="Altura" value={detail.height} />
-                <FieldRow label="Cidade / estado" value={formatCityState(detail)} />
-                <FieldRow label="E-mail" value={detail.email} />
-                <FieldRow label="Telefone" value={detail.phone} />
-                <FieldRow label="Instagram" value={detail.instagram} />
-                <FieldRow label="Data" value={formatListDate(detail.created_at)} />
-              </dl>
-
-              {modalPhotos.length > 0 ? (
-                <div className="mt-6 border-t border-slate-100 pt-4">
+            <div className="max-h-[min(90vh,920px)] min-h-0 overflow-y-auto pt-12">
+              <div className="grid grid-cols-1 gap-0 lg:grid-cols-2 lg:gap-0">
+                {/* Coluna esquerda: fotos */}
+                <div className="border-b border-slate-200 px-4 pb-6 pt-2 lg:border-b-0 lg:border-r lg:px-5 lg:pb-5">
+                  <h4 id="inscricao-detail-title" className="mb-3 text-sm font-semibold text-slate-800 lg:hidden">
+                    {detail.name ? String(detail.name) : 'Inscrição'}
+                  </h4>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Fotos</p>
-                  <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
-                    {modalPhotos.map((src, i) => (
-                      <button
-                        key={`${src}-${i}`}
-                        type="button"
-                        onClick={() => setLightboxIndex(i)}
-                        className="relative aspect-[3/4] overflow-hidden rounded-md border border-slate-200 bg-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      >
-                        <img
-                          src={src}
-                          alt=""
-                          className="h-full w-full object-cover object-top"
-                          loading="lazy"
-                        />
-                      </button>
-                    ))}
+                  {modalPhotos.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {modalPhotos.map((src, i) => (
+                        <button
+                          key={`${src}-${i}`}
+                          type="button"
+                          onClick={() => setLightboxIndex(i)}
+                          className="relative aspect-[3/4] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        >
+                          <img
+                            src={src}
+                            alt=""
+                            className="h-full w-full object-cover object-top"
+                            loading="lazy"
+                            draggable={false}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">Sem fotos.</p>
+                  )}
+                </div>
+
+                {/* Coluna direita: dados */}
+                <div className="px-4 pb-6 pt-2 lg:px-5 lg:pb-5">
+                  <h4 className="mb-3 hidden text-base font-semibold text-slate-900 lg:block">
+                    {detail.name ? String(detail.name) : 'Inscrição'}
+                  </h4>
+
+                  {mutationError ? (
+                    <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {mutationError}
+                    </p>
+                  ) : null}
+
+                  <dl>
+                    <FieldRow label="Nome" value={detail.name} />
+                    <FieldRow label="Idade" value={detail.age} />
+                    <FieldRow label="Altura" value={detail.height} />
+                    <FieldRow label="Cidade / estado" value={formatCityState(detail)} />
+                    <FieldRow label="E-mail" value={detail.email} />
+                    <FieldRow label="Telefone" value={detail.phone} />
+                    <FieldRow label="Instagram" value={detail.instagram} />
+                    <FieldRow label="Data" value={formatListDate(detail.created_at)} />
+                  </dl>
+
+                  <div className="mt-5 border-t border-slate-100 pt-4">
+                    <label htmlFor="inscricao-notas" className="mb-1 block text-sm font-medium text-slate-700">
+                      Notas internas
+                    </label>
+                    <p className="mb-2 text-xs text-slate-500">Guardadas automaticamente ao sair do campo.</p>
+                    <textarea
+                      id="inscricao-notas"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      onBlur={handleNotesBlur}
+                      disabled={mutationLoading}
+                      rows={4}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+
+                  <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
+                    <button
+                      type="button"
+                      disabled={mutationLoading}
+                      onClick={handleDelete}
+                      className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      Excluir inscrição
+                    </button>
                   </div>
                 </div>
-              ) : null}
-
-              <div className="mt-6 border-t border-slate-100 pt-4">
-                <label htmlFor="inscricao-notas" className="mb-1 block text-sm font-medium text-slate-700">
-                  Notas internas
-                </label>
-                <p className="mb-2 text-xs text-slate-500">Guardadas automaticamente ao sair do campo.</p>
-                <textarea
-                  id="inscricao-notas"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  onBlur={handleNotesBlur}
-                  disabled={mutationLoading}
-                  rows={4}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
               </div>
             </div>
           </div>
         </div>
       ) : null}
 
-      {/* Lightbox — por cima do painel */}
+      {/* Lightbox */}
       {detail && lightboxIndex !== null && modalPhotos[lightboxIndex] ? (
         <div
           className="fixed inset-0 z-[60] flex flex-col bg-black/92"
@@ -438,6 +484,7 @@ export default function WebsiteInscricoesPage() {
               src={modalPhotos[lightboxIndex]}
               alt=""
               className="max-h-[min(80vh,calc(100vw-8rem))] max-w-full object-contain"
+              draggable={false}
             />
             <button
               type="button"
