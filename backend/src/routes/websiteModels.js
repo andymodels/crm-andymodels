@@ -11,8 +11,7 @@ const router = express.Router();
 
 const websiteModelUpload = multer({
   storage: multer.memoryStorage(),
-  /** Fotos + vídeos MP4 na mesma galeria; o site pode recusar ficheiros muito grandes. */
-  limits: { fileSize: 120 * 1024 * 1024, files: 40 },
+  limits: { fileSize: 35 * 1024 * 1024, files: 40 },
 });
 
 /** Base do site (lista pública, admin). Override: WEBSITE_ORIGIN no .env (ex.: staging). */

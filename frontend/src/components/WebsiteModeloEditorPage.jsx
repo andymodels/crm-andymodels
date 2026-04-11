@@ -119,6 +119,22 @@ function parseVideoUrl(raw) {
 const WEBSITE_GALLERY_GRID_CLASS =
   'grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1';
 
+/** O admin do site neste fluxo só aceita imagens em `photos`; MP4 provoca HTTP 500 no servidor. */
+function isImageFileForGalleryUpload(f) {
+  if (!(f instanceof File)) return false;
+  const t = String(f.type || '');
+  if (t.startsWith('image/')) return true;
+  if (!t && /\.(jpe?g|png|gif|webp|bmp)$/i.test(f.name || '')) return true;
+  return false;
+}
+
+function isVideoFileUpload(f) {
+  if (!(f instanceof File)) return false;
+  const t = String(f.type || '');
+  if (t.startsWith('video/')) return true;
+  return /\.(mp4|webm|mov|m4v|avi)$/i.test(f.name || '');
+}
+
 /** Novo array com mesmos elementos; só muda a ordem. */
 function reorderApiMedia(arr, fromIndex, toIndex) {
   if (fromIndex === toIndex) return arr;
@@ -358,6 +374,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [saveSaving, setSaveSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState('');
+  const [fileQueueNotice, setFileQueueNotice] = useState('');
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
@@ -503,25 +520,41 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const onPickFiles = (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    setFileQueueNotice('');
+    let skippedVideo = false;
+    let skippedOther = false;
     setLocalMediaItems((prev) => {
       const next = [...prev];
       for (const f of files) {
+        if (isVideoFileUpload(f)) {
+          skippedVideo = true;
+          continue;
+        }
+        if (!isImageFileForGalleryUpload(f)) {
+          skippedOther = true;
+          continue;
+        }
         const id =
           typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const isVideo = typeof f.type === 'string' && f.type.startsWith('video/');
         next.push({
           id,
           preview: URL.createObjectURL(f),
           name: f.name,
           file: f,
           polaroid: false,
-          isVideo,
         });
       }
       return next;
     });
+    if (skippedVideo) {
+      setFileQueueNotice(
+        'Ficheiros de vídeo (MP4, etc.) não podem ser enviados ao site neste fluxo — o servidor responde com erro. Use «Vídeo (URL)» e «Adicionar à galeria» com link YouTube ou Instagram. Só imagens (JPEG, PNG…) são aceites aqui.',
+      );
+    } else if (skippedOther) {
+      setFileQueueNotice('Alguns ficheiros foram ignorados — use apenas imagens (JPEG, PNG, WebP…).');
+    }
     e.target.value = '';
   };
 
@@ -582,6 +615,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     setSaveSaving(true);
     setSaveError('');
     setSaveOk('');
+    setFileQueueNotice('');
     try {
       const emails = normalizeList(form.emails).map((x) => String(x || '').trim().toLowerCase());
       for (let i = 0; i < emails.length; i += 1) {
@@ -597,7 +631,14 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       let id = websiteModelId;
       const hasSiteId = id != null && !Number.isNaN(Number(id));
       const shouldUpdate = isEdit || hasSiteId;
-      const pendingWithFiles = localMediaItems.filter((x) => x.file instanceof File);
+      const pendingImageFiles = localMediaItems.filter(
+        (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
+      );
+      if (localMediaItems.some((x) => x.file instanceof File && isVideoFileUpload(x.file))) {
+        throw new Error(
+          'Remova ficheiros de vídeo da lista antes de salvar. O site só aceita fotos neste envio; para vídeo use o campo «Vídeo (URL)».',
+        );
+      }
 
       const parseJsonSafe = (raw) => {
         try {
@@ -623,10 +664,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         let r1;
         let raw1;
-        if (pendingWithFiles.length > 0) {
+        if (pendingImageFiles.length > 0) {
           const fd = new FormData();
           appendModelFieldsToFormData(fd, putBody);
-          pendingWithFiles.forEach((x) => {
+          pendingImageFiles.forEach((x) => {
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
           });
           r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
@@ -645,10 +686,15 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         throwIfHtmlOrCannotPost(raw1, r1.status);
         const data1 = parseJsonSafe(raw1) || {};
         if (!r1.ok) {
-          const msg = data1 && typeof data1.message === 'string' ? data1.message : `HTTP ${r1.status}`;
+          const serverMsg = data1 && typeof data1.message === 'string' && data1.message.trim() ? data1.message.trim() : '';
+          let msg = serverMsg || `HTTP ${r1.status}`;
+          if (r1.status === 500 && !serverMsg) {
+            msg =
+              'Erro no servidor (500). O site não aceita ficheiro de vídeo (MP4) neste envio — use só fotos ou o campo «Vídeo (URL)».';
+          }
           throw new Error(`[Dados do modelo] ${msg}`);
         }
-        if (pendingWithFiles.length > 0) {
+        if (pendingImageFiles.length > 0) {
           setLocalMediaItems((prev) => {
             prev.forEach((m) => {
               if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -681,10 +727,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       } else {
         let r0;
         let raw0;
-        if (pendingWithFiles.length > 0) {
+        if (pendingImageFiles.length > 0) {
           const fd = new FormData();
           appendModelFieldsToFormData(fd, putBody);
-          pendingWithFiles.forEach((x) => {
+          pendingImageFiles.forEach((x) => {
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
           });
           r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
@@ -703,7 +749,12 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         throwIfHtmlOrCannotPost(raw0, r0.status);
         const data0 = parseJsonSafe(raw0) || {};
         if (!r0.ok) {
-          const msg = data0 && typeof data0.message === 'string' ? data0.message : `HTTP ${r0.status}`;
+          const serverMsg = data0 && typeof data0.message === 'string' && data0.message.trim() ? data0.message.trim() : '';
+          let msg = serverMsg || `HTTP ${r0.status}`;
+          if (r0.status === 500 && !serverMsg) {
+            msg =
+              'Erro no servidor (500). O site não aceita ficheiro de vídeo (MP4) neste envio — use só fotos ou o campo «Vídeo (URL)».';
+          }
           throw new Error(`[Criar modelo] ${msg}`);
         }
         const newId = data0.id != null ? Number(data0.id) : NaN;
@@ -712,7 +763,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         id = newId;
         setWebsiteModelId(newId);
-        if (pendingWithFiles.length > 0) {
+        if (pendingImageFiles.length > 0) {
           setLocalMediaItems((prev) => {
             prev.forEach((m) => {
               if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -757,6 +808,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     setForm(createInitialForm());
     setWebsiteModelId(null);
     setApiMedia([]);
+    setFileQueueNotice('');
     setLocalMediaItems((prev) => {
       prev.forEach((m) => {
         if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -1302,7 +1354,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               <input
                 id={fileInputId}
                 type="file"
-                accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm"
+                accept="image/*"
                 multiple
                 className="hidden"
                 onChange={onPickFiles}
@@ -1314,14 +1366,19 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 Adicionar mídias
               </label>
               <span className="text-xs text-slate-500">
-                Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Novas fotos (ainda não enviadas) são
-                enviadas ao clicar em Salvar. Vídeo no perfil: use o link abaixo ou «Adicionar à galeria».
+                Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Só imagens neste upload — vídeo no
+                perfil: campo «Vídeo (URL)» ou «Adicionar à galeria» (YouTube/Instagram).
               </span>
             </div>
 
             {localMediaItems.length > 0 ? (
               <p className="text-xs text-amber-800">
-                {localMediaItems.length} ficheiro(s) pendente(s) (foto ou vídeo) — clique em Salvar para enviar ao site.
+                {localMediaItems.length} foto(s) pendente(s) de envio — clique em Salvar para enviar ao site.
+              </p>
+            ) : null}
+            {fileQueueNotice ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                {fileQueueNotice}
               </p>
             ) : null}
 
@@ -1521,7 +1578,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {localMediaItems.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-xs font-medium text-slate-700">
-                  Novas mídias — fotos ou vídeo (ainda não enviadas ao site)
+                  Novas fotos (ainda não enviadas ao site) — vídeo só por link abaixo
                 </p>
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                   {localMediaItems.map((item, index) => {
@@ -1540,24 +1597,13 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                       >
                         <div className="relative w-full overflow-hidden bg-slate-100" style={{ aspectRatio: '4/5' }}>
                           {item.preview ? (
-                            item.isVideo ? (
-                              <video
-                                src={item.preview}
-                                className="absolute inset-0 h-full w-full object-cover object-top"
-                                controls
-                                muted
-                                playsInline
-                                preload="metadata"
-                              />
-                            ) : (
-                              <img
-                                src={item.preview}
-                                alt=""
-                                loading="lazy"
-                                draggable={false}
-                                className="absolute inset-0 h-full w-full object-cover object-top"
-                              />
-                            )
+                            <img
+                              src={item.preview}
+                              alt=""
+                              loading="lazy"
+                              draggable={false}
+                              className="absolute inset-0 h-full w-full object-cover object-top"
+                            />
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
                               —
