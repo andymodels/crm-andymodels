@@ -4,6 +4,7 @@ import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } fr
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
 import {
   absolutizeWebsiteAssetUrl,
+  getWebsiteModelPublicUrl,
   instagramEmbedUrl,
   isDirectVideoFileUrl,
   isInstagramMediaUrl,
@@ -43,6 +44,8 @@ function createInitialForm() {
     telefones: [''],
     emails: [''],
     instagram: '',
+    /** Se falso, o utilizador pode guardar o @ mas o site pode ocultar o link no perfil público. */
+    mostrar_instagram: true,
     tiktok: '',
     cpf: '',
     rg: '',
@@ -228,6 +231,7 @@ function formToWebsiteModelPut(form) {
     eyes: trim(form.medida_olhos) || null,
     waist: trim(form.medida_cintura) || null,
     instagram: ig || null,
+    show_instagram: form.mostrar_instagram ? '1' : '0',
     tiktok: trim(form.tiktok) || null,
     ...(() => {
       const v = trim(form.video_url);
@@ -321,6 +325,12 @@ function mapDetailToForm(detail) {
     medida_cabelo: detail.hair != null ? String(detail.hair) : '',
     medida_olhos: detail.eyes != null ? String(detail.eyes) : '',
     instagram: instagramUsernameFromStored(igStored),
+    mostrar_instagram: (() => {
+      const v = detail.show_instagram ?? detail.instagram_visible;
+      if (v === undefined || v === null) return true;
+      if (v === false || v === '0' || v === 0 || Number(v) === 0) return false;
+      return true;
+    })(),
     tiktok: detail.tiktok != null ? String(detail.tiktok) : '',
     video_url:
       detail.youtube != null
@@ -1139,6 +1149,17 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 autoComplete="off"
               />
             </div>
+            <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.mostrar_instagram}
+                onChange={(e) => setField('mostrar_instagram', e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+              />
+              <span>
+                Mostrar Instagram no site público — desmarque para manter o @ guardado mas não exibir link no perfil.
+              </span>
+            </label>
           </Field>
           <Field label="TikTok">
             <input
@@ -1354,7 +1375,27 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
 
         <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
           <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-200 pb-2">
-            <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mídia</h4>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mídia</h4>
+              {(() => {
+                const slugPublico = String(form.slug_site || editSlug || '').trim();
+                const urlPerfil = slugPublico ? getWebsiteModelPublicUrl(slugPublico) : '';
+                return urlPerfil ? (
+                  <a
+                    href={urlPerfil}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-amber-700 underline-offset-2 hover:underline"
+                  >
+                    Ver perfil no site ↗
+                  </a>
+                ) : (
+                  <span className="text-xs text-slate-500" title="Defina o slug em Identificação">
+                    (Defina o slug para abrir o perfil público)
+                  </span>
+                );
+              })()}
+            </div>
             {apiMedia.length > 0 && apiMediaSelected.size >= 2 ? (
               <button
                 type="button"

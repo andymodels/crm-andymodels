@@ -94,3 +94,17 @@ export function isDirectVideoFileUrl(u) {
 export function isInstagramMediaUrl(u) {
   return /instagram\.com\/(reel|reels|p|tv|stories)\//i.test(String(u || ''));
 }
+
+/**
+ * URL do perfil público no site institucional (nova aba no CRM).
+ * `VITE_WEBSITE_MODEL_PATH` = segmento entre domínio e o slug (predef.: modelo → …/modelo/meu-slug).
+ */
+export function getWebsiteModelPublicUrl(slug) {
+  const s = String(slug || '').trim();
+  if (!s) return '';
+  const base = getWebsitePublicOrigin();
+  const segment = String(import.meta.env.VITE_WEBSITE_MODEL_PATH || 'modelo')
+    .trim()
+    .replace(/^\/+|\/+$/g, '');
+  return `${base}/${segment}/${encodeURIComponent(s)}`;
+}

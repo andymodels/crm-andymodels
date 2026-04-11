@@ -224,6 +224,7 @@ function normalizeWebsiteModelPatchBody(body) {
   };
   if (out.featured !== undefined && out.featured !== null) out.featured = to10(out.featured);
   if (out.active !== undefined && out.active !== null) out.active = to10(out.active);
+  if (out.show_instagram !== undefined && out.show_instagram !== null) out.show_instagram = to10(out.show_instagram);
   if (typeof out.creator === 'boolean') out.creator = out.creator ? 1 : 0;
   if (out.creator !== undefined && out.creator !== null && typeof out.creator !== 'boolean') {
     const n = Number(out.creator);
