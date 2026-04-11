@@ -31,7 +31,8 @@ export function mediaItemThumbOrUrl(item) {
   thumb = absolutizeWebsiteAssetUrl(thumb);
   url = absolutizeWebsiteAssetUrl(url);
 
-  const primary = thumb || url;
+  /** Vídeo: nunca usar URL de página (YouTube/Instagram) como <img src> — causa ecrã preto; usar iframe ou poster. */
+  const primary = type === 'video' ? thumb : thumb || url;
   return { thumb, url, primary };
 }
 

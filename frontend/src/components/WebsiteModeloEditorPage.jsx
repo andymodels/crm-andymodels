@@ -2,7 +2,15 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
-import { isInstagramMediaUrl, youtubePosterFromAnyUrl } from '../utils/websiteMediaDisplay';
+import {
+  absolutizeWebsiteAssetUrl,
+  instagramEmbedUrl,
+  isDirectVideoFileUrl,
+  isInstagramMediaUrl,
+  normalizeHttpUrl,
+  youtubeEmbedFromUrl,
+  youtubePosterFromAnyUrl,
+} from '../utils/websiteMediaDisplay';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
 const emptyFormaRecebimento = () => ({
@@ -84,24 +92,16 @@ function mediaArrayFromDetail(detail) {
   return Array.isArray(m) ? m.slice() : [];
 }
 
-/** Alinhado ao site: URL de vídeo para embed / leitura (YouTube, Vimeo, resto inalterado). */
+/** Alinhado ao site: URL de vídeo para embed (YouTube Shorts/watch, Vimeo, Instagram inalterado). */
 function parseVideoUrl(raw) {
   if (raw == null) return '';
-  const url = String(raw).trim();
+  const url = normalizeHttpUrl(String(raw).trim());
   if (!url) return '';
+  const yt = youtubeEmbedFromUrl(url);
+  if (yt) return yt;
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^www\./, '');
-    if (host === 'youtu.be') {
-      const id = u.pathname.replace(/^\//, '').slice(0, 11);
-      return id ? `https://www.youtube.com/embed/${id}` : url;
-    }
-    if (host.includes('youtube.com')) {
-      const v = u.searchParams.get('v');
-      if (v) return `https://www.youtube.com/embed/${v}`;
-      const embed = u.pathname.match(/\/embed\/([^/?]+)/);
-      if (embed) return `https://www.youtube.com/embed/${embed[1]}`;
-    }
     if (host.includes('vimeo.com')) {
       const m = u.pathname.match(/\/(\d+)/);
       if (m) return `https://player.vimeo.com/video/${m[1]}`;
@@ -110,7 +110,7 @@ function parseVideoUrl(raw) {
       return url;
     }
   } catch {
-    return url;
+    return String(raw || '').trim();
   }
   return url;
 }
@@ -213,7 +213,11 @@ function formToWebsiteModelPut(form) {
     waist: trim(form.medida_cintura) || null,
     instagram: ig || null,
     tiktok: trim(form.tiktok) || null,
-    youtube: trim(form.video_url) || null,
+    youtube: (() => {
+      const v = trim(form.video_url);
+      if (!v) return null;
+      return normalizeHttpUrl(v);
+    })(),
   };
 
   if (pi) out.model_status = pi;
@@ -506,7 +510,15 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        next.push({ id, preview: URL.createObjectURL(f), name: f.name, file: f, polaroid: false });
+        const isVideo = typeof f.type === 'string' && f.type.startsWith('video/');
+        next.push({
+          id,
+          preview: URL.createObjectURL(f),
+          name: f.name,
+          file: f,
+          polaroid: false,
+          isVideo,
+        });
       }
       return next;
     });
@@ -836,9 +848,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const addVideoToGallery = () => {
     const raw = String(form.video_url || '').trim();
     if (!raw) return;
-    const embed = parseVideoUrl(raw);
-    const urlForItem = embed || raw;
-    const thumb = youtubePosterFromAnyUrl(urlForItem) || youtubePosterFromAnyUrl(raw) || '';
+    const normalized = normalizeHttpUrl(raw);
+    const embed = parseVideoUrl(normalized);
+    const urlForItem = embed || normalized;
+    const thumb =
+      youtubePosterFromAnyUrl(normalized) || youtubePosterFromAnyUrl(urlForItem) || '';
     setApiMedia((prev) => [...prev, { type: 'video', url: urlForItem, thumb }]);
   };
 
@@ -1288,7 +1302,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               <input
                 id={fileInputId}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm"
                 multiple
                 className="hidden"
                 onChange={onPickFiles}
@@ -1307,7 +1321,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
 
             {localMediaItems.length > 0 ? (
               <p className="text-xs text-amber-800">
-                {localMediaItems.length} ficheiro(s) de imagem pendente(s) — clique em Salvar para enviar ao site.
+                {localMediaItems.length} ficheiro(s) pendente(s) (foto ou vídeo) — clique em Salvar para enviar ao site.
               </p>
             ) : null}
 
@@ -1360,33 +1374,69 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                           isCover ? 'border-amber-400 ring-2 ring-amber-300' : 'border-slate-200'
                         } ${polaroidOn ? 'ring-1 ring-sky-300' : ''}`}
                       >
-                        <div
-                          className="relative w-full overflow-hidden bg-slate-100"
-                          style={{ aspectRatio: '4/5' }}
-                          {...(isVideo && item && typeof item === 'object' && item.url != null
-                            ? { 'data-video-embed': parseVideoUrl(item.url) }
-                            : {})}
-                        >
+                        <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: '4/5' }}>
                           {isVideo ? (
-                            mediaPrimary ? (
-                              <WebsiteMediaImg
-                                item={item}
-                                alt=""
-                                loading="lazy"
-                                draggable={false}
-                                className="absolute inset-0 h-full w-full object-cover object-top"
-                              />
-                            ) : (
-                              <div
-                                className={`absolute inset-0 flex flex-col items-center justify-center px-2 text-center text-xs font-semibold text-white shadow-inner ${
-                                  isInstagramMediaUrl(item?.url)
-                                    ? 'bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500'
-                                    : 'bg-slate-600'
-                                }`}
-                              >
-                                {isInstagramMediaUrl(item?.url) ? 'Instagram' : 'Vídeo'}
-                              </div>
-                            )
+                            (() => {
+                              const u = item && typeof item === 'object' ? item.url : '';
+                              const ytEmb = youtubeEmbedFromUrl(u);
+                              const igEmb = instagramEmbedUrl(u);
+                              const directVid = isDirectVideoFileUrl(u);
+                              if (ytEmb) {
+                                return (
+                                  <iframe
+                                    title="YouTube"
+                                    src={ytEmb}
+                                    className="absolute inset-0 h-full w-full border-0"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                  />
+                                );
+                              }
+                              if (igEmb) {
+                                return (
+                                  <iframe
+                                    title="Instagram"
+                                    src={igEmb}
+                                    className="absolute inset-0 h-full w-full border-0"
+                                    allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; fullscreen"
+                                  />
+                                );
+                              }
+                              if (directVid) {
+                                return (
+                                  <video
+                                    src={absolutizeWebsiteAssetUrl(String(u))}
+                                    className="absolute inset-0 h-full w-full object-cover object-top"
+                                    controls
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                  />
+                                );
+                              }
+                              if (mediaPrimary) {
+                                return (
+                                  <WebsiteMediaImg
+                                    item={item}
+                                    alt=""
+                                    loading="lazy"
+                                    draggable={false}
+                                    className="absolute inset-0 h-full w-full object-cover object-top"
+                                  />
+                                );
+                              }
+                              return (
+                                <div
+                                  className={`absolute inset-0 flex flex-col items-center justify-center px-2 text-center text-xs font-semibold text-white shadow-inner ${
+                                    isInstagramMediaUrl(u)
+                                      ? 'bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500'
+                                      : 'bg-slate-600'
+                                  }`}
+                                >
+                                  {isInstagramMediaUrl(u) ? 'Instagram' : 'Vídeo'}
+                                </div>
+                              );
+                            })()
                           ) : mediaPrimary ? (
                             <WebsiteMediaImg
                               item={item}
@@ -1471,7 +1521,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {localMediaItems.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-xs font-medium text-slate-700">
-                  Novas mídias — fotos (ainda não enviadas ao site)
+                  Novas mídias — fotos ou vídeo (ainda não enviadas ao site)
                 </p>
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                   {localMediaItems.map((item, index) => {
@@ -1490,13 +1540,24 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                       >
                         <div className="relative w-full overflow-hidden bg-slate-100" style={{ aspectRatio: '4/5' }}>
                           {item.preview ? (
-                            <img
-                              src={item.preview}
-                              alt=""
-                              loading="lazy"
-                              draggable={false}
-                              className="absolute inset-0 h-full w-full object-cover object-top"
-                            />
+                            item.isVideo ? (
+                              <video
+                                src={item.preview}
+                                className="absolute inset-0 h-full w-full object-cover object-top"
+                                controls
+                                muted
+                                playsInline
+                                preload="metadata"
+                              />
+                            ) : (
+                              <img
+                                src={item.preview}
+                                alt=""
+                                loading="lazy"
+                                draggable={false}
+                                className="absolute inset-0 h-full w-full object-cover object-top"
+                              />
+                            )
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
                               —

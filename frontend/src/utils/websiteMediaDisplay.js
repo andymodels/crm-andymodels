@@ -11,6 +11,14 @@ export function getWebsitePublicOrigin() {
   return s.replace(/\/$/, '');
 }
 
+/** Garante https:// para parsing (Instagram/YouTube colados sem protocolo). */
+export function normalizeHttpUrl(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  return s;
+}
+
 /** Caminho relativo ou URL absoluta de asset do site → URL absoluta para <img src>. */
 export function absolutizeWebsiteAssetUrl(u) {
   const t = String(u || '').trim();
@@ -22,33 +30,67 @@ export function absolutizeWebsiteAssetUrl(u) {
   return `${base}${t.startsWith('/') ? '' : '/'}${t}`;
 }
 
-/** Miniatura estática do YouTube a partir de qualquer URL YouTube/embed. */
-export function youtubePosterFromAnyUrl(u) {
-  const s = String(u || '').trim();
-  if (!s) return '';
-  let m = s.match(/youtube\.com\/embed\/([^?&/]+)/i);
-  if (m) return `https://img.youtube.com/vi/${m[1].slice(0, 11)}/hqdefault.jpg`;
-  m = s.match(/youtu\.be\/([^?&/]+)/i);
-  if (m) return `https://img.youtube.com/vi/${m[1].slice(0, 11)}/hqdefault.jpg`;
+/** ID de vídeo YouTube (watch, embed, shorts, youtu.be). */
+export function extractYoutubeVideoId(u) {
+  const str = String(u || '').trim();
+  if (!str) return null;
+  const withProto = normalizeHttpUrl(str);
   try {
-    const url = new URL(/^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/\//, '')}`);
+    const url = new URL(withProto);
     const host = url.hostname.replace(/^www\./, '');
     if (host === 'youtu.be') {
-      const id = url.pathname.replace(/^\//, '').slice(0, 11);
-      return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : '';
+      const id = url.pathname.replace(/^\//, '').split(/[/?#]/)[0];
+      return id ? id.slice(0, 11) : null;
     }
-    if (host.includes('youtube.com')) {
-      const v = url.searchParams.get('v');
-      if (v) return `https://img.youtube.com/vi/${v.slice(0, 11)}/hqdefault.jpg`;
-      const embed = url.pathname.match(/\/embed\/([^/?]+)/);
-      if (embed) return `https://img.youtube.com/vi/${embed[1].slice(0, 11)}/hqdefault.jpg`;
-    }
+    if (!host.includes('youtube.com')) return null;
+    const v = url.searchParams.get('v');
+    if (v) return v.slice(0, 11);
+    let m = url.pathname.match(/\/embed\/([^/?]+)/);
+    if (m) return m[1].slice(0, 11);
+    m = url.pathname.match(/\/shorts\/([^/?]+)/);
+    if (m) return m[1].slice(0, 11);
+    m = url.pathname.match(/\/live\/([^/?]+)/);
+    if (m) return m[1].slice(0, 11);
   } catch {
     /* ignorar */
   }
-  return '';
+  return null;
+}
+
+/** Miniatura estática do YouTube (nunca usar a URL da página /shorts ou /watch como <img src>). */
+export function youtubePosterFromAnyUrl(u) {
+  const id = extractYoutubeVideoId(u);
+  return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : '';
+}
+
+/** URL de iframe embed do YouTube. */
+export function youtubeEmbedFromUrl(u) {
+  const id = extractYoutubeVideoId(u);
+  return id ? `https://www.youtube.com/embed/${id}` : '';
+}
+
+/** iframe embed do Instagram (reel, reels, post, tv). */
+export function instagramEmbedUrl(raw) {
+  const s = normalizeHttpUrl(String(raw || '').trim());
+  if (!s) return '';
+  try {
+    const url = new URL(s);
+    if (!url.hostname.includes('instagram.com')) return '';
+    let path = url.pathname.replace(/\/$/, '');
+    path = path.replace(/^\/reels\//, '/reel/');
+    if (path.endsWith('/embed')) return `https://www.instagram.com${path}`;
+    if (!/\/(reel|p|tv)\//i.test(path)) return '';
+    return `https://www.instagram.com${path}/embed`;
+  } catch {
+    return '';
+  }
+}
+
+/** Ficheiro de vídeo hospedado (URL direta) — não usar como <img>. */
+export function isDirectVideoFileUrl(u) {
+  return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(u || ''));
 }
 
 export function isInstagramMediaUrl(u) {
-  return /instagram\.com\/(reel|p|tv|stories)\//i.test(String(u || ''));
+  return /instagram\.com\/(reel|reels|p|tv|stories)\//i.test(String(u || ''));
 }
