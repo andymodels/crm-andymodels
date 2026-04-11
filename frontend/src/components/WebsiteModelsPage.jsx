@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
-import { WebsiteMediaImg, firstMediaEntry } from './WebsiteMediaImage';
+import { buildMediaItems } from './WebsiteMediaImage';
 
 /** Mesma densidade e proporção da grelha de mídia na ficha do modelo (WebsiteModeloEditorPage). */
 const LIST_THUMB_GRID_CLASS =
@@ -151,7 +151,11 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
               {filteredRows.map((m, idx) => {
                 const name = m?.name != null ? String(m.name) : '—';
                 const slug = m?.slug != null ? String(m.slug).trim() : '';
-                const cardMedia = firstMediaEntry(m);
+                const mediaItems = buildMediaItems(m);
+                const firstImage =
+                  mediaItems.find((item) => item.type === 'image')?.thumb ||
+                  mediaItems.find((item) => item.type === 'image')?.url ||
+                  '';
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
                 const canOpen = Boolean(slug);
                 return (
@@ -166,12 +170,21 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                         className="relative w-full overflow-hidden bg-slate-200"
                         style={{ aspectRatio: '4/5' }}
                       >
-                        {cardMedia ? (
-                          <WebsiteMediaImg
-                            item={cardMedia}
+                        {firstImage ? (
+                          <img
+                            src={firstImage}
                             alt=""
                             loading="lazy"
+                            draggable={false}
                             className="absolute inset-0 h-full w-full object-cover object-top"
+                            onError={(e) => {
+                              const entry = mediaItems.find((item) => item.type === 'image');
+                              if (!entry?.url || !entry?.thumb || entry.thumb === entry.url) return;
+                              const el = e.currentTarget;
+                              if (el.dataset.wmImgFallback === '1') return;
+                              el.dataset.wmImgFallback = '1';
+                              el.src = entry.url;
+                            }}
                           />
                         ) : (
                           <div className="flex h-full items-center justify-center text-xs text-slate-500">

@@ -38,8 +38,47 @@ export function WebsiteMediaImg({ item, className = '', alt = '', ...rest }) {
   );
 }
 
-/** Primeiro elemento de `model.media` (apenas para cartão da listagem). */
+/**
+ * Mesma lógica do site (ModelPage): se `media` tem itens, usa-os; senão
+ * monta a partir de `cover_image` + `images` (URLs planas → objetos tipo imagem).
+ */
+export function buildMediaItems(model) {
+  if (!model || typeof model !== 'object') return [];
+  if (Array.isArray(model.media) && model.media.length > 0) {
+    return model.media
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          const url = entry.trim();
+          if (!url) return null;
+          return { type: 'image', url, thumb: url };
+        }
+        if (entry && typeof entry === 'object') {
+          const url = entry.url != null ? String(entry.url).trim() : '';
+          const thumb = entry.thumb != null ? String(entry.thumb).trim() : '';
+          const type = entry.type != null ? String(entry.type).trim() : 'image';
+          if (!url && !thumb) return null;
+          return {
+            type: type || 'image',
+            url: url || thumb,
+            thumb: thumb || url,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+  const rest = [model.cover_image, ...(Array.isArray(model.images) ? model.images : [])]
+    .filter(Boolean)
+    .map((u) => String(u).trim())
+    .filter(Boolean);
+  return rest.map((url) => ({ type: 'image', url, thumb: url }));
+}
+
+/**
+ * URL para o cartão da listagem (miniatura): igual ao site — thumb depois url do primeiro `image`.
+ * @deprecated Preferir `buildMediaItems` + lógica explícita no cartão
+ */
 export function firstMediaEntry(model) {
-  const arr = model && typeof model === 'object' && Array.isArray(model.media) ? model.media : [];
-  return arr.length > 0 ? arr[0] : null;
+  const mediaItems = buildMediaItems(model);
+  return mediaItems.find((m) => m.type === 'image') || null;
 }
