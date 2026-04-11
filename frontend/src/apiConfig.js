@@ -54,6 +54,16 @@ export function fetchWithAuth(url, options = {}) {
 
 export function throwIfHtmlOrCannotPost(raw, httpStatus) {
   const t = String(raw || '');
+  const trimmed = t.trim();
+  /** JSON válido (erros da API, proxy do site) pode conter `<` dentro de `message` — não tratar como página HTML. */
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      JSON.parse(trimmed);
+      return;
+    } catch {
+      /* continuar: não era JSON completo */
+    }
+  }
   if (!t.includes('<') && !/cannot\s+post/i.test(t)) return;
   const m = t.match(/Cannot POST\s+([^\s<]+)/i);
   if (m) {

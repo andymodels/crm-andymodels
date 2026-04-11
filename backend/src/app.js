@@ -98,6 +98,13 @@ app.use('/api', cadastroLinksRouter);
 app.use('/api', agendaRouter);
 app.use('/api', websiteModelsRouter);
 
+/** Pedidos /api sem rota: JSON (evita 404 em HTML e confunde o frontend). */
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    message: `Rota nao encontrada no CRM: ${req.method} ${req.originalUrl || req.url}`,
+  });
+});
+
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {
   app.use(express.static(publicDir));

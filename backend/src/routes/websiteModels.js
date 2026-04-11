@@ -173,8 +173,13 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw) {
   try {
     data = JSON.parse(raw);
   } catch {
+    const isHtml = String(raw || '').includes('<');
     return res.status(statusCode >= 400 ? statusCode : 502).json({
-      message: raw ? String(raw).slice(0, 500) : 'Resposta invalida do website.',
+      message: isHtml
+        ? `O site institucional respondeu com página HTML (HTTP ${statusCode}), não JSON. Pode ser rota inexistente ou ID inválido no admin do site.`
+        : raw
+          ? String(raw).slice(0, 500)
+          : 'Resposta invalida do website.',
     });
   }
   if (statusCode < 200 || statusCode >= 300) {
