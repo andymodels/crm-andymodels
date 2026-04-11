@@ -56,6 +56,15 @@ try {
 }
 app.use('/uploads', express.static(UPLOAD_ROOT));
 
+if (String(process.env.DEBUG_CRM_ROUTES || '').trim() === '1') {
+  app.use((req, res, next) => {
+    if (String(req.path || '').startsWith('/api')) {
+      console.log('ROTA RECEBIDA:', req.method, req.originalUrl || req.url);
+    }
+    next();
+  });
+}
+
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
   // Identidade da API sem DB (útil para ver se a porta 3001 é mesmo este projeto)

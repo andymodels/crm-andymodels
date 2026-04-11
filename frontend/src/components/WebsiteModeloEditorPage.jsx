@@ -335,7 +335,7 @@ function Field({ label, children, className = '' }) {
 
 /**
  * Formulário Website — criação (vazio) ou edição (carrega GET público por slug).
- * Em edição: Salvar envia PATCH ao site via CRM (modelo + media).
+ * Salvar: PUT/POST no site via CRM (multipart ou JSON); galeria atualizada pela resposta ou GET /website/models/:slug.
  */
 export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = '', onBackToList }) {
   const fileInputId = `${useId()}-files`;
@@ -560,8 +560,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   };
 
   /**
-   * Alinhado ao admin do site: PUT /api/admin/models/:id (JSON ou multipart com photos),
-   * com ordered_images = JSON da galeria atual; sem rota …/media/upload.
+   * Fluxo suportado pelo CRM (proxy): multipart ou JSON para PUT/POST no site;
+   * se a resposta não trouxer `media`, obtém URLs com GET /api/website/models/:slug (já existente).
+   * Não usar POST /api/admin/models/:id/media/upload (não existe no site nem deve existir no CRM).
    */
   const saveAllToSite = useCallback(async () => {
     setSaveSaving(true);
@@ -578,7 +579,6 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       const putBase = formToWebsiteModelPut(form);
       const orderedImagesStr = JSON.stringify(apiMedia);
       const putBody = { ...putBase, ordered_images: orderedImagesStr };
-      console.log('PAYLOAD FINAL MODELO:', putBody);
 
       let id = websiteModelId;
       const hasSiteId = id != null && !Number.isNaN(Number(id));
@@ -643,21 +643,26 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           });
         }
         if (!applyMediaFromResponse(data1)) {
-          let media = [...apiMedia];
-          console.log('PAYLOAD FINAL MÍDIA:', { media });
-          const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ media }),
-          });
-          const raw2 = await r2.text();
-          throwIfHtmlOrCannotPost(raw2, r2.status);
-          const data2 = parseJsonSafe(raw2) || {};
-          if (!r2.ok) {
-            const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
-            throw new Error(`[Galeria / mídia] ${msg}`);
+          const slug =
+            String(form.slug_site || '').trim() || (isEdit ? String(editSlug || '').trim() : '');
+          if (!slug) {
+            throw new Error(
+              'O servidor não devolveu a galeria após o upload. Defina o slug do modelo ou recarregue a página.',
+            );
           }
-          setApiMedia(media);
+          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+          const rawRf = await rf.text();
+          throwIfHtmlOrCannotPost(rawRf, rf.status);
+          const detailRf = parseJsonSafe(rawRf) || {};
+          if (!rf.ok) {
+            const msg =
+              detailRf && typeof detailRf.message === 'string' ? detailRf.message : `HTTP ${rf.status}`;
+            throw new Error(`[Galeria após upload] ${msg}`);
+          }
+          if (!Array.isArray(detailRf.media)) {
+            throw new Error('Não foi possível obter as URLs da galeria após o upload. Recarregue a página.');
+          }
+          setApiMedia(detailRf.media);
         }
       } else {
         let r0;
@@ -702,21 +707,27 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           });
         }
         if (!applyMediaFromResponse(data0)) {
-          const media = [...apiMedia];
-          console.log('PAYLOAD FINAL MÍDIA:', { media });
-          const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ media }),
-          });
-          const raw2 = await r2.text();
-          throwIfHtmlOrCannotPost(raw2, r2.status);
-          const data2 = parseJsonSafe(raw2) || {};
-          if (!r2.ok) {
-            const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
-            throw new Error(`[Galeria / mídia] ${msg}`);
+          const slug =
+            String(form.slug_site || '').trim() ||
+            (data0 && data0.slug != null ? String(data0.slug).trim() : '');
+          if (!slug) {
+            throw new Error(
+              'O servidor não devolveu a galeria nem o slug. Abra o modelo na lista e tente de novo.',
+            );
           }
-          setApiMedia(media);
+          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+          const rawRf = await rf.text();
+          throwIfHtmlOrCannotPost(rawRf, rf.status);
+          const detailRf = parseJsonSafe(rawRf) || {};
+          if (!rf.ok) {
+            const msg =
+              detailRf && typeof detailRf.message === 'string' ? detailRf.message : `HTTP ${rf.status}`;
+            throw new Error(`[Galeria após upload] ${msg}`);
+          }
+          if (!Array.isArray(detailRf.media)) {
+            throw new Error('Não foi possível obter as URLs da galeria após o upload. Recarregue a página.');
+          }
+          setApiMedia(detailRf.media);
         }
       }
 
@@ -726,7 +737,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     } finally {
       setSaveSaving(false);
     }
-  }, [isEdit, websiteModelId, form, apiMedia, localMediaItems]);
+  }, [isEdit, editSlug, websiteModelId, form, apiMedia, localMediaItems]);
 
   const clearForm = () => {
     setForm(createInitialForm());
