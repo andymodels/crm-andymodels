@@ -76,33 +76,6 @@ function instagramUrlFromUsername(username) {
   return `https://instagram.com/${u}`;
 }
 
-/** Novos itens de imagem devolvidos pelo upload no site (sem prefixar galeria anterior). */
-function extractNewMediaItemsFromUploadJson(uploadJson) {
-  const items = [];
-  const data = uploadJson && typeof uploadJson === 'object' ? uploadJson : {};
-  if (Array.isArray(data.urls)) {
-    for (const u of data.urls) {
-      const url = String(u || '').trim();
-      if (url) items.push({ type: 'image', url, thumb: url });
-    }
-  }
-  if (items.length === 0 && Array.isArray(data.media)) {
-    return data.media.filter(Boolean);
-  }
-  if (items.length === 0 && Array.isArray(data.files)) {
-    for (const f of data.files) {
-      const url =
-        f && typeof f === 'object' ? String(f.url || f.src || '').trim() : String(f || '').trim();
-      if (url) items.push({ type: 'image', url, thumb: url });
-    }
-  }
-  if (items.length === 0 && data.url) {
-    const url = String(data.url).trim();
-    if (url) items.push({ type: 'image', url, thumb: url });
-  }
-  return items;
-}
-
 /** Apenas `model.media` da API, sem cover_image/images/concatenações. */
 function mediaArrayFromDetail(detail) {
   if (!detail || typeof detail !== 'object') return [];
@@ -205,12 +178,14 @@ function togglePolaroidAt(arr, index) {
   return next;
 }
 
-/** Corpo PATCH/POST /api/admin/models — nomes alinhados ao GET público do site. */
-function formToWebsiteModelPatch(form) {
+/**
+ * Corpo PUT /api/admin/models/:id no site (adminModels.js): strings featured/active '1'/'0',
+ * model_status para linha nos cards, categories em JSON, sem public_info/creator/description.
+ */
+function formToWebsiteModelPut(form) {
   const trim = (s) => (s != null ? String(s).trim() : '');
-  const category = form.catMasculino ? 'men' : 'women';
-  const creator = form.catCreators ? 1 : 0;
-  const categories = [category];
+  const baseCat = form.catMasculino ? 'men' : 'women';
+  const categories = [baseCat];
   if (form.catCreators) categories.push('creators');
 
   const bioText = trim(form.bio);
@@ -223,39 +198,34 @@ function formToWebsiteModelPatch(form) {
     ig = '';
   }
 
+  const pi = trim(form.public_info);
+
   const out = {
     name: trim(form.nome),
     bio: bioText,
-    description: bioText,
-    featured: form.featured ? 1 : 0,
-    active: form.ativo ? 1 : 0,
-    category,
-    creator,
-    categories,
+    featured: form.featured ? '1' : '0',
+    active: form.ativo ? '1' : '0',
+    categories: JSON.stringify(categories),
     shoes: trim(form.medida_sapato) || null,
     hair: trim(form.medida_cabelo) || null,
     eyes: trim(form.medida_olhos) || null,
     waist: trim(form.medida_cintura) || null,
     instagram: ig || null,
     tiktok: trim(form.tiktok) || null,
-    video_url: trim(form.video_url) || null,
+    youtube: trim(form.video_url) || null,
   };
 
-  const pi = trim(form.public_info);
-  if (pi) out.public_info = pi;
+  if (pi) out.model_status = pi;
 
-  if (category === 'women') {
+  if (baseCat === 'women') {
     out.height = trim(form.medida_altura) || null;
     out.bust = trim(form.medida_busto) || null;
     out.waist = trim(form.medida_cintura) || null;
     out.hips = trim(form.medida_quadril) || null;
     out.torax = '';
-    out.chest = '';
   } else {
     out.height = trim(form.medida_altura) || null;
-    const tx = trim(form.medida_torax);
-    out.torax = tx;
-    out.chest = tx;
+    out.torax = trim(form.medida_torax) || null;
     out.waist = trim(form.medida_cintura) || null;
     out.bust = '';
     out.hips = '';
@@ -264,6 +234,15 @@ function formToWebsiteModelPatch(form) {
   const slug = trim(form.slug_site);
   if (slug) out.slug = slug;
   return out;
+}
+
+/** Anexa objeto plano ao FormData (valores em string; objetos com JSON.stringify). */
+function appendModelFieldsToFormData(fd, obj) {
+  if (!obj || typeof obj !== 'object') return;
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null) continue;
+    fd.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+  }
 }
 
 function mapDetailToForm(detail) {
@@ -280,12 +259,14 @@ function mapDetailToForm(detail) {
   const isMen = has('men') || has('masculino') || cat === 'men' || cat === 'masculino';
 
   const legacyPublic =
-    detail.public_info != null && String(detail.public_info).trim() !== ''
-      ? String(detail.public_info)
-      : [detail.model_status, detail.city]
-          .filter((x) => x != null && String(x).trim() !== '')
-          .map((x) => String(x).trim())
-          .join(' · ');
+    detail.model_status != null && String(detail.model_status).trim() !== ''
+      ? String(detail.model_status).trim()
+      : detail.public_info != null && String(detail.public_info).trim() !== ''
+        ? String(detail.public_info).trim()
+        : [detail.city]
+            .filter((x) => x != null && String(x).trim() !== '')
+            .map((x) => String(x).trim())
+            .join(' · ');
 
   const igStored = detail.instagram != null ? String(detail.instagram) : '';
 
@@ -319,11 +300,13 @@ function mapDetailToForm(detail) {
     instagram: instagramUsernameFromStored(igStored),
     tiktok: detail.tiktok != null ? String(detail.tiktok) : '',
     video_url:
-      detail.video_url != null
-        ? String(detail.video_url)
-        : detail.video != null
-          ? String(detail.video)
-          : '',
+      detail.youtube != null
+        ? String(detail.youtube)
+        : detail.video_url != null
+          ? String(detail.video_url)
+          : detail.video != null
+            ? String(detail.video)
+            : '',
     slug_site: detail.slug != null ? String(detail.slug) : '',
     observacoes: detail.observacoes != null ? String(detail.observacoes) : '',
     public_info: legacyPublic,
@@ -576,7 +559,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     e.preventDefault();
   };
 
-  /** Um único fluxo: POST ou PATCH modelo + upload de ficheiros + PATCH media (mesmo payload em criar/editar). */
+  /**
+   * Alinhado ao admin do site: PUT /api/admin/models/:id (JSON ou multipart com photos),
+   * com ordered_images = JSON da galeria atual; sem rota …/media/upload.
+   */
   const saveAllToSite = useCallback(async () => {
     setSaveSaving(true);
     setSaveError('');
@@ -589,113 +575,151 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
       }
 
-      const patchBody = formToWebsiteModelPatch(form);
-      console.log('PAYLOAD FINAL MODELO:', patchBody);
-      let id = websiteModelId;
-      /** Após o primeiro POST em «Novo modelo», passa a atualizar com PATCH (mesmo formulário). */
-      const hasSiteId = id != null && !Number.isNaN(Number(id));
-      const shouldPatch = isEdit || hasSiteId;
+      const putBase = formToWebsiteModelPut(form);
+      const orderedImagesStr = JSON.stringify(apiMedia);
+      const putBody = { ...putBase, ordered_images: orderedImagesStr };
+      console.log('PAYLOAD FINAL MODELO:', putBody);
 
-      if (shouldPatch) {
+      let id = websiteModelId;
+      const hasSiteId = id != null && !Number.isNaN(Number(id));
+      const shouldUpdate = isEdit || hasSiteId;
+      const pendingWithFiles = localMediaItems.filter((x) => x.file instanceof File);
+
+      const parseJsonSafe = (raw) => {
+        try {
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      };
+
+      const applyMediaFromResponse = (data) => {
+        const root = data && typeof data === 'object' ? data : null;
+        const media = root?.media ?? root?.model?.media;
+        if (Array.isArray(media)) {
+          setApiMedia(media);
+          return true;
+        }
+        return false;
+      };
+
+      if (shouldUpdate) {
         if (id == null || Number.isNaN(Number(id))) {
           throw new Error('ID do modelo no site não disponível. Recarregue a página.');
         }
-        const r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patchBody),
-        });
-        const raw1 = await r1.text();
-        throwIfHtmlOrCannotPost(raw1, r1.status);
-        let data1;
-        try {
-          data1 = raw1 ? JSON.parse(raw1) : {};
-        } catch {
-          throw new Error('Resposta inválida do servidor ao salvar.');
+        let r1;
+        let raw1;
+        if (pendingWithFiles.length > 0) {
+          const fd = new FormData();
+          appendModelFieldsToFormData(fd, putBody);
+          pendingWithFiles.forEach((x) => {
+            fd.append('photos', x.file, x.file.name || 'photo.jpg');
+          });
+          r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
+            method: 'PUT',
+            body: fd,
+          });
+          raw1 = await r1.text();
+        } else {
+          r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(putBody),
+          });
+          raw1 = await r1.text();
         }
+        throwIfHtmlOrCannotPost(raw1, r1.status);
+        const data1 = parseJsonSafe(raw1) || {};
         if (!r1.ok) {
           const msg = data1 && typeof data1.message === 'string' ? data1.message : `HTTP ${r1.status}`;
           throw new Error(`[Dados do modelo] ${msg}`);
         }
-      } else {
-        const r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patchBody),
-        });
-        const raw0 = await r0.text();
-        throwIfHtmlOrCannotPost(raw0, r0.status);
-        let data0;
-        try {
-          data0 = raw0 ? JSON.parse(raw0) : {};
-        } catch {
-          throw new Error('Resposta inválida ao criar modelo no site.');
+        if (pendingWithFiles.length > 0) {
+          setLocalMediaItems((prev) => {
+            prev.forEach((m) => {
+              if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
+            });
+            return [];
+          });
         }
+        if (!applyMediaFromResponse(data1)) {
+          let media = [...apiMedia];
+          console.log('PAYLOAD FINAL MÍDIA:', { media });
+          const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ media }),
+          });
+          const raw2 = await r2.text();
+          throwIfHtmlOrCannotPost(raw2, r2.status);
+          const data2 = parseJsonSafe(raw2) || {};
+          if (!r2.ok) {
+            const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
+            throw new Error(`[Galeria / mídia] ${msg}`);
+          }
+          setApiMedia(media);
+        }
+      } else {
+        let r0;
+        let raw0;
+        if (pendingWithFiles.length > 0) {
+          const fd = new FormData();
+          appendModelFieldsToFormData(fd, putBody);
+          pendingWithFiles.forEach((x) => {
+            fd.append('photos', x.file, x.file.name || 'photo.jpg');
+          });
+          r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
+            method: 'POST',
+            body: fd,
+          });
+          raw0 = await r0.text();
+        } else {
+          r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(putBody),
+          });
+          raw0 = await r0.text();
+        }
+        throwIfHtmlOrCannotPost(raw0, r0.status);
+        const data0 = parseJsonSafe(raw0) || {};
         if (!r0.ok) {
           const msg = data0 && typeof data0.message === 'string' ? data0.message : `HTTP ${r0.status}`;
           throw new Error(`[Criar modelo] ${msg}`);
         }
         const newId = data0.id != null ? Number(data0.id) : NaN;
         if (Number.isNaN(newId)) {
-          throw new Error('O site não devolveu o ID do novo modelo. Confirme POST /api/admin/models no servidor do site.');
+          throw new Error('O site não devolveu o ID do novo modelo.');
         }
         id = newId;
         setWebsiteModelId(newId);
-      }
-
-      let media = [...apiMedia];
-      const pendingFiles = localMediaItems.filter((x) => x.file instanceof File);
-      if (pendingFiles.length > 0) {
-        const fd = new FormData();
-        pendingFiles.forEach((x) => fd.append('files', x.file, x.file.name));
-        const ru = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media/upload`, {
-          method: 'POST',
-          body: fd,
-        });
-        const rawu = await ru.text();
-        throwIfHtmlOrCannotPost(rawu, ru.status);
-        let upData;
-        try {
-          upData = rawu ? JSON.parse(rawu) : {};
-        } catch {
-          upData = {};
-        }
-        if (!ru.ok) {
-          const msg = upData && typeof upData.message === 'string' ? upData.message : `HTTP ${ru.status}`;
-          throw new Error(`[Upload de imagens] ${msg}`);
-        }
-        let newItems = extractNewMediaItemsFromUploadJson(upData);
-        const pendingMeta = localMediaItems.filter((x) => x.file instanceof File);
-        newItems = newItems.map((it, i) => (pendingMeta[i]?.polaroid ? { ...it, polaroid: true } : it));
-        media = [...apiMedia, ...newItems];
-        setLocalMediaItems((prev) => {
-          prev.forEach((m) => {
-            if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
+        if (pendingWithFiles.length > 0) {
+          setLocalMediaItems((prev) => {
+            prev.forEach((m) => {
+              if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
+            });
+            return [];
           });
-          return [];
-        });
+        }
+        if (!applyMediaFromResponse(data0)) {
+          const media = [...apiMedia];
+          console.log('PAYLOAD FINAL MÍDIA:', { media });
+          const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ media }),
+          });
+          const raw2 = await r2.text();
+          throwIfHtmlOrCannotPost(raw2, r2.status);
+          const data2 = parseJsonSafe(raw2) || {};
+          if (!r2.ok) {
+            const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
+            throw new Error(`[Galeria / mídia] ${msg}`);
+          }
+          setApiMedia(media);
+        }
       }
 
-      console.log('PAYLOAD FINAL MÍDIA:', { media });
-      const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media }),
-      });
-      const raw2 = await r2.text();
-      throwIfHtmlOrCannotPost(raw2, r2.status);
-      let data2;
-      try {
-        data2 = raw2 ? JSON.parse(raw2) : {};
-      } catch {
-        throw new Error('Resposta inválida do servidor ao salvar mídia.');
-      }
-      if (!r2.ok) {
-        const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
-        throw new Error(`[Galeria / mídia] ${msg}`);
-      }
-
-      setApiMedia(media);
       setSaveOk('Salvo no site.');
     } catch (e) {
       setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
