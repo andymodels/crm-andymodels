@@ -1,17 +1,36 @@
 import { useEffect, useState } from 'react';
+import {
+  absolutizeWebsiteAssetUrl,
+  youtubePosterFromAnyUrl,
+} from '../utils/websiteMediaDisplay';
+
+function absolutizePair(url, thumb) {
+  const u = absolutizeWebsiteAssetUrl(String(url || '').trim());
+  const th = absolutizeWebsiteAssetUrl(String(thumb || '').trim());
+  return { url: u || th, thumb: th || u };
+}
 
 /**
- * URLs exatamente como vêm do backend (B2). Sem replace, sem paths locais.
- * Ordem: `thumb` se existir, senão `url`. Em caso de erro ao carregar `thumb`, tenta `url`.
+ * Ordem: thumb → url. Caminhos relativos do site são absolutizados para o domínio público (VITE_WEBSITE_ORIGIN).
+ * Vídeo: URLs de embed do YouTube não servem como <img>; usa-se poster do YouTube quando não há thumb.
  */
 export function mediaItemThumbOrUrl(item) {
   if (item == null) return { thumb: '', url: '', primary: '' };
   if (typeof item === 'string') {
-    const s = String(item).trim();
+    const s = absolutizeWebsiteAssetUrl(String(item).trim());
     return { thumb: '', url: s, primary: s };
   }
-  const thumb = item.thumb != null ? String(item.thumb).trim() : '';
-  const url = item.url != null ? String(item.url).trim() : '';
+  const type = item.type != null ? String(item.type).trim() : 'image';
+  let thumb = item.thumb != null ? String(item.thumb).trim() : '';
+  let url = item.url != null ? String(item.url).trim() : '';
+
+  if (type === 'video' && !thumb) {
+    thumb = youtubePosterFromAnyUrl(url) || '';
+  }
+
+  thumb = absolutizeWebsiteAssetUrl(thumb);
+  url = absolutizeWebsiteAssetUrl(url);
+
   const primary = thumb || url;
   return { thumb, url, primary };
 }
@@ -50,17 +69,19 @@ export function buildMediaItems(model) {
         if (typeof entry === 'string') {
           const url = entry.trim();
           if (!url) return null;
-          return { type: 'image', url, thumb: url };
+          const abs = absolutizeWebsiteAssetUrl(url);
+          return { type: 'image', url: abs, thumb: abs };
         }
         if (entry && typeof entry === 'object') {
-          const url = entry.url != null ? String(entry.url).trim() : '';
-          const thumb = entry.thumb != null ? String(entry.thumb).trim() : '';
+          const rawUrl = entry.url != null ? String(entry.url).trim() : '';
+          const rawThumb = entry.thumb != null ? String(entry.thumb).trim() : '';
           const type = entry.type != null ? String(entry.type).trim() : 'image';
-          if (!url && !thumb) return null;
+          if (!rawUrl && !rawThumb) return null;
+          const pair = absolutizePair(rawUrl || rawThumb, rawThumb || rawUrl);
           return {
             type: type || 'image',
-            url: url || thumb,
-            thumb: thumb || url,
+            url: pair.url,
+            thumb: pair.thumb,
           };
         }
         return null;
@@ -71,7 +92,10 @@ export function buildMediaItems(model) {
     .filter(Boolean)
     .map((u) => String(u).trim())
     .filter(Boolean);
-  return rest.map((url) => ({ type: 'image', url, thumb: url }));
+  return rest.map((u) => {
+    const abs = absolutizeWebsiteAssetUrl(u);
+    return { type: 'image', url: abs, thumb: abs };
+  });
 }
 
 /**

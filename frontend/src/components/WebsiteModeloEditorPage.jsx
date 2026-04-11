@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
+import { isInstagramMediaUrl, youtubePosterFromAnyUrl } from '../utils/websiteMediaDisplay';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
 const emptyFormaRecebimento = () => ({
@@ -334,8 +335,9 @@ function Field({ label, children, className = '' }) {
 }
 
 /**
- * Formulário Website — criação (vazio) ou edição (carrega GET público por slug).
- * Salvar: PUT/POST no site via CRM (multipart ou JSON); galeria atualizada pela resposta ou GET /website/models/:slug.
+ * Cadastro mestre Website — «Novo modelo» (mode=create) e «Editar modelo» (mode=edit) são o MESMO ecrã.
+ * Qualquer ajuste de campo, mídia ou validação deve ser feito aqui; não há segunda página de cadastro.
+ * Salvar: PUT/POST no site via CRM (multipart ou JSON); galeria pela resposta ou GET /website/models/:slug.
  */
 export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = '', onBackToList }) {
   const fileInputId = `${useId()}-files`;
@@ -834,8 +836,10 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const addVideoToGallery = () => {
     const raw = String(form.video_url || '').trim();
     if (!raw) return;
-    const u = parseVideoUrl(raw);
-    setApiMedia((prev) => [...prev, { type: 'video', url: u || raw, thumb: '' }]);
+    const embed = parseVideoUrl(raw);
+    const urlForItem = embed || raw;
+    const thumb = youtubePosterFromAnyUrl(urlForItem) || youtubePosterFromAnyUrl(raw) || '';
+    setApiMedia((prev) => [...prev, { type: 'video', url: urlForItem, thumb }]);
   };
 
   if (isEdit && editBoot) {
@@ -1293,17 +1297,17 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 htmlFor={fileInputId}
                 className="inline-flex cursor-pointer items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
               >
-                Adicionar imagens
+                Adicionar mídias
               </label>
               <span className="text-xs text-slate-500">
                 Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Novas fotos (ainda não enviadas) são
-                carregadas ao clicar em Salvar.
+                enviadas ao clicar em Salvar. Vídeo no perfil: use o link abaixo ou «Adicionar à galeria».
               </span>
             </div>
 
             {localMediaItems.length > 0 ? (
               <p className="text-xs text-amber-800">
-                {localMediaItems.length} ficheiro(s) pendente(s) de envio — clique em Salvar para enviar ao site.
+                {localMediaItems.length} ficheiro(s) de imagem pendente(s) — clique em Salvar para enviar ao site.
               </p>
             ) : null}
 
@@ -1313,9 +1317,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 <input
                   value={form.video_url}
                   onChange={(e) => setField('video_url', e.target.value)}
-                  type="url"
+                  type="text"
+                  inputMode="url"
+                  autoComplete="off"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="YouTube, Instagram…"
+                  placeholder="YouTube, Instagram (reel, post)…"
                 />
                 <span className="mt-1 block text-xs text-slate-500">
                   Enviado no perfil do modelo. «Adicionar à galeria» inclui o mesmo URL na grelha abaixo.
@@ -1371,8 +1377,14 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                                 className="absolute inset-0 h-full w-full object-cover object-top"
                               />
                             ) : (
-                              <div className="absolute inset-0 flex items-center justify-center bg-slate-200 text-xs text-slate-500">
-                                Vídeo
+                              <div
+                                className={`absolute inset-0 flex flex-col items-center justify-center px-2 text-center text-xs font-semibold text-white shadow-inner ${
+                                  isInstagramMediaUrl(item?.url)
+                                    ? 'bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500'
+                                    : 'bg-slate-600'
+                                }`}
+                              >
+                                {isInstagramMediaUrl(item?.url) ? 'Instagram' : 'Vídeo'}
                               </div>
                             )
                           ) : mediaPrimary ? (
@@ -1458,7 +1470,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             ) : null}
             {localMediaItems.length > 0 ? (
               <div className="space-y-2">
-                <p className="text-xs font-medium text-slate-700">Novas imagens (ainda não enviadas ao site)</p>
+                <p className="text-xs font-medium text-slate-700">
+                  Novas mídias — fotos (ainda não enviadas ao site)
+                </p>
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                   {localMediaItems.map((item, index) => {
                     const isCover = index === 0;

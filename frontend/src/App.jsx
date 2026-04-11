@@ -3882,6 +3882,7 @@ function App({ authUser, onLogout = () => {} }) {
               }}
             />
           )}
+          {/* Mesmo formulário mestre: criar e editar partilham WebsiteModeloEditorPage — corrigir bugs sempre neste componente. */}
           {module === 'website' && websiteSubView === 'novo_modelo' && (
             <WebsiteModeloEditorPage
               mode="create"
