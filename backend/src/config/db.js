@@ -852,6 +852,29 @@ const initDb = async () => {
       console.warn('[initDb] FK orcamentos.os_id_gerada:', e.message);
     }
   }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS applications (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      age TEXT NOT NULL,
+      height TEXT NOT NULL,
+      city TEXT NOT NULL,
+      state TEXT,
+      instagram TEXT,
+      photos JSONB NOT NULL DEFAULT '[]'::jsonb,
+      pdf_url TEXT,
+      status TEXT NOT NULL DEFAULT 'new',
+      category TEXT,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications (created_at DESC);
+  `);
 };
 
 module.exports = {

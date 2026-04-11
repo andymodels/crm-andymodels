@@ -20,6 +20,7 @@ const publicContratoAssinaturaRouter = require('./routes/publicContratoAssinatur
 const publicAgendaPresencaRouter = require('./routes/publicAgendaPresenca');
 const agendaRouter = require('./routes/agenda');
 const websiteModelsRouter = require('./routes/websiteModels');
+const publicApplicationsRouter = require('./routes/publicApplications');
 const { UPLOAD_ROOT } = require('./services/storage');
 
 const app = express();
@@ -82,6 +83,7 @@ app.use('/api', authRouter);
 app.use('/api', modeloPortalRouter);
 app.use('/api', publicContratoAssinaturaRouter);
 app.use('/api', publicAgendaPresencaRouter);
+app.use('/api', publicApplicationsRouter);
 
 // Restante da API exige sessão admin
 app.use('/api', requireAdminAuth);

@@ -1,20 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
 
-/**
- * Proxy no backend CRM → GET/PATCH/DELETE no site.
- * O Bearer (ADMIN_SECRET) é aplicado só no servidor (websiteModels.js).
- */
 const APPLICATIONS_ADMIN = `${API_BASE}/website/applications/admin`;
-
-const STATUS_VALUES = ['new', 'reviewing', 'approved', 'rejected'];
-
-const STATUS_LABEL_PT = {
-  new: 'Novo',
-  reviewing: 'Avaliado',
-  approved: 'Aprovado',
-  rejected: 'Rejeitado',
-};
 
 function formatListDate(iso) {
   if (iso == null || iso === '') return '—';
@@ -31,91 +18,25 @@ function formatCityState(row) {
   return '—';
 }
 
-function statusLabelPt(status) {
-  if (status == null || status === '') return '—';
-  const k = String(status).trim();
-  return STATUS_LABEL_PT[k] || k;
+/** URLs de fotos (apenas strings; ignora thumb_url e campos técnicos). */
+function photoUrlsFromItem(item) {
+  if (!item || !Array.isArray(item.photos)) return [];
+  return item.photos
+    .map((p) => {
+      if (typeof p === 'string') return p.trim();
+      if (p && typeof p === 'object' && typeof p.url === 'string') return p.url.trim();
+      return '';
+    })
+    .filter(Boolean);
 }
 
-/**
- * Todos os campos do objeto tal como na API (chave = nome original).
- * photos: grelha; resto: texto ou JSON.
- */
-function ApplicationAllFieldsReadonly({ item }) {
-  if (!item || typeof item !== 'object') return null;
-  const keys = Object.keys(item).sort((a, b) => a.localeCompare(b));
+function FieldRow({ label, value }) {
+  const v = value != null && String(value).trim() !== '' ? String(value) : '—';
   return (
-    <dl className="grid gap-2 text-sm">
-      {keys.map((key) => {
-        const val = item[key];
-        if (key === 'photos' && Array.isArray(val)) {
-          return (
-            <div
-              key={key}
-              className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[minmax(140px,200px)_1fr]"
-            >
-              <dt className="font-mono text-xs font-medium text-slate-600">{key}</dt>
-              <dd className="min-w-0 text-slate-800">
-                {val.length === 0 ? (
-                  '—'
-                ) : (
-                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {val.map((url, i) => {
-                      const src = url != null ? String(url).trim() : '';
-                      if (!src) return null;
-                      return (
-                        <li key={`${src}-${i}`} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                          <a href={src} target="_blank" rel="noopener noreferrer" className="block">
-                            <img src={src} alt="" className="h-36 w-full object-cover object-top" loading="lazy" />
-                          </a>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </dd>
-            </div>
-          );
-        }
-        let display;
-        if (val === null || val === undefined) {
-          display = '—';
-        } else if (Array.isArray(val)) {
-          display = (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs">
-              {JSON.stringify(val, null, 2)}
-            </pre>
-          );
-        } else if (typeof val === 'object') {
-          display = (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs">
-              {JSON.stringify(val, null, 2)}
-            </pre>
-          );
-        } else {
-          const s = String(val);
-          const d = new Date(s);
-          if (
-            (key === 'created_at' || key.endsWith('_at')) &&
-            !Number.isNaN(d.getTime()) &&
-            s.length >= 8
-          ) {
-            display = d.toLocaleString('pt-BR');
-          } else {
-            display = s;
-          }
-        }
-        return (
-          <div
-            key={key}
-            className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[minmax(140px,200px)_1fr]"
-          >
-            <dt className="font-mono text-xs font-medium text-slate-600">{key}</dt>
-            <dd className="min-w-0 break-words text-slate-800">{display}</dd>
-          </div>
-        );
-      })}
-    </dl>
+    <div className="grid gap-1 border-b border-slate-100 py-2.5 sm:grid-cols-[120px_1fr]">
+      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="text-sm text-slate-900">{v}</dd>
+    </div>
   );
 }
 
@@ -123,28 +44,19 @@ export default function WebsiteInscricoesPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [categoria, setCategoria] = useState('todos');
-  const [statusFilter, setStatusFilter] = useState('todos');
   const [detail, setDetail] = useState(null);
   const [notes, setNotes] = useState('');
   const [mutationLoading, setMutationLoading] = useState(false);
   const [mutationError, setMutationError] = useState('');
-
-  const querySuffix = useMemo(() => {
-    const params = new URLSearchParams();
-    if (categoria === 'women' || categoria === 'men') params.set('category', categoria);
-    if (statusFilter !== 'todos' && STATUS_VALUES.includes(statusFilter)) params.set('status', statusFilter);
-    const q = params.toString();
-    return q ? `?${q}` : '';
-  }, [categoria, statusFilter]);
+  /** Índice na grelha ou null se o lightbox estiver fechado */
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
   const load = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
     if (!silent) setLoading(true);
     setError('');
     try {
-      const url = `${APPLICATIONS_ADMIN}${querySuffix}`;
-      const r = await fetchWithAuth(url);
+      const r = await fetchWithAuth(APPLICATIONS_ADMIN);
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       let data;
@@ -167,7 +79,15 @@ export default function WebsiteInscricoesPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [querySuffix]);
+  }, []);
+
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      const ta = a?.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b?.created_at ? new Date(b.created_at).getTime() : 0;
+      return tb - ta;
+    });
+  }, [rows]);
 
   useEffect(() => {
     load();
@@ -178,21 +98,40 @@ export default function WebsiteInscricoesPage() {
       setNotes('');
       return;
     }
-    // eslint-disable-next-line no-console -- pedido: inspecionar payload real da API
-    console.log('INSCRICAO COMPLETA:', detail);
     const n = detail.notes || detail.feedback || detail.internal_notes || '';
     setNotes(n != null ? String(n) : '');
     setMutationError('');
   }, [detail]);
 
   useEffect(() => {
-    if (!detail) return undefined;
+    if (!detail && lightboxIndex === null) return undefined;
     const onKey = (e) => {
+      if (lightboxIndex !== null && detail) {
+        const urls = photoUrlsFromItem(detail);
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setLightboxIndex(null);
+          return;
+        }
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          setLightboxIndex((i) => (i != null && i > 0 ? i - 1 : i));
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          setLightboxIndex((i) => {
+            if (i == null) return i;
+            return i < urls.length - 1 ? i + 1 : i;
+          });
+        }
+        return;
+      }
       if (e.key === 'Escape') setDetail(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [detail]);
+  }, [detail, lightboxIndex]);
 
   const refreshAndReselect = useCallback(
     async (id) => {
@@ -203,45 +142,6 @@ export default function WebsiteInscricoesPage() {
     },
     [load],
   );
-
-  const patchApplication = async (id, body) => {
-    setMutationLoading(true);
-    setMutationError('');
-    try {
-      const r = await fetchWithAuth(`${APPLICATIONS_ADMIN}/${encodeURIComponent(String(id))}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      let data;
-      try {
-        data = raw ? JSON.parse(raw) : null;
-      } catch {
-        data = null;
-      }
-      if (!r.ok) {
-        const msg =
-          data && typeof data.message === 'string'
-            ? data.message
-            : data && typeof data.error === 'string'
-              ? data.error
-              : `HTTP ${r.status}`;
-        throw new Error(msg);
-      }
-      await refreshAndReselect(id);
-    } catch (e) {
-      setMutationError(e?.message ? String(e.message) : 'Erro ao atualizar.');
-    } finally {
-      setMutationLoading(false);
-    }
-  };
-
-  const handleStatus = (status) => {
-    if (!detail) return;
-    patchApplication(detail.id, { status });
-  };
 
   const saveNotesPatch = async (item) => {
     const prev =
@@ -293,7 +193,7 @@ export default function WebsiteInscricoesPage() {
 
   const handleDelete = () => {
     if (!detail) return;
-    if (!confirm('Tem certeza que deseja apagar esta inscrição?')) return;
+    if (!confirm('Tem certeza que deseja excluir esta inscrição?')) return;
     const id = detail.id;
     (async () => {
       setMutationLoading(true);
@@ -321,14 +221,17 @@ export default function WebsiteInscricoesPage() {
           throw new Error(msg);
         }
         setDetail(null);
+        setLightboxIndex(null);
         await load({ silent: true });
       } catch (e) {
-        setMutationError(e?.message ? String(e.message) : 'Erro ao apagar.');
+        setMutationError(e?.message ? String(e.message) : 'Erro ao excluir.');
       } finally {
         setMutationLoading(false);
       }
     })();
   };
+
+  const modalPhotos = detail ? photoUrlsFromItem(detail) : [];
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -336,10 +239,7 @@ export default function WebsiteInscricoesPage() {
         <div>
           <h3 className="text-base font-semibold text-slate-800">Inscrições</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Mesma origem que a administração do site:{' '}
-            <code className="rounded bg-slate-100 px-1">GET /api/applications/admin</code> em{' '}
-            <span className="whitespace-nowrap">www.andymodels.com</span> (via proxy do CRM com{' '}
-            <code className="rounded bg-slate-100 px-1">ADMIN_SECRET</code>).
+            Caixa de entrada das candidaturas enviadas pelo site.
           </p>
         </div>
         <button
@@ -351,164 +251,141 @@ export default function WebsiteInscricoesPage() {
         </button>
       </div>
 
-      <div className="mt-6 space-y-6">
-        <div className="flex flex-wrap gap-6">
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Categoria</p>
-            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-              {[
-                { id: 'todos', label: 'Todos' },
-                { id: 'women', label: 'Feminino' },
-                { id: 'men', label: 'Masculino' },
-              ].map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setCategoria(id)}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    categoria === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Status</p>
-            <div className="inline-flex flex-wrap rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-              {[
-                { id: 'todos', label: 'Todos' },
-                { id: 'new', label: 'Novos' },
-                { id: 'reviewing', label: 'Avaliados' },
-                { id: 'approved', label: 'Aprovados' },
-                { id: 'rejected', label: 'Rejeitados' },
-              ].map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setStatusFilter(id)}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    statusFilter === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
+      <div className="mt-6">
         {loading ? (
           <p className="text-sm text-slate-500">A carregar…</p>
         ) : error ? (
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-        ) : rows.length === 0 ? (
+        ) : sortedRows.length === 0 ? (
           <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
-            Nenhuma inscrição encontrada com estes filtros.
+            Nenhuma inscrição.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full min-w-[520px] text-left text-sm">
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <table className="w-full min-w-[400px] text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  <th className="px-3 py-2">Nome</th>
-                  <th className="px-3 py-2">Data</th>
-                  <th className="px-3 py-2">Cidade</th>
-                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2.5">Nome</th>
+                  <th className="px-3 py-2.5">Cidade / estado</th>
+                  <th className="px-3 py-2.5">Data</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/50"
-                    onClick={() => setDetail(row)}
-                  >
-                    <td className="px-3 py-2 font-medium text-slate-900">
-                      {row.name != null ? String(row.name) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">{formatListDate(row.created_at)}</td>
-                    <td className="px-3 py-2 text-slate-600">{formatCityState(row)}</td>
-                    <td className="px-3 py-2 text-slate-600">{statusLabelPt(row.status)}</td>
-                  </tr>
-                ))}
+                {sortedRows.map((row) => {
+                  const isNew = String(row.status || '').trim() === 'new';
+                  return (
+                    <tr
+                      key={row.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setDetail(row)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setDetail(row);
+                        }
+                      }}
+                      className={`cursor-pointer border-b border-slate-100 transition-colors last:border-b-0 ${
+                        isNew
+                          ? 'bg-slate-100/95 text-slate-900 shadow-[inset_3px_0_0_0_rgb(245,158,11)] hover:bg-slate-100'
+                          : 'bg-white hover:bg-slate-50/80'
+                      }`}
+                    >
+                      <td className="px-3 py-2.5 font-medium">{row.name != null ? String(row.name) : '—'}</td>
+                      <td className="px-3 py-2.5 text-slate-700">{formatCityState(row)}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{formatListDate(row.created_at)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
+      {/* Painel lateral — detalhe */}
       {detail ? (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          className="fixed inset-0 z-50 flex justify-end bg-black/40"
           role="dialog"
           aria-modal="true"
           aria-labelledby="inscricao-detail-title"
           onClick={() => setDetail(null)}
         >
           <div
-            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl"
+            className="flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl sm:max-w-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-              <h4 id="inscricao-detail-title" className="text-base font-semibold text-slate-900">
-                Inscrição #{detail.id}
-                {detail.name ? ` — ${detail.name}` : ''}
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
+              <h4 id="inscricao-detail-title" className="pr-2 text-base font-semibold text-slate-900">
+                {detail.name ? String(detail.name) : 'Inscrição'}
               </h4>
-              <button
-                type="button"
-                onClick={() => setDetail(null)}
-                className="rounded-lg border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Fechar
-              </button>
-            </div>
-            <div className="space-y-4 p-4">
-              {mutationError ? (
-                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {mutationError}
-                </p>
-              ) : null}
-
-              <div className="flex flex-wrap gap-2 border-b border-slate-100 pb-4">
-                <span className="mr-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Alterar status</span>
-                {STATUS_VALUES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    disabled={mutationLoading}
-                    onClick={() => handleStatus(s)}
-                    className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
-                      String(detail.status) === s
-                        ? 'border-amber-600 bg-amber-500 text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                    } disabled:opacity-50`}
-                  >
-                    {STATUS_LABEL_PT[s]}
-                  </button>
-                ))}
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
                   disabled={mutationLoading}
                   onClick={handleDelete}
-                  className="ml-auto rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                 >
-                  Apagar inscrição
+                  Excluir
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetail(null)}
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  aria-label="Fechar"
+                >
+                  ✕
                 </button>
               </div>
+            </div>
 
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Campos (como na API)
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              {mutationError ? (
+                <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {mutationError}
                 </p>
-                <ApplicationAllFieldsReadonly item={detail} />
-              </div>
+              ) : null}
 
-              <div>
+              <dl>
+                <FieldRow label="Nome" value={detail.name} />
+                <FieldRow label="Idade" value={detail.age} />
+                <FieldRow label="Altura" value={detail.height} />
+                <FieldRow label="Cidade / estado" value={formatCityState(detail)} />
+                <FieldRow label="E-mail" value={detail.email} />
+                <FieldRow label="Telefone" value={detail.phone} />
+                <FieldRow label="Instagram" value={detail.instagram} />
+                <FieldRow label="Data" value={formatListDate(detail.created_at)} />
+              </dl>
+
+              {modalPhotos.length > 0 ? (
+                <div className="mt-6 border-t border-slate-100 pt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Fotos</p>
+                  <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
+                    {modalPhotos.map((src, i) => (
+                      <button
+                        key={`${src}-${i}`}
+                        type="button"
+                        onClick={() => setLightboxIndex(i)}
+                        className="relative aspect-[3/4] overflow-hidden rounded-md border border-slate-200 bg-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      >
+                        <img
+                          src={src}
+                          alt=""
+                          className="h-full w-full object-cover object-top"
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-6 border-t border-slate-100 pt-4">
                 <label htmlFor="inscricao-notas" className="mb-1 block text-sm font-medium text-slate-700">
                   Notas internas
                 </label>
+                <p className="mb-2 text-xs text-slate-500">Guardadas automaticamente ao sair do campo.</p>
                 <textarea
                   id="inscricao-notas"
                   value={notes}
@@ -520,6 +397,61 @@ export default function WebsiteInscricoesPage() {
                 />
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Lightbox — por cima do painel */}
+      {detail && lightboxIndex !== null && modalPhotos[lightboxIndex] ? (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col bg-black/92"
+          role="presentation"
+          onClick={() => setLightboxIndex(null)}
+        >
+          <div className="flex items-center justify-between px-3 py-2 text-white">
+            <span className="text-sm opacity-80">
+              {lightboxIndex + 1} / {modalPhotos.length}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxIndex(null);
+              }}
+              className="rounded-lg px-3 py-2 text-lg font-light hover:bg-white/10"
+              aria-label="Fechar"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="relative flex flex-1 items-center justify-center px-2 pb-8 pt-2" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              disabled={lightboxIndex <= 0}
+              onClick={() => setLightboxIndex((i) => (i != null && i > 0 ? i - 1 : i))}
+              className="absolute left-2 z-10 rounded-full bg-white/15 px-3 py-3 text-white hover:bg-white/25 disabled:opacity-30"
+              aria-label="Anterior"
+            >
+              ←
+            </button>
+            <img
+              src={modalPhotos[lightboxIndex]}
+              alt=""
+              className="max-h-[min(80vh,calc(100vw-8rem))] max-w-full object-contain"
+            />
+            <button
+              type="button"
+              disabled={lightboxIndex >= modalPhotos.length - 1}
+              onClick={() =>
+                setLightboxIndex((i) =>
+                  i != null && i < modalPhotos.length - 1 ? i + 1 : i,
+                )
+              }
+              className="absolute right-2 z-10 rounded-full bg-white/15 px-3 py-3 text-white hover:bg-white/25 disabled:opacity-30"
+              aria-label="Próximo"
+            >
+              →
+            </button>
           </div>
         </div>
       ) : null}
