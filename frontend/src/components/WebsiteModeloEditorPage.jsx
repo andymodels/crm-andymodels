@@ -229,10 +229,12 @@ function formToWebsiteModelPut(form) {
     waist: trim(form.medida_cintura) || null,
     instagram: ig || null,
     tiktok: trim(form.tiktok) || null,
-    youtube: (() => {
+    ...(() => {
       const v = trim(form.video_url);
-      if (!v) return null;
-      return normalizeHttpUrl(v);
+      if (!v) return { youtube: null, video_url: null };
+      const n = normalizeHttpUrl(v);
+      /** Alguns endpoints do site leem `youtube`, outros `video_url` — enviamos os dois. */
+      return { youtube: n, video_url: n };
     })(),
   };
 
@@ -624,13 +626,6 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
       }
 
-      const putBase = formToWebsiteModelPut(form);
-      const orderedImagesStr = JSON.stringify(apiMedia);
-      const putBody = { ...putBase, ordered_images: orderedImagesStr };
-
-      let id = websiteModelId;
-      const hasSiteId = id != null && !Number.isNaN(Number(id));
-      const shouldUpdate = isEdit || hasSiteId;
       const pendingImageFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
       );
@@ -639,6 +634,22 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           'Remova ficheiros de vídeo da lista antes de salvar. O site só aceita fotos neste envio; para vídeo use o campo «Vídeo (URL)».',
         );
       }
+
+      const putBase = formToWebsiteModelPut(form);
+      /**
+       * NUNCA enviar `ordered_images` como "[]" só porque o estado local está vazio (ex.: modelo inativo
+       * ausente na API pública) — o site substitui a galeria e apaga fotos. Só incluir galeria quando há
+       * itens em memória OU uploads pendentes (primeira carga de ficheiros).
+       */
+      const mustPersistGallery = apiMedia.length > 0 || pendingImageFiles.length > 0;
+      const putBody = { ...putBase };
+      if (mustPersistGallery) {
+        putBody.ordered_images = JSON.stringify(apiMedia);
+      }
+
+      let id = websiteModelId;
+      const hasSiteId = id != null && !Number.isNaN(Number(id));
+      const shouldUpdate = isEdit || hasSiteId;
 
       const parseJsonSafe = (raw) => {
         try {
@@ -1005,6 +1016,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               Ativo no site
             </label>
           </div>
+          <p className="text-xs leading-relaxed text-slate-600 md:col-span-2">
+            <span className="font-medium text-slate-800">Ativo no site:</span> desmarcar só oculta o modelo da vitrine
+            (tira do ar temporariamente). <span className="font-medium">Não apaga</span> fotos, vídeo nem dados — tudo
+            continua guardado no servidor até voltar a marcar e salvar.
+          </p>
           <div className="md:col-span-2">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Categoria no site</p>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-6">
