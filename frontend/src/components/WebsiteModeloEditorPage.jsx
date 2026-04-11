@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
-import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits } from '../utils/brValidators';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 
@@ -130,21 +130,6 @@ function consecutiveBlockRange(indices) {
   return { start: s[0], end: s[s.length - 1] };
 }
 
-/** Move o bloco [start..end] uma posição para cima. */
-function moveBlockUp(arr, start, end) {
-  if (start <= 0 || start > end || end >= arr.length) return arr;
-  const block = arr.slice(start, end + 1);
-  return [...arr.slice(0, start - 1), ...block, arr[start - 1], ...arr.slice(end + 1)];
-}
-
-/** Move o bloco [start..end] uma posição para baixo. */
-function moveBlockDown(arr, start, end) {
-  if (end >= arr.length - 1 || start > end || start < 0) return arr;
-  const after = arr[end + 1];
-  const block = arr.slice(start, end + 1);
-  return [...arr.slice(0, start), after, ...block, ...arr.slice(end + 2)];
-}
-
 /**
  * Move o bloco contíguo [start..end] para começar na posição dropIndex (como reorderApiMedia para um item).
  */
@@ -168,6 +153,44 @@ function togglePolaroidAt(arr, index) {
   if (!el || typeof el !== 'object') return arr;
   next[index] = Object.assign({}, el, { polaroid: !Boolean(el.polaroid) });
   return next;
+}
+
+/** Corpo PATCH /api/admin/models/:id — nomes alinhados ao GET público do site. */
+function formToWebsiteModelPatch(form) {
+  const categories = [];
+  if (form.catFeminino) categories.push('women');
+  if (form.catMasculino) categories.push('men');
+  if (form.catCreators) categories.push('creators');
+  if (categories.length === 0) categories.push('women');
+  const category = categories.includes('women')
+    ? 'women'
+    : categories.includes('men')
+      ? 'men'
+      : 'creators';
+
+  const trim = (s) => (s != null ? String(s).trim() : '');
+  return {
+    name: trim(form.nome),
+    bio: trim(form.bio),
+    featured: Boolean(form.featured),
+    active: Boolean(form.ativo),
+    category,
+    categories,
+    height: trim(form.medida_altura) || null,
+    bust: trim(form.medida_busto) || null,
+    torax: trim(form.medida_torax) || null,
+    waist: trim(form.medida_cintura) || null,
+    hips: trim(form.medida_quadril) || null,
+    shoes: trim(form.medida_sapato) || null,
+    hair: trim(form.medida_cabelo) || null,
+    eyes: trim(form.medida_olhos) || null,
+    instagram: trim(form.instagram) || null,
+    tiktok: trim(form.tiktok) || null,
+    video_url: trim(form.video_url) || null,
+    slug: trim(form.slug_site) || null,
+    model_status: trim(form.model_status) || null,
+    city: trim(form.city) || null,
+  };
 }
 
 function mapDetailToForm(detail) {
@@ -240,7 +263,7 @@ function Field({ label, children, className = '' }) {
 
 /**
  * Formulário Website — criação (vazio) ou edição (carrega GET público por slug).
- * Sem persistência de gravação.
+ * Em edição: Salvar envia PATCH ao site via CRM (modelo + media).
  */
 export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = '', onBackToList }) {
   const fileInputId = `${useId()}-files`;
@@ -252,6 +275,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const [localMediaItems, setLocalMediaItems] = useState([]);
   const [loadLoading, setLoadLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
+  /** ID numérico do modelo no site (GET /api/models/:slug → id). */
+  const [websiteModelId, setWebsiteModelId] = useState(null);
+  const [saveSaving, setSaveSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [saveOk, setSaveOk] = useState('');
   const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
@@ -265,6 +293,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       setForm(createInitialForm());
       setApiMedia([]);
       setLocalMediaItems([]);
+      setWebsiteModelId(null);
+      setSaveError('');
+      setSaveOk('');
       setLoadError('');
       setLoadLoading(false);
       setEditBoot(false);
@@ -294,6 +325,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         const d = data && typeof data === 'object' ? data : null;
         setForm(mapDetailToForm(d));
         setApiMedia(d ? mediaArrayFromDetail(d) : []);
+        setWebsiteModelId(d != null && d.id != null ? Number(d.id) : null);
+        setSaveError('');
+        setSaveOk('');
         setLocalMediaItems([]);
         setApiMediaSelected(new Set());
       } catch (e) {
@@ -410,6 +444,64 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     e.preventDefault();
   };
 
+  /** Um único fluxo: dados do modelo + array media no site (texto, medidas, fotos, ordem, etc.). */
+  const saveAllToSite = useCallback(async () => {
+    if (!isEdit || websiteModelId == null || Number.isNaN(websiteModelId)) {
+      window.alert('ID do modelo no site não disponível. Recarregue a página.');
+      return;
+    }
+    setSaveSaving(true);
+    setSaveError('');
+    setSaveOk('');
+    const id = websiteModelId;
+    try {
+      const patchBody = formToWebsiteModelPatch(form);
+      const r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patchBody),
+      });
+      const raw1 = await r1.text();
+      throwIfHtmlOrCannotPost(raw1, r1.status);
+      let data1;
+      try {
+        data1 = raw1 ? JSON.parse(raw1) : {};
+      } catch {
+        throw new Error('Resposta inválida do servidor ao salvar.');
+      }
+      if (!r1.ok) {
+        const msg = data1 && typeof data1.message === 'string' ? data1.message : `HTTP ${r1.status}`;
+        throw new Error(msg);
+      }
+
+      const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ media: apiMedia }),
+      });
+      const raw2 = await r2.text();
+      throwIfHtmlOrCannotPost(raw2, r2.status);
+      let data2;
+      try {
+        data2 = raw2 ? JSON.parse(raw2) : {};
+      } catch {
+        throw new Error('Resposta inválida do servidor ao salvar mídia.');
+      }
+      if (!r2.ok) {
+        const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
+        throw new Error(
+          `Dados salvos, mas a mídia falhou: ${msg}`,
+        );
+      }
+
+      setSaveOk('Salvo no site.');
+    } catch (e) {
+      setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
+    } finally {
+      setSaveSaving(false);
+    }
+  }, [isEdit, websiteModelId, form, apiMedia]);
+
   const clearForm = () => {
     setForm(createInitialForm());
     setApiMedia([]);
@@ -424,6 +516,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   const handleApiMediaDragStart = useCallback(
     (e, index) => {
       const range = consecutiveBlockRange([...apiMediaSelected]);
+      // Só move em bloco se a seleção for consecutiva e o arranque for dentro desse bloco; senão move só o cartão.
       if (range && index >= range.start && index <= range.end) {
         e.dataTransfer.setData('text/plain', `block:${range.start}:${range.end}`);
       } else {
@@ -455,6 +548,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     const from = parseInt(plain, 10);
     if (Number.isNaN(from)) return;
     setApiMedia((prev) => reorderApiMedia(prev, from, dropIndex));
+    setApiMediaSelected(new Set());
   }, []);
 
   const handleApiMediaSetCover = useCallback((index) => {
@@ -474,33 +568,13 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     });
   }, []);
 
-  const handleMoveMediaBlockUp = useCallback(() => {
-    const range = consecutiveBlockRange([...apiMediaSelected]);
-    if (!range) {
-      window.alert('Selecione uma ou mais fotos em sequência (caixas à esquerda) para formar um bloco.');
-      return;
-    }
-    if (range.start <= 0) {
-      window.alert('O bloco já está no topo.');
-      return;
-    }
-    setApiMedia((prev) => moveBlockUp(prev, range.start, range.end));
+  const removeSelectedApiMedia = useCallback(() => {
+    const n = apiMediaSelected.size;
+    if (n < 2) return;
+    if (!window.confirm(`Apagar ${n} fotos selecionadas?`)) return;
+    setApiMedia((prev) => prev.filter((_, i) => !apiMediaSelected.has(i)));
     setApiMediaSelected(new Set());
   }, [apiMediaSelected]);
-
-  const handleMoveMediaBlockDown = useCallback(() => {
-    const range = consecutiveBlockRange([...apiMediaSelected]);
-    if (!range) {
-      window.alert('Selecione uma ou mais fotos em sequência (caixas à esquerda) para formar um bloco.');
-      return;
-    }
-    if (range.end >= apiMedia.length - 1) {
-      window.alert('O bloco já está no fim.');
-      return;
-    }
-    setApiMedia((prev) => moveBlockDown(prev, range.start, range.end));
-    setApiMediaSelected(new Set());
-  }, [apiMediaSelected, apiMedia.length]);
 
   const applyRemoveApiMediaAt = useCallback((index) => {
     setApiMedia((prev) => removeApiMediaAt(prev, index));
@@ -538,6 +612,28 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       </div>
     );
   }
+
+  const saveDisabled = saveSaving || loadLoading || websiteModelId == null;
+  const saveBar = isEdit ? (
+    <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 shadow-sm">
+      <div className="flex flex-wrap justify-end gap-2">
+        <button
+          type="button"
+          onClick={saveAllToSite}
+          disabled={saveDisabled}
+          className="rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saveSaving ? 'A salvar…' : 'Salvar'}
+        </button>
+      </div>
+      {saveError ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{saveError}</p>
+      ) : null}
+      {saveOk ? (
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{saveOk}</p>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-5">
@@ -935,47 +1031,23 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           </Field>
         </Section>
 
+        {saveBar}
+
         <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
-          <h4 className="border-b border-slate-200 pb-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Mídia
-          </h4>
+          <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-200 pb-2">
+            <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mídia</h4>
+            {isEdit && apiMedia.length > 0 && apiMediaSelected.size >= 2 ? (
+              <button
+                type="button"
+                onClick={removeSelectedApiMedia}
+                className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100"
+              >
+                Apagar selecionadas ({apiMediaSelected.size})
+              </button>
+            ) : null}
+          </div>
           <div className="mt-4 space-y-4">
-            {isEdit ? (
-              <div className="space-y-2">
-                <p className="text-xs text-slate-500">
-                  Edição local do array <code className="rounded bg-slate-100 px-1">media</code>: marque fotos{' '}
-                  <strong>em sequência</strong> (caixas) e arraste <strong>a partir de uma delas</strong> para mover o
-                  bloco inteiro, ou use <strong>Subir bloco</strong> / <strong>Descer bloco</strong>. Uma foto só:
-                  arraste sem bloco selecionado.
-                </p>
-                {apiMedia.length > 0 ? (
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
-                    <span className="font-medium text-slate-800">Bloco</span>
-                    <button
-                      type="button"
-                      onClick={handleMoveMediaBlockUp}
-                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 font-medium text-slate-800 hover:bg-slate-100"
-                    >
-                      Subir bloco
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleMoveMediaBlockDown}
-                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 font-medium text-slate-800 hover:bg-slate-100"
-                    >
-                      Descer bloco
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setApiMediaSelected(new Set())}
-                      className="rounded border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50"
-                    >
-                      Limpar seleção
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
+            {!isEdit ? (
               <div className="flex flex-wrap items-center gap-3">
                 <input id={fileInputId} type="file" accept="image/*" multiple className="hidden" onChange={onPickFiles} />
                 <label
@@ -986,12 +1058,12 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 </label>
                 <span className="text-xs text-slate-500">Pré-visualização local; reordene com os botões em cada cartão.</span>
               </div>
-            )}
+            ) : null}
 
             {isEdit ? (
               apiMedia.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  Sem itens em <code className="rounded bg-slate-100 px-1">model.media</code> (resposta do site).
+                  Sem fotos na galeria.
                 </p>
               ) : (
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
@@ -1052,7 +1124,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                               checked={apiMediaSelected.has(index)}
                               onChange={() => toggleApiMediaSelect(index)}
                               onMouseDown={(e) => e.stopPropagation()}
-                              title="Selecionar para mover em bloco (marcar fotos seguidas)"
+                              title="Selecionar"
                               className="h-3.5 w-3.5 shrink-0 rounded border-slate-500 text-amber-600 focus:ring-amber-500"
                               aria-label={`Selecionar foto ${index + 1}`}
                             />
@@ -1069,10 +1141,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                               </span>
                             ) : null}
                           </div>
-                          <span
-                            className="pointer-events-none absolute bottom-2 right-2 z-[1] rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white"
-                            title="Arrastar para reordenar"
-                          >
+                          <span className="pointer-events-none absolute bottom-2 right-2 z-[1] rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white">
                             ⋮⋮
                           </span>
                         </div>
@@ -1198,7 +1267,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           </div>
         </section>
 
-        {!isEdit ? (
+        {isEdit ? (
+          <div className="sticky bottom-0 z-10 mt-6 border-t border-slate-200 bg-white/95 py-4 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+            {saveBar}
+          </div>
+        ) : (
           <div className="flex flex-col items-end gap-2 border-t border-slate-200 pt-4">
             <div className="flex flex-wrap items-center justify-end gap-3">
               <button
@@ -1213,11 +1286,11 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 disabled
                 className="cursor-not-allowed rounded-lg bg-slate-300 px-4 py-2 text-sm font-semibold text-slate-600"
               >
-                Guardar (em breve)
+                Salvar (em breve)
               </button>
             </div>
           </div>
-        ) : null}
+        )}
       </form>
 
     </div>
