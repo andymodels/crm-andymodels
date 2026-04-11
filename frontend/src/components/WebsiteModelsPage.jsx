@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { API_BASE, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { buildMediaItems } from './WebsiteMediaImage';
 
 /** Mesma densidade e proporção da grelha de mídia na ficha do modelo (WebsiteModeloEditorPage). */
@@ -17,6 +17,21 @@ function websiteModelGender(m) {
     if (t === 'women' || t === 'men') return t;
   }
   return '';
+}
+
+function extractWebsiteModelsArray(data) {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.models)) return data.models;
+    if (Array.isArray(data.data)) return data.data;
+  }
+  return [];
+}
+
+function modelIsInactive(m) {
+  if (!m || typeof m !== 'object') return false;
+  const a = m.active;
+  return a === false || a === '0' || a === 0 || Number(a) === 0;
 }
 
 function hasCreatorsTag(m) {
@@ -38,7 +53,7 @@ function prioritizeFeaturedStable(list) {
 
 /**
  * Lista de modelos do site (proxy CRM: /api/website/models).
- * Clicar num modelo abre o fluxo de edição no CRM (via onOpenEdit).
+ * Clicar num modelo abre o fluxo de edição no CRM (via onOpenEdit(slug, id)).
  */
 export default function WebsiteModelsPage({ onOpenEdit }) {
   const [rows, setRows] = useState([]);
@@ -63,20 +78,35 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
       setLoading(true);
       setError('');
       try {
-        const r = await fetchWithTimeout(`${API_BASE}/website/models`);
+        const r = await fetchWithAuth(`${API_BASE}/admin/models`);
         const raw = await r.text();
         throwIfHtmlOrCannotPost(raw, r.status);
-        let data;
+        let parsed;
         try {
-          data = raw ? JSON.parse(raw) : [];
+          parsed = raw ? JSON.parse(raw) : null;
         } catch {
           throw new Error('Resposta inválida do servidor.');
         }
-        if (!r.ok) {
-          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
-          throw new Error(msg);
+        if (r.ok && parsed != null) {
+          const arr = extractWebsiteModelsArray(parsed);
+          if (!cancelled) setRows(arr);
+          return;
         }
-        if (!cancelled) setRows(Array.isArray(data) ? data : []);
+        const msg = parsed && typeof parsed.message === 'string' ? parsed.message : `HTTP ${r.status}`;
+        const r2 = await fetchWithTimeout(`${API_BASE}/website/models`);
+        const raw2 = await r2.text();
+        throwIfHtmlOrCannotPost(raw2, r2.status);
+        let data2;
+        try {
+          data2 = raw2 ? JSON.parse(raw2) : [];
+        } catch {
+          throw new Error(msg || 'Resposta inválida do servidor.');
+        }
+        if (!r2.ok) {
+          const msg2 = data2 && typeof data2.message === 'string' ? data2.message : msg;
+          throw new Error(msg2);
+        }
+        if (!cancelled) setRows(Array.isArray(data2) ? data2 : []);
       } catch (e) {
         if (!cancelled) setError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
@@ -89,10 +119,10 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
   }, []);
 
   const openEdit = useCallback(
-    (slug) => {
+    (slug, modelId) => {
       const s = String(slug || '').trim();
       if (!s || typeof onOpenEdit !== 'function') return;
-      onOpenEdit(s);
+      onOpenEdit(s, modelId);
     },
     [onOpenEdit],
   );
@@ -101,7 +131,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="text-base font-semibold text-slate-800">Modelos no site</h3>
       <p className="mt-1 text-sm text-slate-500">
-        Dados públicos de andymodels.com. Clique num modelo para abrir a ficha de edição.
+        Lista do admin do site (inclui fora do ar). Clique num modelo para editar no CRM.
       </p>
 
       <>
@@ -158,12 +188,13 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                   '';
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
                 const canOpen = Boolean(slug);
+                const inactive = modelIsInactive(m);
                 return (
                   <li key={key} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
                     <button
                       type="button"
                       disabled={!canOpen}
-                      onClick={() => canOpen && openEdit(slug)}
+                      onClick={() => canOpen && openEdit(slug, m?.id != null ? m.id : null)}
                       className={`w-full text-left ${canOpen ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-80'}`}
                     >
                       <div
@@ -197,6 +228,9 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                         title={name}
                       >
                         {name}
+                        {inactive ? (
+                          <span className="ml-2 text-xs font-normal text-slate-500">(fora do ar)</span>
+                        ) : null}
                         {!canOpen ? (
                           <span className="ml-2 text-xs font-normal text-amber-700">(sem slug)</span>
                         ) : null}

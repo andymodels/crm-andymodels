@@ -613,6 +613,8 @@ function App({ authUser, onLogout = () => {} }) {
   const [websiteSubView, setWebsiteSubView] = useState('modelos');
   /** Slug do modelo no site ao abrir edição a partir da lista (não é item do menu lateral). */
   const [websiteEditSlug, setWebsiteEditSlug] = useState(null);
+  /** ID numérico no admin do site — permite carregar ficha quando o modelo está inativo (API pública 404). */
+  const [websiteEditModelId, setWebsiteEditModelId] = useState(null);
   const [tab, setTab] = useState('clientes');
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(cadastroConfig.bookers.form);
@@ -3875,8 +3877,13 @@ function App({ authUser, onLogout = () => {} }) {
 
           {module === 'website' && websiteSubView === 'modelos' && (
             <WebsiteModelsPage
-              onOpenEdit={(slug) => {
+              onOpenEdit={(slug, modelId) => {
                 setWebsiteEditSlug(slug);
+                setWebsiteEditModelId(() => {
+                  if (modelId == null || modelId === '') return null;
+                  const n = Number(modelId);
+                  return Number.isNaN(n) ? null : n;
+                });
                 setWebsiteSubView('editar_modelo');
                 setWebsiteMenuOpen(true);
               }}
@@ -3895,9 +3902,11 @@ function App({ authUser, onLogout = () => {} }) {
             <WebsiteModeloEditorPage
               mode="edit"
               editSlug={websiteEditSlug}
+              editModelId={websiteEditModelId}
               onBackToList={() => {
                 setWebsiteSubView('modelos');
                 setWebsiteEditSlug(null);
+                setWebsiteEditModelId(null);
               }}
             />
           )}

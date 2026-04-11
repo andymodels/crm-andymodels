@@ -122,7 +122,7 @@ function parseVideoUrl(raw) {
 const WEBSITE_GALLERY_GRID_CLASS =
   'grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1';
 
-/** O admin do site neste fluxo só aceita imagens em `photos`; MP4 provoca HTTP 500 no servidor. */
+/** Imagens enviadas no campo `photos` do multipart. */
 function isImageFileForGalleryUpload(f) {
   if (!(f instanceof File)) return false;
   const t = String(f.type || '');
@@ -371,7 +371,12 @@ function Field({ label, children, className = '' }) {
  * Qualquer ajuste de campo, mídia ou validação deve ser feito aqui; não há segunda página de cadastro.
  * Salvar: PUT/POST no site via CRM (multipart ou JSON); galeria pela resposta ou GET /website/models/:slug.
  */
-export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = '', onBackToList }) {
+export default function WebsiteModeloEditorPage({
+  mode = 'create',
+  editSlug = '',
+  editModelId = null,
+  onBackToList,
+}) {
   const fileInputId = `${useId()}-files`;
   const isEdit = mode === 'edit';
   const [form, setForm] = useState(createInitialForm);
@@ -422,7 +427,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
   }, [form.cep]);
 
   useEffect(() => {
-    if (!isEdit || !String(editSlug || '').trim()) {
+    const slug = String(editSlug || '').trim();
+    const mid = editModelId != null && !Number.isNaN(Number(editModelId)) ? Number(editModelId) : null;
+    if (!isEdit || (!slug && mid == null)) {
       setForm(createInitialForm());
       setApiMedia([]);
       setLocalMediaItems([]);
@@ -441,24 +448,44 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       setLoadLoading(true);
       setLoadError('');
       try {
-        const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(String(editSlug).trim())}`);
-        const raw = await r.text();
-        throwIfHtmlOrCannotPost(raw, r.status);
-        let data;
-        try {
-          data = raw ? JSON.parse(raw) : null;
-        } catch {
-          throw new Error('Resposta inválida do servidor.');
+        let d = null;
+        if (mid != null) {
+          const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${mid}`);
+          const rawAdm = await rAdm.text();
+          throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
+          let adm;
+          try {
+            adm = rawAdm ? JSON.parse(rawAdm) : null;
+          } catch {
+            adm = null;
+          }
+          if (rAdm.ok && adm && typeof adm === 'object') {
+            d = adm;
+          }
         }
-        if (!r.ok) {
-          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
-          throw new Error(msg);
+        if (!d && slug) {
+          const r = await fetchWithTimeout(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+          const raw = await r.text();
+          throwIfHtmlOrCannotPost(raw, r.status);
+          let data;
+          try {
+            data = raw ? JSON.parse(raw) : null;
+          } catch {
+            throw new Error('Resposta inválida do servidor.');
+          }
+          if (!r.ok) {
+            const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+            throw new Error(msg);
+          }
+          d = data && typeof data === 'object' ? data : null;
+        }
+        if (!d) {
+          throw new Error('Não foi possível carregar o modelo. Volte à lista e abra o modelo de novo.');
         }
         if (cancelled) return;
-        const d = data && typeof data === 'object' ? data : null;
         setForm(mapDetailToForm(d));
-        setApiMedia(d ? mediaArrayFromDetail(d) : []);
-        setWebsiteModelId(d != null && d.id != null ? Number(d.id) : null);
+        setApiMedia(mediaArrayFromDetail(d));
+        setWebsiteModelId(d.id != null ? Number(d.id) : null);
         setSaveError('');
         setSaveOk('');
         setLocalMediaItems([]);
@@ -475,7 +502,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     return () => {
       cancelled = true;
     };
-  }, [isEdit, editSlug]);
+  }, [isEdit, editSlug, editModelId]);
 
   const setField = useCallback((key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -533,13 +560,23 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     setFileQueueNotice('');
-    let skippedVideo = false;
     let skippedOther = false;
     setLocalMediaItems((prev) => {
       const next = [...prev];
       for (const f of files) {
         if (isVideoFileUpload(f)) {
-          skippedVideo = true;
+          const id =
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          next.push({
+            id,
+            preview: URL.createObjectURL(f),
+            name: f.name,
+            file: f,
+            polaroid: false,
+            isVideo: true,
+          });
           continue;
         }
         if (!isImageFileForGalleryUpload(f)) {
@@ -556,16 +593,13 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           name: f.name,
           file: f,
           polaroid: false,
+          isVideo: false,
         });
       }
       return next;
     });
-    if (skippedVideo) {
-      setFileQueueNotice(
-        'Ficheiros de vídeo (MP4, etc.) não podem ser enviados ao site neste fluxo — o servidor responde com erro. Use «Vídeo (URL)» e «Adicionar à galeria» com link YouTube ou Instagram. Só imagens (JPEG, PNG…) são aceites aqui.',
-      );
-    } else if (skippedOther) {
-      setFileQueueNotice('Alguns ficheiros foram ignorados — use apenas imagens (JPEG, PNG, WebP…).');
+    if (skippedOther) {
+      setFileQueueNotice('Alguns ficheiros foram ignorados — use imagens (JPEG, PNG…) ou vídeo (MP4, WebM…).');
     }
     e.target.value = '';
   };
@@ -639,11 +673,9 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       const pendingImageFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
       );
-      if (localMediaItems.some((x) => x.file instanceof File && isVideoFileUpload(x.file))) {
-        throw new Error(
-          'Remova ficheiros de vídeo da lista antes de salvar. O site só aceita fotos neste envio; para vídeo use o campo «Vídeo (URL)».',
-        );
-      }
+      const pendingVideoFiles = localMediaItems.filter(
+        (x) => x.file instanceof File && isVideoFileUpload(x.file),
+      );
 
       const putBase = formToWebsiteModelPut(form);
       /**
@@ -651,7 +683,8 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
        * ausente na API pública) — o site substitui a galeria e apaga fotos. Só incluir galeria quando há
        * itens em memória OU uploads pendentes (primeira carga de ficheiros).
        */
-      const mustPersistGallery = apiMedia.length > 0 || pendingImageFiles.length > 0;
+      const mustPersistGallery =
+        apiMedia.length > 0 || pendingImageFiles.length > 0 || pendingVideoFiles.length > 0;
       const putBody = { ...putBase };
       if (mustPersistGallery) {
         putBody.ordered_images = JSON.stringify(apiMedia);
@@ -685,11 +718,14 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         let r1;
         let raw1;
-        if (pendingImageFiles.length > 0) {
+        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
           const fd = new FormData();
           appendModelFieldsToFormData(fd, putBody);
           pendingImageFiles.forEach((x) => {
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
+          });
+          pendingVideoFiles.forEach((x) => {
+            fd.append('videos', x.file, x.file.name || 'video.mp4');
           });
           r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
             method: 'PUT',
@@ -715,7 +751,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           }
           throw new Error(`[Dados do modelo] ${msg}`);
         }
-        if (pendingImageFiles.length > 0) {
+        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
           setLocalMediaItems((prev) => {
             prev.forEach((m) => {
               if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -726,33 +762,43 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         if (!applyMediaFromResponse(data1)) {
           const slug =
             String(form.slug_site || '').trim() || (isEdit ? String(editSlug || '').trim() : '');
-          if (!slug) {
+          let media = null;
+          if (slug) {
+            const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+            const rawRf = await rf.text();
+            throwIfHtmlOrCannotPost(rawRf, rf.status);
+            const detailRf = parseJsonSafe(rawRf) || {};
+            if (rf.ok && Array.isArray(detailRf.media)) {
+              media = detailRf.media;
+            }
+          }
+          if (!media && id != null) {
+            const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${id}`);
+            const rawAdm = await rAdm.text();
+            throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
+            const adm = parseJsonSafe(rawAdm) || {};
+            if (rAdm.ok && Array.isArray(adm.media)) {
+              media = adm.media;
+            }
+          }
+          if (!media) {
             throw new Error(
-              'O servidor não devolveu a galeria após o upload. Defina o slug do modelo ou recarregue a página.',
+              'Não foi possível atualizar a pré-visualização da galeria. Recarregue a página ou volte à lista.',
             );
           }
-          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
-          const rawRf = await rf.text();
-          throwIfHtmlOrCannotPost(rawRf, rf.status);
-          const detailRf = parseJsonSafe(rawRf) || {};
-          if (!rf.ok) {
-            const msg =
-              detailRf && typeof detailRf.message === 'string' ? detailRf.message : `HTTP ${rf.status}`;
-            throw new Error(`[Galeria após upload] ${msg}`);
-          }
-          if (!Array.isArray(detailRf.media)) {
-            throw new Error('Não foi possível obter as URLs da galeria após o upload. Recarregue a página.');
-          }
-          setApiMedia(detailRf.media);
+          setApiMedia(media);
         }
       } else {
         let r0;
         let raw0;
-        if (pendingImageFiles.length > 0) {
+        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
           const fd = new FormData();
           appendModelFieldsToFormData(fd, putBody);
           pendingImageFiles.forEach((x) => {
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
+          });
+          pendingVideoFiles.forEach((x) => {
+            fd.append('videos', x.file, x.file.name || 'video.mp4');
           });
           r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
             method: 'POST',
@@ -784,7 +830,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
         }
         id = newId;
         setWebsiteModelId(newId);
-        if (pendingImageFiles.length > 0) {
+        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
           setLocalMediaItems((prev) => {
             prev.forEach((m) => {
               if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -796,24 +842,31 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
           const slug =
             String(form.slug_site || '').trim() ||
             (data0 && data0.slug != null ? String(data0.slug).trim() : '');
-          if (!slug) {
+          let media = null;
+          if (slug) {
+            const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+            const rawRf = await rf.text();
+            throwIfHtmlOrCannotPost(rawRf, rf.status);
+            const detailRf = parseJsonSafe(rawRf) || {};
+            if (rf.ok && Array.isArray(detailRf.media)) {
+              media = detailRf.media;
+            }
+          }
+          if (!media && id != null) {
+            const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${id}`);
+            const rawAdm = await rAdm.text();
+            throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
+            const adm = parseJsonSafe(rawAdm) || {};
+            if (rAdm.ok && Array.isArray(adm.media)) {
+              media = adm.media;
+            }
+          }
+          if (!media) {
             throw new Error(
               'O servidor não devolveu a galeria nem o slug. Abra o modelo na lista e tente de novo.',
             );
           }
-          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
-          const rawRf = await rf.text();
-          throwIfHtmlOrCannotPost(rawRf, rf.status);
-          const detailRf = parseJsonSafe(rawRf) || {};
-          if (!rf.ok) {
-            const msg =
-              detailRf && typeof detailRf.message === 'string' ? detailRf.message : `HTTP ${rf.status}`;
-            throw new Error(`[Galeria após upload] ${msg}`);
-          }
-          if (!Array.isArray(detailRf.media)) {
-            throw new Error('Não foi possível obter as URLs da galeria após o upload. Recarregue a página.');
-          }
-          setApiMedia(detailRf.media);
+          setApiMedia(media);
         }
       }
 
@@ -1411,7 +1464,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
               <input
                 id={fileInputId}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm"
                 multiple
                 className="hidden"
                 onChange={onPickFiles}
@@ -1423,14 +1476,14 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                 Adicionar mídias
               </label>
               <span className="text-xs text-slate-500">
-                Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Só imagens neste upload — vídeo no
-                perfil: campo «Vídeo (URL)» ou «Adicionar à galeria» (YouTube/Instagram).
+                Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Fotos e vídeo (MP4…) no mesmo envio;
+                também pode usar «Vídeo (URL)» ou «Adicionar à galeria».
               </span>
             </div>
 
             {localMediaItems.length > 0 ? (
               <p className="text-xs text-amber-800">
-                {localMediaItems.length} foto(s) pendente(s) de envio — clique em Salvar para enviar ao site.
+                {localMediaItems.length} ficheiro(s) pendente(s) de envio — clique em Salvar para enviar ao site.
               </p>
             ) : null}
             {fileQueueNotice ? (
@@ -1507,13 +1560,19 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                                 );
                               }
                               if (igEmb) {
+                                const openIg = normalizeHttpUrl(String(u || '').trim()) || u;
                                 return (
-                                  <iframe
-                                    title="Instagram"
-                                    src={igEmb}
-                                    className="absolute inset-0 h-full w-full border-0"
-                                    allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; fullscreen"
-                                  />
+                                  <a
+                                    href={openIg}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500 px-2 text-center text-xs font-semibold text-white shadow-inner hover:opacity-95"
+                                  >
+                                    Instagram — abrir no browser ↗
+                                    <span className="mt-1 text-[10px] font-normal opacity-90">
+                                      (pré-visualização embutida bloqueada)
+                                    </span>
+                                  </a>
                                 );
                               }
                               if (directVid) {
@@ -1635,7 +1694,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
             {localMediaItems.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-xs font-medium text-slate-700">
-                  Novas fotos (ainda não enviadas ao site) — vídeo só por link abaixo
+                  Novas mídias locais (ainda não enviadas ao site)
                 </p>
                 <ul className={WEBSITE_GALLERY_GRID_CLASS}>
                   {localMediaItems.map((item, index) => {
@@ -1654,13 +1713,24 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
                       >
                         <div className="relative w-full overflow-hidden bg-slate-100" style={{ aspectRatio: '4/5' }}>
                           {item.preview ? (
-                            <img
-                              src={item.preview}
-                              alt=""
-                              loading="lazy"
-                              draggable={false}
-                              className="absolute inset-0 h-full w-full object-cover object-top"
-                            />
+                            item.isVideo ? (
+                              <video
+                                src={item.preview}
+                                className="absolute inset-0 h-full w-full object-cover object-top"
+                                controls
+                                muted
+                                playsInline
+                                preload="metadata"
+                              />
+                            ) : (
+                              <img
+                                src={item.preview}
+                                alt=""
+                                loading="lazy"
+                                draggable={false}
+                                className="absolute inset-0 h-full w-full object-cover object-top"
+                              />
+                            )
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
                               —

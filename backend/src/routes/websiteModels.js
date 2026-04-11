@@ -11,7 +11,7 @@ const router = express.Router();
 
 const websiteModelUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 35 * 1024 * 1024, files: 40 },
+  limits: { fileSize: 120 * 1024 * 1024, files: 40 },
 });
 
 /** Base do site (lista pública, admin). Override: WEBSITE_ORIGIN no .env (ex.: staging). */
@@ -356,6 +356,45 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw, attemptedUrl) {
   }
   return res.json(data != null ? data : { ok: true });
 }
+
+/**
+ * Lista admin no site (inclui modelos inativos). GET …/api/admin/models
+ * Usada pelo CRM em «Modelos no site» para não esconder quem está só fora da vitrine.
+ */
+router.get('/admin/models', async (req, res, next) => {
+  try {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(req.query || {})) {
+      if (v === undefined || v === null) continue;
+      if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
+      else qs.set(k, String(v));
+    }
+    const qstr = qs.toString();
+    const url = `${getWebsiteOrigin()}/api/admin/models${qstr ? `?${qstr}` : ''}`;
+    const { statusCode, raw } = await fetchWebsiteAdminJson(url);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/**
+ * Detalhe admin por id numérico. GET …/api/admin/models/:id
+ * Permite carregar ficha de modelo inativo (API pública pode devolver 404).
+ */
+router.get('/admin/models/:id', async (req, res, next) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ message: 'ID invalido.' });
+    }
+    const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
+    const { statusCode, raw } = await fetchWebsiteAdminJson(url);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+  } catch (e) {
+    return next(e);
+  }
+});
 
 router.get('/website/models', async (_req, res, next) => {
   try {
