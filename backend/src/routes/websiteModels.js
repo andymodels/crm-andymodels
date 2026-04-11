@@ -8,8 +8,12 @@ const express = require('express');
 
 const router = express.Router();
 
-const WEBSITE_ORIGIN = 'https://www.andymodels.com';
-const WEBSITE_MODELS_LIST_URL = `${WEBSITE_ORIGIN}/api/models`;
+/** Base do site (lista pública, admin). Override: WEBSITE_ORIGIN no .env (ex.: staging). */
+function getWebsiteOrigin() {
+  return String(process.env.WEBSITE_ORIGIN || 'https://www.andymodels.com')
+    .trim()
+    .replace(/\/$/, '');
+}
 
 /** Mesmo valor que o site usa em adminAuth: Bearer = ADMIN_SECRET (login devolve { token: config.adminSecret }). */
 function websiteAdminBearerToken() {
@@ -73,17 +77,44 @@ function fetchWebsiteJson(url) {
 /**
  * PATCH/PUT JSON para o website (media, modelo, etc.).
  * Nunca repassa o Authorization do browser (JWT do CRM).
+ * Usa `fetch` quando existe (Node 18+): segue redirecionamentos (www, HTTPS).
  */
 function websiteJsonRequest(method, urlString, bodyObj) {
-  const m = String(method || 'PATCH').toUpperCase();
+  const m = String(method || 'PATCH').toUpperCase() === 'PUT' ? 'PUT' : 'PATCH';
   const body = JSON.stringify(bodyObj ?? {});
+  const token = websiteAdminBearerToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'User-Agent': 'AndyModels-CRM/1.0',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  if (typeof fetch === 'function') {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 25_000);
+    return fetch(urlString, {
+      method: m,
+      headers,
+      body,
+      redirect: 'follow',
+      signal: ctrl.signal,
+    })
+      .then((res) => res.text().then((raw) => ({ statusCode: res.status, raw })))
+      .finally(() => clearTimeout(tid))
+      .catch((e) => {
+        if (e && e.name === 'AbortError') throw new Error('Timeout ao contactar o website.');
+        throw e;
+      });
+  }
+
   return new Promise((resolve, reject) => {
     const u = new URL(urlString);
     const options = {
       hostname: u.hostname,
       port: u.port || 443,
       path: `${u.pathname}${u.search}`,
-      method: m === 'PUT' ? 'PUT' : 'PATCH',
+      method: m,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
@@ -91,10 +122,7 @@ function websiteJsonRequest(method, urlString, bodyObj) {
         'User-Agent': 'AndyModels-CRM/1.0',
       },
     };
-    const token = websiteAdminBearerToken();
-    if (token) {
-      options.headers.Authorization = `Bearer ${token}`;
-    }
+    if (token) options.headers.Authorization = `Bearer ${token}`;
     const req = https.request(options, (res) => {
       let raw = '';
       res.setEncoding('utf8');
@@ -153,8 +181,8 @@ function websiteDeleteRequest(urlString) {
   });
 }
 
-/** Resposta proxy admin → cliente CRM (401, JSON, vazio). */
-function sendWebsiteAdminProxyResponse(res, statusCode, raw) {
+/** Resposta proxy admin → cliente CRM (401, JSON, vazio). attemptedUrl = URL completa do pedido ao site (para mensagens). */
+function sendWebsiteAdminProxyResponse(res, statusCode, raw, attemptedUrl) {
   if (statusCode === 401) {
     const hasEnvToken = Boolean(websiteAdminBearerToken());
     return res.status(401).json({
@@ -174,13 +202,23 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw) {
     data = JSON.parse(raw);
   } catch {
     const isHtml = String(raw || '').includes('<');
-    return res.status(statusCode >= 400 ? statusCode : 502).json({
-      message: isHtml
-        ? `O site institucional respondeu com página HTML (HTTP ${statusCode}), não JSON. Pode ser rota inexistente ou ID inválido no admin do site.`
-        : raw
-          ? String(raw).slice(0, 500)
-          : 'Resposta invalida do website.',
-    });
+    let pathHint = '';
+    try {
+      if (attemptedUrl) pathHint = new URL(attemptedUrl).pathname;
+    } catch {
+      pathHint = String(attemptedUrl || '').slice(0, 120);
+    }
+    const idMatch = attemptedUrl && String(attemptedUrl).match(/\/admin\/models\/([^/]+)/);
+    const idHint = idMatch ? ` ID ${idMatch[1]}` : '';
+    let msg;
+    if (isHtml && statusCode === 404) {
+      msg = `O site devolveu 404 (página HTML) ao guardar${idHint}. Pedido: ${pathHint || '?'}. Quase sempre o modelo já não existe nesse ID no admin do site (foi apagado) ou os dados estão desatualizados: volte à lista «Modelos no site», abra o modelo outra vez e salve. Se o site usar outro domínio, defina WEBSITE_ORIGIN no backend.`;
+    } else if (isHtml) {
+      msg = `O site devolveu HTML (HTTP ${statusCode}) em vez de JSON. Pedido: ${pathHint || '?'}. Verifique WEBSITE_ORIGIN e se o admin do site está acessível.`;
+    } else {
+      msg = raw ? String(raw).slice(0, 500) : 'Resposta invalida do website.';
+    }
+    return res.status(statusCode >= 400 ? statusCode : 502).json({ message: msg });
   }
   if (statusCode < 200 || statusCode >= 300) {
     return res.status(statusCode).json(data && typeof data === 'object' ? data : { message: String(data) });
@@ -190,7 +228,8 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw) {
 
 router.get('/website/models', async (_req, res, next) => {
   try {
-    const { statusCode, raw } = await fetchWebsiteJson(WEBSITE_MODELS_LIST_URL);
+    const listUrl = `${getWebsiteOrigin()}/api/models`;
+    const { statusCode, raw } = await fetchWebsiteJson(listUrl);
     if (statusCode < 200 || statusCode >= 300) {
       return res.status(statusCode >= 400 ? statusCode : 502).json({
         message: `Website retornou HTTP ${statusCode}.`,
@@ -215,7 +254,7 @@ router.get('/website/models/:slug', async (req, res, next) => {
     if (!slug) {
       return res.status(400).json({ message: 'Slug invalido.' });
     }
-    const url = `${WEBSITE_ORIGIN}/api/models/${encodeURIComponent(slug)}`;
+    const url = `${getWebsiteOrigin()}/api/models/${encodeURIComponent(slug)}`;
     const { statusCode, raw } = await fetchWebsiteJson(url);
     if (statusCode === 404) {
       return res.status(404).json({ message: 'Modelo nao encontrado no website.' });
@@ -251,9 +290,9 @@ router.patch('/admin/models/:id/media', async (req, res, next) => {
     if (!req.body || typeof req.body !== 'object' || !('media' in req.body)) {
       return res.status(400).json({ message: 'Body deve incluir o campo media.' });
     }
-    const url = `${WEBSITE_ORIGIN}/api/admin/models/${encodeURIComponent(id)}/media`;
+    const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}/media`;
     const { statusCode, raw } = await patchWebsiteJson(url, { media: req.body.media });
-    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);
   }
@@ -272,9 +311,9 @@ router.patch('/admin/models/:id', async (req, res, next) => {
     if (!req.body || typeof req.body !== 'object') {
       return res.status(400).json({ message: 'Body invalido.' });
     }
-    const url = `${WEBSITE_ORIGIN}/api/admin/models/${encodeURIComponent(id)}`;
+    const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
     const { statusCode, raw } = await patchWebsiteJson(url, req.body);
-    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);
   }
@@ -292,9 +331,9 @@ router.get('/website/applications/admin', async (req, res, next) => {
     if (cat) qs.set('category', cat);
     if (st) qs.set('status', st);
     const q = qs.toString();
-    const url = `${WEBSITE_ORIGIN}/api/applications/admin${q ? `?${q}` : ''}`;
+    const url = `${getWebsiteOrigin()}/api/applications/admin${q ? `?${q}` : ''}`;
     const { statusCode, raw } = await fetchWebsiteAdminJson(url);
-    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);
   }
@@ -318,9 +357,9 @@ router.patch('/website/applications/admin/:id', async (req, res, next) => {
     if (Object.keys(body).length === 0) {
       return res.status(400).json({ message: 'Body deve incluir status e/ou notes.' });
     }
-    const url = `${WEBSITE_ORIGIN}/api/applications/admin/${encodeURIComponent(id)}`;
+    const url = `${getWebsiteOrigin()}/api/applications/admin/${encodeURIComponent(id)}`;
     const { statusCode, raw } = await patchWebsiteJson(url, body);
-    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);
   }
@@ -335,9 +374,9 @@ router.delete('/website/applications/admin/:id', async (req, res, next) => {
     if (!id) {
       return res.status(400).json({ message: 'ID invalido.' });
     }
-    const url = `${WEBSITE_ORIGIN}/api/applications/admin/${encodeURIComponent(id)}`;
+    const url = `${getWebsiteOrigin()}/api/applications/admin/${encodeURIComponent(id)}`;
     const { statusCode, raw } = await websiteDeleteRequest(url);
-    return sendWebsiteAdminProxyResponse(res, statusCode, raw);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);
   }

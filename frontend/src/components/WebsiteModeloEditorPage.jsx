@@ -471,7 +471,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       }
       if (!r1.ok) {
         const msg = data1 && typeof data1.message === 'string' ? data1.message : `HTTP ${r1.status}`;
-        throw new Error(msg);
+        throw new Error(`[Dados do modelo] ${msg}`);
       }
 
       const r2 = await fetchWithAuth(`${API_BASE}/admin/models/${id}/media`, {
@@ -489,9 +489,7 @@ export default function WebsiteModeloEditorPage({ mode = 'create', editSlug = ''
       }
       if (!r2.ok) {
         const msg = data2 && typeof data2.message === 'string' ? data2.message : `HTTP ${r2.status}`;
-        throw new Error(
-          `Dados salvos, mas a mídia falhou: ${msg}`,
-        );
+        throw new Error(`[Galeria / mídia] ${msg}`);
       }
 
       setSaveOk('Salvo no site.');
