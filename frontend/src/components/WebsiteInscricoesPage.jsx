@@ -16,11 +16,6 @@ const STATUS_LABEL_PT = {
   rejected: 'Rejeitado',
 };
 
-const CATEGORY_LABEL_PT = {
-  women: 'Feminino',
-  men: 'Masculino',
-};
-
 function formatListDate(iso) {
   if (iso == null || iso === '') return '—';
   const d = new Date(iso);
@@ -42,39 +37,84 @@ function statusLabelPt(status) {
   return STATUS_LABEL_PT[k] || k;
 }
 
-function categoryLabelPt(cat) {
-  if (cat == null || cat === '') return '—';
-  const k = String(cat).trim();
-  return CATEGORY_LABEL_PT[k] || k;
-}
-
-/** Campos expostos pela API do site (espelho da administração). */
-function ApplicationDetailFields({ row }) {
-  const entries = [
-    ['id', 'ID', row.id],
-    ['name', 'Nome', row.name],
-    ['status', 'Status', statusLabelPt(row.status)],
-    ['category', 'Categoria', categoryLabelPt(row.category)],
-    ['age', 'Idade', row.age],
-    ['height', 'Altura', row.height],
-    ['city', 'Cidade', row.city],
-    ['state', 'Estado', row.state],
-    ['email', 'E-mail', row.email],
-    ['phone', 'Telefone', row.phone],
-    ['instagram', 'Instagram', row.instagram],
-    ['created_at', 'Data', formatListDate(row.created_at)],
-  ];
+/**
+ * Todos os campos do objeto tal como na API (chave = nome original).
+ * photos: grelha; resto: texto ou JSON.
+ */
+function ApplicationAllFieldsReadonly({ item }) {
+  if (!item || typeof item !== 'object') return null;
+  const keys = Object.keys(item).sort((a, b) => a.localeCompare(b));
   return (
     <dl className="grid gap-2 text-sm">
-      {entries.map(([key, label, val]) => (
-        <div
-          key={key}
-          className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[minmax(140px,200px)_1fr]"
-        >
-          <dt className="font-medium text-slate-700">{label}</dt>
-          <dd className="min-w-0 text-slate-800">{val != null && String(val).trim() !== '' ? String(val) : '—'}</dd>
-        </div>
-      ))}
+      {keys.map((key) => {
+        const val = item[key];
+        if (key === 'photos' && Array.isArray(val)) {
+          return (
+            <div
+              key={key}
+              className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[minmax(140px,200px)_1fr]"
+            >
+              <dt className="font-mono text-xs font-medium text-slate-600">{key}</dt>
+              <dd className="min-w-0 text-slate-800">
+                {val.length === 0 ? (
+                  '—'
+                ) : (
+                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {val.map((url, i) => {
+                      const src = url != null ? String(url).trim() : '';
+                      if (!src) return null;
+                      return (
+                        <li key={`${src}-${i}`} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                          <a href={src} target="_blank" rel="noopener noreferrer" className="block">
+                            <img src={src} alt="" className="h-36 w-full object-cover object-top" loading="lazy" />
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </dd>
+            </div>
+          );
+        }
+        let display;
+        if (val === null || val === undefined) {
+          display = '—';
+        } else if (Array.isArray(val)) {
+          display = (
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs">
+              {JSON.stringify(val, null, 2)}
+            </pre>
+          );
+        } else if (typeof val === 'object') {
+          display = (
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-2 text-xs">
+              {JSON.stringify(val, null, 2)}
+            </pre>
+          );
+        } else {
+          const s = String(val);
+          const d = new Date(s);
+          if (
+            (key === 'created_at' || key.endsWith('_at')) &&
+            !Number.isNaN(d.getTime()) &&
+            s.length >= 8
+          ) {
+            display = d.toLocaleString('pt-BR');
+          } else {
+            display = s;
+          }
+        }
+        return (
+          <div
+            key={key}
+            className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[minmax(140px,200px)_1fr]"
+          >
+            <dt className="font-mono text-xs font-medium text-slate-600">{key}</dt>
+            <dd className="min-w-0 break-words text-slate-800">{display}</dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
@@ -86,7 +126,7 @@ export default function WebsiteInscricoesPage() {
   const [categoria, setCategoria] = useState('todos');
   const [statusFilter, setStatusFilter] = useState('todos');
   const [detail, setDetail] = useState(null);
-  const [notesDraft, setNotesDraft] = useState('');
+  const [notes, setNotes] = useState('');
   const [mutationLoading, setMutationLoading] = useState(false);
   const [mutationError, setMutationError] = useState('');
 
@@ -135,10 +175,13 @@ export default function WebsiteInscricoesPage() {
 
   useEffect(() => {
     if (!detail) {
-      setNotesDraft('');
+      setNotes('');
       return;
     }
-    setNotesDraft(detail.notes != null ? String(detail.notes) : '');
+    // eslint-disable-next-line no-console -- pedido: inspecionar payload real da API
+    console.log('INSCRICAO COMPLETA:', detail);
+    const n = detail.notes || detail.feedback || detail.internal_notes || '';
+    setNotes(n != null ? String(n) : '');
     setMutationError('');
   }, [detail]);
 
@@ -200,11 +243,52 @@ export default function WebsiteInscricoesPage() {
     patchApplication(detail.id, { status });
   };
 
+  const saveNotesPatch = async (item) => {
+    const prev =
+      item.notes != null
+        ? String(item.notes)
+        : item.feedback != null
+          ? String(item.feedback)
+          : item.internal_notes != null
+            ? String(item.internal_notes)
+            : '';
+    if (notes === prev) return;
+    setMutationLoading(true);
+    setMutationError('');
+    try {
+      const r = await fetchWithAuth(`${API_BASE}/website/applications/admin/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ notes }),
+      });
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
+      if (!r.ok) {
+        const msg =
+          data && typeof data.message === 'string'
+            ? data.message
+            : data && typeof data.error === 'string'
+              ? data.error
+              : `HTTP ${r.status}`;
+        throw new Error(msg);
+      }
+      await refreshAndReselect(item.id);
+    } catch (e) {
+      setMutationError(e?.message ? String(e.message) : 'Erro ao guardar notas.');
+    } finally {
+      setMutationLoading(false);
+    }
+  };
+
   const handleNotesBlur = () => {
     if (!detail) return;
-    const prev = detail.notes != null ? String(detail.notes) : '';
-    if (notesDraft === prev) return;
-    patchApplication(detail.id, { notes: notesDraft });
+    saveNotesPatch(detail);
   };
 
   const handleDelete = () => {
@@ -245,8 +329,6 @@ export default function WebsiteInscricoesPage() {
       }
     })();
   };
-
-  const photos = detail && Array.isArray(detail.photos) ? detail.photos : [];
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -416,7 +498,12 @@ export default function WebsiteInscricoesPage() {
                 </button>
               </div>
 
-              <ApplicationDetailFields row={detail} />
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Campos (como na API)
+                </p>
+                <ApplicationAllFieldsReadonly item={detail} />
+              </div>
 
               <div>
                 <label htmlFor="inscricao-notas" className="mb-1 block text-sm font-medium text-slate-700">
@@ -424,34 +511,14 @@ export default function WebsiteInscricoesPage() {
                 </label>
                 <textarea
                   id="inscricao-notas"
-                  value={notesDraft}
-                  onChange={(e) => setNotesDraft(e.target.value)}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
                   onBlur={handleNotesBlur}
                   disabled={mutationLoading}
                   rows={4}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="Observações (guardadas no site ao sair do campo)"
                 />
               </div>
-
-              {photos.length > 0 ? (
-                <div>
-                  <p className="mb-2 text-sm font-medium text-slate-800">Fotos</p>
-                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {photos.map((url, i) => {
-                      const src = url != null ? String(url).trim() : '';
-                      if (!src) return null;
-                      return (
-                        <li key={`${src}-${i}`} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                          <a href={src} target="_blank" rel="noopener noreferrer" className="block">
-                            <img src={src} alt="" className="h-40 w-full object-cover object-top" loading="lazy" />
-                          </a>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
