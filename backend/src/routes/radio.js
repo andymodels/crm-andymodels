@@ -139,10 +139,12 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       console.warn('[radio] capa embutida:', e?.message || e);
     }
   }
+  let coverModeloId = null;
   if (!coverUrl && !overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
-    const gen = await radioCover.generateFemaleModelCoverUrl({});
+    const gen = await radioCover.generateFemaleModelCoverUrl({ playlist_id: playlistId });
     if (gen.ok) {
       coverUrl = gen.publicUrl;
+      coverModeloId = gen.modelo_id != null ? gen.modelo_id : null;
     } else {
       console.warn('[radio] capa automática (modelo):', gen.reason);
     }
@@ -158,8 +160,8 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
   const sortOrder = await nextSortOrder(playlistId);
   const { rows } = await pool.query(
     `INSERT INTO radio_tracks (
-       playlist_id, title, artist, audio_storage_path, cover_url, duration_sec, sort_order, active, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW())
+       playlist_id, title, artist, audio_storage_path, cover_url, cover_modelo_id, duration_sec, sort_order, active, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, NOW())
      RETURNING *`,
     [
       playlistId,
@@ -167,12 +169,30 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       String(overrides.artist != null ? overrides.artist : artist).slice(0, 500),
       audioRel,
       overrides.cover_url != null ? overrides.cover_url : coverUrl,
+      overrides.cover_modelo_id != null ? overrides.cover_modelo_id : coverModeloId,
       durationSec,
       sortOrder,
     ],
   );
   return rows[0];
 }
+
+function playlistFullPayload(currentCount) {
+  return {
+    message: `Limite de ${MAX_TRACKS_PER_PLAYLIST} faixas por playlist. Esta playlist já tem ${currentCount} faixa(s). Apague ou mova faixas antes de adicionar mais.`,
+    code: 'RADIO_PLAYLIST_FULL',
+    max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
+    current_tracks: currentCount,
+  };
+}
+
+router.get('/radio/meta', (_req, res) => {
+  return res.json({
+    max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
+    max_bulk_audio_files: MAX_BULK,
+    cover_auto_model_default: radioCover.autoCoverFromModelEnabled(),
+  });
+});
 
 // ——— Playlists ———
 
@@ -199,10 +219,11 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
     const active = req.body?.active === false ? false : true;
     const status = req.body?.status === 'draft' ? 'draft' : 'published';
     const cover_url = req.body?.cover_url != null ? String(req.body.cover_url).trim() || null : null;
+    const auto_next_playlist = req.body?.auto_next_playlist === false ? false : true;
 
     const { rows } = await pool.query(
-      `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, auto_next_playlist, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
        RETURNING *`,
       [
         name,
@@ -212,6 +233,7 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
         Number.isFinite(sortOrder) ? sortOrder : 0,
         active,
         status,
+        auto_next_playlist,
       ],
     );
     return res.status(201).json(rows[0]);
@@ -265,12 +287,25 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
     const sort_order = req.body?.sort_order != null ? Number(req.body.sort_order) : p.sort_order;
     const active = req.body?.active != null ? Boolean(req.body.active) : p.active;
     const status = req.body?.status === 'draft' || req.body?.status === 'published' ? req.body.status : p.status;
+    const auto_next_playlist =
+      req.body?.auto_next_playlist != null ? Boolean(req.body.auto_next_playlist) : p.auto_next_playlist;
 
     const { rows } = await pool.query(
       `UPDATE radio_playlists SET
-         name = $1, slug = $2, description = $3, cover_url = $4, sort_order = $5, active = $6, status = $7, updated_at = NOW()
-       WHERE id = $8 RETURNING *`,
-      [name, slug, description, cover_url, Number.isFinite(sort_order) ? sort_order : 0, active, status, id],
+         name = $1, slug = $2, description = $3, cover_url = $4, sort_order = $5, active = $6, status = $7,
+         auto_next_playlist = $8, updated_at = NOW()
+       WHERE id = $9 RETURNING *`,
+      [
+        name,
+        slug,
+        description,
+        cover_url,
+        Number.isFinite(sort_order) ? sort_order : 0,
+        active,
+        status,
+        auto_next_playlist,
+        id,
+      ],
     );
     return res.json(rows[0]);
   } catch (e) {
@@ -338,7 +373,7 @@ router.post('/radio/playlists/:id/tracks', audioUpload.single('audio'), async (r
 
     const n = await countTracks(playlistId);
     if (n >= MAX_TRACKS_PER_PLAYLIST) {
-      return res.status(400).json({ message: `Limite de ${MAX_TRACKS_PER_PLAYLIST} faixas por playlist.` });
+      return res.status(400).json(playlistFullPayload(n));
     }
 
     const overrides = {
@@ -367,8 +402,14 @@ router.post('/radio/playlists/:id/tracks/bulk', audioUpload.array('audio', MAX_B
 
     const n0 = await countTracks(playlistId);
     if (n0 + files.length > MAX_TRACKS_PER_PLAYLIST) {
+      const room = Math.max(0, MAX_TRACKS_PER_PLAYLIST - n0);
       return res.status(400).json({
-        message: `Só cabem mais ${MAX_TRACKS_PER_PLAYLIST - n0} faixa(s) nesta playlist (máx. ${MAX_TRACKS_PER_PLAYLIST}).`,
+        message: `Esta playlist tem ${n0} faixa(s); o limite é ${MAX_TRACKS_PER_PLAYLIST}. Só cabem mais ${room} ficheiro(s) neste envio (selecionou ${files.length}). Reduza a seleção ou apague faixas.`,
+        code: 'RADIO_PLAYLIST_FULL',
+        max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
+        current_tracks: n0,
+        selected_files: files.length,
+        room_left: room,
       });
     }
 
@@ -403,13 +444,19 @@ router.patch('/radio/tracks/:trackId', express.json(), async (req, res, next) =>
       req.body?.cover_url !== undefined ? (req.body.cover_url ? String(req.body.cover_url).trim() : null) : t.cover_url;
     const sort_order = req.body?.sort_order != null ? Number(req.body.sort_order) : t.sort_order;
     const active = req.body?.active != null ? Boolean(req.body.active) : t.active;
+    let cover_modelo_id = t.cover_modelo_id;
+    if (req.body?.cover_url !== undefined) {
+      const newU = cover_url ? String(cover_url).trim() : null;
+      const oldU = t.cover_url ? String(t.cover_url).trim() : null;
+      if (newU !== oldU) cover_modelo_id = null;
+    }
 
     if (!title) return res.status(400).json({ message: 'Título inválido.' });
 
     const { rows } = await pool.query(
-      `UPDATE radio_tracks SET title = $1, artist = $2, cover_url = $3, sort_order = $4, active = $5, updated_at = NOW()
-       WHERE id = $6 RETURNING *`,
-      [title, artist, cover_url, Number.isFinite(sort_order) ? sort_order : 0, active, trackId],
+      `UPDATE radio_tracks SET title = $1, artist = $2, cover_url = $3, cover_modelo_id = $4, sort_order = $5, active = $6, updated_at = NOW()
+       WHERE id = $7 RETURNING *`,
+      [title, artist, cover_url, cover_modelo_id, Number.isFinite(sort_order) ? sort_order : 0, active, trackId],
     );
     return res.json({ ...rows[0], audio_url: storage.getPublicUrl(rows[0].audio_storage_path) });
   } catch (e) {
@@ -524,8 +571,12 @@ router.post('/radio/tracks/:trackId/cover/from-model', express.json(), async (re
     const trackId = Number(req.params.trackId);
     if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
     const modeloId = req.body?.modelo_id != null ? Number(req.body.modelo_id) : null;
+    const tr = await pool.query(`SELECT playlist_id FROM radio_tracks WHERE id = $1`, [trackId]);
+    const plId = tr.rows[0]?.playlist_id;
     const gen = await radioCover.generateFemaleModelCoverUrl(
-      Number.isFinite(modeloId) ? { modelo_id: modeloId } : {},
+      Number.isFinite(modeloId)
+        ? { modelo_id: modeloId }
+        : { playlist_id: plId != null ? Number(plId) : null },
     );
     if (!gen.ok) {
       return res.status(400).json({
@@ -541,8 +592,8 @@ router.post('/radio/tracks/:trackId/cover/from-model', express.json(), async (re
     if (!cur.rows.length) return res.status(404).json({ message: 'Faixa não encontrada.' });
     await removeStoredCoverIfUrl(cur.rows[0].cover_url);
     const { rows } = await pool.query(
-      `UPDATE radio_tracks SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [gen.publicUrl, trackId],
+      `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+      [gen.publicUrl, gen.modelo_id, trackId],
     );
     return res.json({
       ...rows[0],
@@ -572,15 +623,15 @@ router.post('/radio/playlists/:playlistId/covers/from-model', express.json(), as
     const errors = [];
     for (const t of tracks) {
       if (!replace && t.cover_url) continue;
-      const gen = await radioCover.generateFemaleModelCoverUrl({});
+      const gen = await radioCover.generateFemaleModelCoverUrl({ playlist_id: playlistId });
       if (!gen.ok) {
         errors.push({ track_id: t.id, reason: gen.reason });
         continue;
       }
       await removeStoredCoverIfUrl(t.cover_url);
       const { rows } = await pool.query(
-        `UPDATE radio_tracks SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
-        [gen.publicUrl, t.id],
+        `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = $2, updated_at = NOW() WHERE id = $3 RETURNING id`,
+        [gen.publicUrl, gen.modelo_id, t.id],
       );
       if (rows.length) {
         updated.push({
@@ -617,10 +668,10 @@ router.post('/radio/tracks/:trackId/cover', coverUpload.single('cover'), async (
       contentType: safe === '.png' ? 'image/png' : 'image/jpeg',
     });
     const cover_url = storage.getPublicUrl(rel);
-    const { rows } = await pool.query(`UPDATE radio_tracks SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *`, [
-      cover_url,
-      trackId,
-    ]);
+    const { rows } = await pool.query(
+      `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = NULL, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [cover_url, trackId],
+    );
     if (oldCover) {
       try {
         await storage.removeFile(oldCover);

@@ -921,6 +921,19 @@ const initDb = async () => {
       console.warn('[initDb] radio_playlists status chk:', e.message);
     }
   }
+
+  await pool.query(`
+    ALTER TABLE radio_playlists
+    ADD COLUMN IF NOT EXISTS auto_next_playlist BOOLEAN NOT NULL DEFAULT TRUE;
+  `);
+  await pool.query(`
+    ALTER TABLE radio_tracks
+    ADD COLUMN IF NOT EXISTS cover_modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL;
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_radio_tracks_cover_modelo ON radio_tracks (playlist_id, cover_modelo_id)
+    WHERE cover_modelo_id IS NOT NULL;
+  `);
 };
 
 module.exports = {

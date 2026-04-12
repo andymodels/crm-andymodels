@@ -81,6 +81,34 @@ async function pickRandomFemaleModel(client) {
   return rows[0] || null;
 }
 
+/**
+ * Modelo feminino cuja imagem ainda não foi usada como capa nesta playlist (evita repetir até esgotar o elenco).
+ */
+async function pickFemaleModelUnusedInPlaylist(playlistId, client) {
+  if (playlistId == null || !Number.isFinite(Number(playlistId))) {
+    return pickRandomFemaleModel(client);
+  }
+  const pid = Number(playlistId);
+  const q = `
+    SELECT m.id, m.nome, m.foto_perfil_base64 AS foto_url
+    FROM modelos m
+    WHERE m.ativo = TRUE
+      AND LOWER(TRIM(m.sexo)) = 'feminino'
+      AND m.foto_perfil_base64 ~ '^https?://'
+      AND NOT EXISTS (
+        SELECT 1 FROM radio_tracks t
+        WHERE t.playlist_id = $1
+          AND t.cover_modelo_id IS NOT NULL
+          AND t.cover_modelo_id = m.id
+      )
+    ORDER BY RANDOM()
+    LIMIT 1
+  `;
+  const { rows } = client ? await client.query(q, [pid]) : await pool.query(q, [pid]);
+  if (rows.length) return rows[0];
+  return pickRandomFemaleModel(client);
+}
+
 async function pickFemaleModelById(client, modeloId) {
   const q = `
     SELECT id, nome, foto_perfil_base64 AS foto_url
@@ -131,12 +159,13 @@ function autoCoverFromModelEnabled() {
  */
 async function generateFemaleModelCoverUrl(options = {}) {
   const modeloId = options.modelo_id != null ? Number(options.modelo_id) : null;
+  const playlistId = options.playlist_id != null ? Number(options.playlist_id) : null;
   let m;
   if (Number.isFinite(modeloId)) {
     m = await pickFemaleModelById(null, modeloId);
     if (!m) return { ok: false, reason: 'modelo_nao_encontrado_ou_nao_feminino' };
   } else {
-    m = await pickRandomFemaleModel();
+    m = await pickFemaleModelUnusedInPlaylist(playlistId, null);
     if (!m) return { ok: false, reason: 'sem_modelos_femininos_com_foto' };
   }
   try {
@@ -151,6 +180,7 @@ async function generateFemaleModelCoverUrl(options = {}) {
 
 module.exports = {
   pickRandomFemaleModel,
+  pickFemaleModelUnusedInPlaylist,
   pickFemaleModelById,
   fetchImageBuffer,
   renderCoverJpeg,

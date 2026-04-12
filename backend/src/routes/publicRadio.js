@@ -35,7 +35,7 @@ router.get('/public/radio/v2', async (req, res, next) => {
   }
   try {
     const { rows: playlists } = await pool.query(
-      `SELECT id, name, slug, description, cover_url, sort_order, active, status
+      `SELECT id, name, slug, description, cover_url, sort_order, active, status, auto_next_playlist
        FROM radio_playlists
        WHERE active = TRUE AND status = 'published'
        ORDER BY sort_order ASC, id ASC`,
@@ -65,6 +65,8 @@ router.get('/public/radio/v2', async (req, res, next) => {
         description: p.description || '',
         cover_url: p.cover_url || null,
         position: p.sort_order,
+        /** Se true, o player do site pode passar à playlist seguinte quando esta terminar (última faixa). */
+        auto_next_playlist: p.auto_next_playlist !== false,
         tracks: mapped,
       });
     }

@@ -26,6 +26,22 @@ export default function WebsiteRadioPage() {
   const [newPlName, setNewPlName] = useState('');
   const [plDragFrom, setPlDragFrom] = useState(null);
   const [trDragFrom, setTrDragFrom] = useState(null);
+  const [radioMeta, setRadioMeta] = useState(null);
+  /** Upload em lote de MP3 (feedback visual — o pedido pode demorar). */
+  const [bulkUploadStatus, setBulkUploadStatus] = useState(null);
+
+  const loadMeta = useCallback(async () => {
+    try {
+      const r = await fetchWithAuth(`${API_BASE}/radio/meta`);
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (r.ok) setRadioMeta(data);
+      else setRadioMeta({ max_tracks_per_playlist: 50, max_bulk_audio_files: 25 });
+    } catch {
+      setRadioMeta({ max_tracks_per_playlist: 50, max_bulk_audio_files: 25 });
+    }
+  }, []);
 
   const loadPlaylists = useCallback(async () => {
     setLoading(true);
@@ -68,7 +84,8 @@ export default function WebsiteRadioPage() {
 
   useEffect(() => {
     loadPlaylists();
-  }, [loadPlaylists]);
+    loadMeta();
+  }, [loadPlaylists, loadMeta]);
 
   useEffect(() => {
     if (selectedId != null) loadTracks(selectedId);
@@ -125,6 +142,7 @@ export default function WebsiteRadioPage() {
         sort_order: p.sort_order,
         active: p.active,
         status: p.status,
+        auto_next_playlist: p.auto_next_playlist !== false,
         ...patch,
       };
       const r = await fetchWithAuth(`${API_BASE}/radio/playlists/${encodeURIComponent(String(p.id))}`, {
@@ -194,11 +212,26 @@ export default function WebsiteRadioPage() {
 
   const bulkUpload = async (fileList) => {
     if (!selectedId || !fileList?.length) return;
+    const max = radioMeta?.max_tracks_per_playlist ?? 50;
+    const bulkMax = radioMeta?.max_bulk_audio_files ?? 25;
+    if (fileList.length > bulkMax) {
+      setError(
+        `Limite de ${bulkMax} ficheiros por envio. Selecionou ${fileList.length}. Divida em vários envios (ex.: ${bulkMax} + ${fileList.length - bulkMax}).`,
+      );
+      return;
+    }
+    if (tracks.length + fileList.length > max) {
+      setError(
+        `Limite de ${max} faixas por playlist. Esta lista tem ${tracks.length} faixa(s) e tentou enviar ${fileList.length} ficheiro(s). Reduza a seleção ou apague faixas antes de continuar.`,
+      );
+      return;
+    }
     const fd = new FormData();
     for (let i = 0; i < fileList.length; i += 1) {
       fd.append('audio', fileList[i], fileList[i].name);
     }
     setSaving(true);
+    setBulkUploadStatus({ files: fileList.length });
     setError('');
     setOkMsg('');
     try {
@@ -219,6 +252,7 @@ export default function WebsiteRadioPage() {
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro no upload.');
     } finally {
+      setBulkUploadStatus(null);
       setSaving(false);
     }
   };
@@ -399,11 +433,24 @@ export default function WebsiteRadioPage() {
       <p className="mt-1 max-w-3xl text-sm text-slate-500">
         Playlists e faixas MP3 ficam neste CRM. O site público pode consumir{' '}
         <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> (JSON com
-        playlists e URLs absolutas). Duração e capa ID3 no MP3 são usadas quando existem; se não houver capa no ficheiro,
-        o sistema pode gerar uma automaticamente com foto aleatória de uma modelo feminina do cadastro (foto em preto e
-        branco, nome em laranja). Desligar automação no servidor:{' '}
-        <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
+        playlists e URLs absolutas).         Duração e capa ID3 no MP3 são usadas quando existem; se não houver capa no ficheiro,
+        o sistema pode gerar uma automaticamente com foto de uma modelo feminina do cadastro (P&B, nome em laranja),{' '}
+        <strong className="font-semibold text-slate-700">sem repetir a mesma modelo na mesma playlist</strong> até
+        esgotar o elenco (depois volta a aleatorizar). No site, cada playlist pode ter «avançar à seguinte ao terminar»
+        (campo <code className="rounded bg-slate-100 px-1 text-xs">auto_next_playlist</code> na API pública). Desligar
+        capa automática: <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
       </p>
+
+      {radioMeta ? (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950">
+          <p className="font-semibold">Regras de envio</p>
+          <p className="mt-1 text-amber-900/95">
+            Até <strong>{radioMeta.max_bulk_audio_files ?? 25}</strong> ficheiros por cada envio; máximo{' '}
+            <strong>{radioMeta.max_tracks_per_playlist ?? 50}</strong> faixas no total por playlist. O servidor recusa
+            com mensagem clara se ultrapassar.
+          </p>
+        </div>
+      ) : null}
 
       {loading ? <p className="mt-4 text-sm text-slate-500">A carregar…</p> : null}
       {error ? (
@@ -411,6 +458,26 @@ export default function WebsiteRadioPage() {
       ) : null}
       {okMsg ? (
         <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{okMsg}</p>
+      ) : null}
+
+      {bulkUploadStatus ? (
+        <div
+          className="mt-4 flex items-start gap-3 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-950 shadow-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            className="mt-0.5 inline-block h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-sky-700 border-t-transparent"
+            aria-hidden
+          />
+          <div>
+            <p className="font-semibold text-sky-950">A enviar músicas…</p>
+            <p className="mt-1 text-sky-900/95">
+              <strong>{bulkUploadStatus.files}</strong> ficheiro(s) em processamento. Isto pode demorar um minuto (upload,
+              leitura de áudio e capas). Não feche a página.
+            </p>
+          </div>
+        </div>
       ) : null}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(220px,280px)_1fr]">
@@ -471,6 +538,16 @@ export default function WebsiteRadioPage() {
                     <option value="published">Publicada</option>
                     <option value="draft">Rascunho</option>
                   </select>
+                  <label className="flex max-w-[200px] items-start gap-1 text-[11px] leading-tight text-slate-600">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={p.auto_next_playlist !== false}
+                      onChange={(e) => updatePlaylist(p, { auto_next_playlist: e.target.checked })}
+                      disabled={saving}
+                    />
+                    <span>Avançar à playlist seguinte quando esta terminar (site)</span>
+                  </label>
                   <label className="flex items-center gap-1 text-[11px] text-slate-600">
                     <input
                       type="checkbox"
@@ -503,6 +580,12 @@ export default function WebsiteRadioPage() {
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Faixas</p>
                   <p className="mt-1 text-sm font-medium text-slate-900">{selected?.name}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {tracks.length} / {radioMeta?.max_tracks_per_playlist ?? 50} faixas nesta playlist
+                    {tracks.length >= (radioMeta?.max_tracks_per_playlist ?? 50) ? (
+                      <span className="ml-2 font-semibold text-amber-700">— limite atingido</span>
+                    ) : null}
+                  </p>
                   {selected?.cover_url ? (
                     <p className="mt-1 text-[11px] text-slate-500">
                       Capa:{' '}
@@ -533,7 +616,14 @@ export default function WebsiteRadioPage() {
                   </div>
                 </div>
                 <div className="flex flex-col items-stretch gap-2 sm:items-end">
-                  <label className="cursor-pointer rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-950 hover:bg-amber-100">
+                  <p className="text-right text-[11px] text-slate-500">
+                    Máx. {radioMeta?.max_bulk_audio_files ?? 25} ficheiros por envio
+                  </p>
+                  <label
+                    className={`cursor-pointer rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-950 hover:bg-amber-100 ${
+                      saving ? 'pointer-events-none opacity-60' : ''
+                    }`}
+                  >
                     <input
                       type="file"
                       accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,.mp3,.m4a,.wav"
@@ -546,7 +636,7 @@ export default function WebsiteRadioPage() {
                         e.target.value = '';
                       }}
                     />
-                    Carregar vários MP3
+                    {saving && bulkUploadStatus ? 'A enviar…' : 'Carregar vários MP3'}
                   </label>
                   <div className="flex flex-wrap justify-end gap-2">
                     <button
