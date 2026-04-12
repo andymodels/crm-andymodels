@@ -320,6 +320,77 @@ export default function WebsiteRadioPage() {
     }
   };
 
+  /** Capa automática: foto aleatória de modelo feminino do cadastro, P&B, nome em laranja. */
+  const applyModelCoverTrack = async (trackId) => {
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const r = await fetchWithAuth(
+        `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover/from-model`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        },
+      );
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      let data = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = {};
+      }
+      if (!r.ok) throw new Error(data?.message || parseErr(raw, r));
+      setOkMsg(
+        data.modelo_nome
+          ? `Capa gerada com foto de ${data.modelo_nome} (aleatório do elenco feminino).`
+          : 'Capa gerada.',
+      );
+      await loadTracks(selectedId);
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const bulkPlaylistModelCovers = async (replace) => {
+    if (selectedId == null) return;
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const r = await fetchWithAuth(
+        `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/covers/from-model`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ replace }),
+        },
+      );
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (!r.ok) throw new Error(data?.message || parseErr(raw, r));
+      const n = data.count ?? 0;
+      const errN = data.errors?.length ?? 0;
+      setOkMsg(
+        replace
+          ? `Capas modelo geradas: ${n}.` + (errN ? ` ${errN} falha(s).` : '')
+          : `Capas geradas onde faltavam: ${n}.` + (errN ? ` ${errN} falha(s).` : ''),
+      );
+      if (errN && data.errors) console.warn('[radio] capas em lote:', data.errors);
+      await loadTracks(selectedId);
+      await loadPlaylists();
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const selected = playlists.find((p) => p.id === selectedId);
 
   return (
@@ -328,8 +399,10 @@ export default function WebsiteRadioPage() {
       <p className="mt-1 max-w-3xl text-sm text-slate-500">
         Playlists e faixas MP3 ficam neste CRM. O site público pode consumir{' '}
         <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> (JSON com
-        playlists e URLs absolutas de áudio e capas). Duração e capa embutida no MP3 são lidas automaticamente quando
-        possível.
+        playlists e URLs absolutas). Duração e capa ID3 no MP3 são usadas quando existem; se não houver capa no ficheiro,
+        o sistema pode gerar uma automaticamente com foto aleatória de uma modelo feminina do cadastro (foto em preto e
+        branco, nome em laranja). Desligar automação no servidor:{' '}
+        <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
       </p>
 
       {loading ? <p className="mt-4 text-sm text-slate-500">A carregar…</p> : null}
@@ -459,21 +532,45 @@ export default function WebsiteRadioPage() {
                     </label>
                   </div>
                 </div>
-                <label className="cursor-pointer rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950 hover:bg-amber-100">
-                  <input
-                    type="file"
-                    accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,.mp3,.m4a,.wav"
-                    multiple
-                    className="sr-only"
-                    disabled={saving}
-                    onChange={(e) => {
-                      const f = e.target.files;
-                      if (f?.length) bulkUpload(f);
-                      e.target.value = '';
-                    }}
-                  />
-                  Carregar vários MP3
-                </label>
+                <div className="flex flex-col items-stretch gap-2 sm:items-end">
+                  <label className="cursor-pointer rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-950 hover:bg-amber-100">
+                    <input
+                      type="file"
+                      accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,.mp3,.m4a,.wav"
+                      multiple
+                      className="sr-only"
+                      disabled={saving}
+                      onChange={(e) => {
+                        const f = e.target.files;
+                        if (f?.length) bulkUpload(f);
+                        e.target.value = '';
+                      }}
+                    />
+                    Carregar vários MP3
+                  </label>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={saving || tracks.length === 0}
+                      onClick={() => bulkPlaylistModelCovers(false)}
+                      className="rounded-lg border border-orange-500 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-950 hover:bg-orange-100 disabled:opacity-50"
+                      title="Foto aleatória de modelo feminino, P&B, nome em laranja — só onde ainda não há capa"
+                    >
+                      Capas modelo (só vazias)
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving || tracks.length === 0}
+                      onClick={() => {
+                        if (!window.confirm('Substituir a capa de todas as faixas por novas fotos do elenco?')) return;
+                        bulkPlaylistModelCovers(true);
+                      }}
+                      className="rounded-lg border border-orange-600 bg-white px-3 py-2 text-xs font-semibold text-orange-900 hover:bg-orange-50 disabled:opacity-50"
+                    >
+                      Capas modelo (substituir todas)
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {loadingTracks ? (
@@ -529,8 +626,17 @@ export default function WebsiteRadioPage() {
                             htmlFor={`cover-tr-${t.id}`}
                             className="cursor-pointer text-[11px] font-medium text-amber-800 hover:underline"
                           >
-                            Capa
+                            Capa ficheiro
                           </label>
+                          <button
+                            type="button"
+                            className="text-[11px] font-semibold text-orange-700 hover:underline"
+                            disabled={saving}
+                            onClick={() => applyModelCoverTrack(t.id)}
+                            title="Elenco feminino: foto P&B + nome em laranja"
+                          >
+                            Capa modelo
+                          </button>
                           <button
                             type="button"
                             className="text-[11px] text-red-600 hover:underline"

@@ -10,6 +10,7 @@ const multer = require('multer');
 const mm = require('music-metadata');
 const { pool } = require('../config/db');
 const storage = require('../services/storage');
+const radioCover = require('../services/radioCoverFromModelo');
 
 const router = express.Router();
 
@@ -136,6 +137,14 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       coverUrl = await saveEmbeddedCover(coverBuffer, coverExt);
     } catch (e) {
       console.warn('[radio] capa embutida:', e?.message || e);
+    }
+  }
+  if (!coverUrl && !overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
+    const gen = await radioCover.generateFemaleModelCoverUrl({});
+    if (gen.ok) {
+      coverUrl = gen.publicUrl;
+    } else {
+      console.warn('[radio] capa automática (modelo):', gen.reason);
     }
   }
 
@@ -496,6 +505,93 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
       }
     }
     return res.json(rows[0]);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+function removeStoredCoverIfUrl(coverUrl) {
+  const rel = coverUrl ? storage.relativePathFromPublicUrl(coverUrl) : null;
+  if (rel) {
+    return storage.removeFile(rel).catch(() => {});
+  }
+  return Promise.resolve();
+}
+
+/** Capa gerada: foto aleatória de modelo feminino (P&B + nome em laranja). Body opcional: { modelo_id } */
+router.post('/radio/tracks/:trackId/cover/from-model', express.json(), async (req, res, next) => {
+  try {
+    const trackId = Number(req.params.trackId);
+    if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
+    const modeloId = req.body?.modelo_id != null ? Number(req.body.modelo_id) : null;
+    const gen = await radioCover.generateFemaleModelCoverUrl(
+      Number.isFinite(modeloId) ? { modelo_id: modeloId } : {},
+    );
+    if (!gen.ok) {
+      return res.status(400).json({
+        message:
+          gen.reason === 'sem_modelos_femininos_com_foto'
+            ? 'Não há modelos femininos ativos com foto URL no cadastro.'
+            : gen.reason === 'modelo_nao_encontrado_ou_nao_feminino'
+              ? 'Modelo não encontrado, inativo ou não feminino / sem foto.'
+              : String(gen.reason || 'Falha ao gerar capa.'),
+      });
+    }
+    const cur = await pool.query(`SELECT id, cover_url FROM radio_tracks WHERE id = $1`, [trackId]);
+    if (!cur.rows.length) return res.status(404).json({ message: 'Faixa não encontrada.' });
+    await removeStoredCoverIfUrl(cur.rows[0].cover_url);
+    const { rows } = await pool.query(
+      `UPDATE radio_tracks SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [gen.publicUrl, trackId],
+    );
+    return res.json({
+      ...rows[0],
+      audio_url: storage.getPublicUrl(rows[0].audio_storage_path),
+      modelo_id: gen.modelo_id,
+      modelo_nome: gen.modelo_nome,
+    });
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/** Aplica capa «modelo» a todas as faixas (ou só as sem capa se replace=false). */
+router.post('/radio/playlists/:playlistId/covers/from-model', express.json(), async (req, res, next) => {
+  try {
+    const playlistId = Number(req.params.playlistId);
+    if (!Number.isFinite(playlistId)) return res.status(400).json({ message: 'ID inválido.' });
+    const replace = Boolean(req.body?.replace);
+    const p = await pool.query(`SELECT id FROM radio_playlists WHERE id = $1`, [playlistId]);
+    if (!p.rows.length) return res.status(404).json({ message: 'Playlist não encontrada.' });
+
+    const { rows: tracks } = await pool.query(
+      `SELECT id, cover_url FROM radio_tracks WHERE playlist_id = $1 ORDER BY sort_order ASC, id ASC`,
+      [playlistId],
+    );
+    const updated = [];
+    const errors = [];
+    for (const t of tracks) {
+      if (!replace && t.cover_url) continue;
+      const gen = await radioCover.generateFemaleModelCoverUrl({});
+      if (!gen.ok) {
+        errors.push({ track_id: t.id, reason: gen.reason });
+        continue;
+      }
+      await removeStoredCoverIfUrl(t.cover_url);
+      const { rows } = await pool.query(
+        `UPDATE radio_tracks SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+        [gen.publicUrl, t.id],
+      );
+      if (rows.length) {
+        updated.push({
+          track_id: t.id,
+          modelo_id: gen.modelo_id,
+          modelo_nome: gen.modelo_nome,
+          cover_url: gen.publicUrl,
+        });
+      }
+    }
+    return res.json({ ok: true, count: updated.length, updated, errors });
   } catch (e) {
     return next(e);
   }
