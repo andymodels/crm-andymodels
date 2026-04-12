@@ -25,7 +25,14 @@ O que fazer no projeto DO SITE (Vite)
 4) Mapear JSON:
    - v2 completo: GET .../api/public/radio/v2 → { playlists, tracks_flat, version }
    - OU lista só faixas (mais simples): GET .../api/public/radio/tracks-only → { tracks: [...] }
-   Cada faixa tem: id, title, artist, url (absoluto https), filename, position, cover_url, duration_sec, playlist_id, playlist_slug.
+   Cada faixa tem: id, title, artist, url (absoluto https), filename, position, cover_url, duration_sec, playlist_id, playlist_slug,
+   e quando a capa veio do elenco CRM: modelo_nome (texto para #ea580c no site) e cover_modelo_id.
+
+   Capas repetidas na lista: usar track.cover_url por faixa, NÃO playlist.cover_url em todas as linhas.
+   Se no CRM todas as faixas tiverem a mesma capa (ex.: MP3 com a mesma capa embutida), em Website → Rádio usar
+   «Capas modelo (substituir todas)» — o CRM não repete a mesma modelo na mesma playlist até esgotar o elenco.
+
+   Nome laranja: o JPEG já inclui o nome em laranja; a API também envia modelo_nome para o site poder mostrar o mesmo nome em CSS laranja.
 
 5) CORS: o CRM já usa cors com origin dinâmico (pedidos de https://www.andymodels.com são aceites).
    Se algo falhar, confirma no Network do browser o erro (CORS vs 404).

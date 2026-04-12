@@ -11,6 +11,8 @@ const router = express.Router();
 
 function mapTrackRow(t, playlistMeta) {
   const url = storage.getPublicUrl(t.audio_storage_path);
+  const modeloNome =
+    t.modelo_nome != null && String(t.modelo_nome).trim() !== '' ? String(t.modelo_nome).trim() : null;
   return {
     id: t.id,
     title: t.title,
@@ -18,6 +20,9 @@ function mapTrackRow(t, playlistMeta) {
     filename: String(t.audio_storage_path || '').split('/').pop() || '',
     url,
     cover_url: t.cover_url || null,
+    /** Nome da modelo quando a capa foi gerada pelo CRM (texto laranja também está desenhado na imagem). O site pode usar isto em CSS laranja. */
+    modelo_nome: modeloNome,
+    cover_modelo_id: t.cover_modelo_id != null ? Number(t.cover_modelo_id) : null,
     duration_sec: t.duration_sec != null ? Number(t.duration_sec) : null,
     position: t.sort_order,
     playlist_id: playlistMeta.id,
@@ -53,10 +58,12 @@ router.get('/public/radio/v2', async (req, res, next) => {
 
     for (const p of playlists) {
       const { rows: tracks } = await pool.query(
-        `SELECT id, playlist_id, title, artist, audio_storage_path, cover_url, duration_sec, sort_order, active
-         FROM radio_tracks
-         WHERE playlist_id = $1 AND active = TRUE
-         ORDER BY sort_order ASC, id ASC`,
+        `SELECT t.id, t.playlist_id, t.title, t.artist, t.audio_storage_path, t.cover_url, t.cover_modelo_id,
+                t.duration_sec, t.sort_order, t.active, m.nome AS modelo_nome
+         FROM radio_tracks t
+         LEFT JOIN modelos m ON m.id = t.cover_modelo_id
+         WHERE t.playlist_id = $1 AND t.active = TRUE
+         ORDER BY t.sort_order ASC, t.id ASC`,
         [p.id],
       );
       const meta = {
@@ -112,10 +119,12 @@ router.get('/public/radio/tracks-only', async (req, res, next) => {
     const tracks = [];
     for (const p of playlists) {
       const { rows: tr } = await pool.query(
-        `SELECT id, playlist_id, title, artist, audio_storage_path, cover_url, duration_sec, sort_order
-         FROM radio_tracks
-         WHERE playlist_id = $1 AND active = TRUE
-         ORDER BY sort_order ASC, id ASC`,
+        `SELECT t.id, t.playlist_id, t.title, t.artist, t.audio_storage_path, t.cover_url, t.cover_modelo_id,
+                t.duration_sec, t.sort_order, m.nome AS modelo_nome
+         FROM radio_tracks t
+         LEFT JOIN modelos m ON m.id = t.cover_modelo_id
+         WHERE t.playlist_id = $1 AND t.active = TRUE
+         ORDER BY t.sort_order ASC, t.id ASC`,
         [p.id],
       );
       const meta = { id: p.id, slug: p.slug };
