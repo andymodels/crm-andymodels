@@ -4,3 +4,4 @@ backend/.cache
 .env
 .DS_Store
 *.log
+.tmp-site-bundle.js
