@@ -694,6 +694,12 @@ export default function WebsiteRadioPage() {
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Faixas</p>
                   <p className="mt-1 text-sm font-medium text-slate-900">{selected?.name}</p>
+                  <p className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] leading-snug text-slate-700">
+                    <strong className="font-semibold text-slate-800">Enviar MP3:</strong> 1) «Escolher ficheiros MP3» → 2) clique
+                    «Enviar músicas» (o botão só fica clicável depois de escolher ficheiros). O site público lê os dados em{' '}
+                    <code className="rounded bg-white px-0.5 text-[10px]">/api/public/radio/v2</code> após o envio concluir
+                    aqui no CRM.
+                  </p>
                   <p className="mt-1 text-xs text-slate-500">
                     {tracks.length} / {radioMeta?.max_tracks_per_playlist ?? 50} faixas nesta playlist
                     {tracks.length >= (radioMeta?.max_tracks_per_playlist ?? 50) ? (
@@ -729,10 +735,9 @@ export default function WebsiteRadioPage() {
                     </label>
                   </div>
                 </div>
-                <div className="flex w-full max-w-md flex-col gap-2 sm:w-auto sm:items-end">
-                  <p className="text-right text-[11px] text-slate-500">
-                    Máx. {radioMeta?.max_bulk_audio_files ?? 25} ficheiros por envio — escolha os ficheiros e depois
-                    «Enviar músicas»
+                <div className="flex w-full max-w-lg flex-col gap-2 sm:w-auto sm:items-stretch">
+                  <p className="text-[11px] text-slate-500 sm:text-right">
+                    Máx. {radioMeta?.max_bulk_audio_files ?? 25} ficheiros por envio.
                   </p>
                   <input
                     type="file"
@@ -755,35 +760,42 @@ export default function WebsiteRadioPage() {
                   >
                     Escolher ficheiros MP3
                   </label>
+                  <div className="flex w-full flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={saving || bulkUploadStatus != null || pendingAudioFiles.length === 0}
+                      title={
+                        pendingAudioFiles.length === 0
+                          ? 'Escolha primeiro um ou mais ficheiros MP3 com o botão acima'
+                          : 'Enviar os ficheiros selecionados para o servidor'
+                      }
+                      onClick={sendPendingAudio}
+                      className="min-h-[44px] flex-1 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 sm:min-w-[160px] sm:flex-none"
+                    >
+                      Enviar músicas
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving || pendingAudioFiles.length === 0}
+                      onClick={clearPendingAudio}
+                      className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Limpar seleção
+                    </button>
+                  </div>
+                  <p className="text-center text-[11px] text-slate-500 sm:text-left">
+                    {pendingAudioFiles.length === 0
+                      ? 'Nenhum ficheiro na fila — use «Escolher ficheiros MP3».'
+                      : `${pendingAudioFiles.length} ficheiro(s) na fila — clique «Enviar músicas».`}
+                  </p>
                   {pendingAudioFiles.length > 0 ? (
-                    <div className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left text-xs text-slate-700">
-                      <p className="font-semibold text-slate-800">{pendingAudioFiles.length} ficheiro(s) selecionado(s)</p>
-                      <ul className="mt-2 max-h-28 list-inside list-disc overflow-y-auto text-[11px] text-slate-600">
-                        {pendingAudioFiles.map((f) => (
-                          <li key={f.name + f.size} className="truncate">
-                            {f.name}
-                          </li>
-                        ))}
-                      </ul>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={saving || bulkUploadStatus != null}
-                          onClick={sendPendingAudio}
-                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                        >
-                          Enviar músicas
-                        </button>
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={clearPendingAudio}
-                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                          Limpar seleção
-                        </button>
-                      </div>
-                    </div>
+                    <ul className="max-h-28 list-inside list-disc overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 text-left text-[11px] text-slate-600">
+                      {pendingAudioFiles.map((f) => (
+                        <li key={f.name + f.size} className="truncate">
+                          {f.name}
+                        </li>
+                      ))}
+                    </ul>
                   ) : null}
                   <div className="flex flex-wrap justify-end gap-2">
                     <button
