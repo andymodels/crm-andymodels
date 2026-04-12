@@ -33,22 +33,26 @@ function truncateName(n, max = 42) {
   return `${t.slice(0, max - 1)}…`;
 }
 
+/**
+ * SVG compatível com librsvg (Sharp no Linux/Render): evitar system-ui — o texto sumia ou não ficava laranja.
+ * Nome em laranja sobre faixa escura na base da capa.
+ */
 function buildOverlaySvg(displayName) {
   const fs = fontSizeForName(displayName);
   const name = escapeXml(truncateName(displayName, 44));
+  const barH = 140;
+  const bottomY = COVER_H - barH;
+  const textY = COVER_H - 48;
   return Buffer.from(
     `<svg width="${COVER_W}" height="${COVER_H}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="andyRadioFade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgb(0,0,0)" stop-opacity="0"/>
-      <stop offset="50%" stop-color="rgb(0,0,0)" stop-opacity="0"/>
-      <stop offset="100%" stop-color="rgb(0,0,0)" stop-opacity="0.72"/>
-    </linearGradient>
-  </defs>
-  <rect width="${COVER_W}" height="${COVER_H}" fill="url(#andyRadioFade)"/>
-  <text x="${COVER_W / 2}" y="${COVER_H - 42}" text-anchor="middle"
-    font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
-    font-size="${fs}" font-weight="700" fill="${ORANGE}">${name}</text>
+  <rect x="0" y="${bottomY}" width="${COVER_W}" height="${barH}" fill="rgba(0,0,0,0.65)"/>
+  <text x="${COVER_W / 2}" y="${textY}" text-anchor="middle"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="${fs}" font-weight="700"
+    fill="${ORANGE}"
+    stroke="#0f172a"
+    stroke-width="1.2"
+    paint-order="stroke fill">${name}</text>
 </svg>`,
     'utf8',
   );
@@ -64,16 +68,21 @@ async function fetchImageBuffer(url) {
   return Buffer.from(ab);
 }
 
-/**
- * Uma linha aleatória: modelo feminino ativo com foto URL pública.
- */
+/** Elenco feminino no cadastro (várias grafias) + foto URL pública (campo pode ter espaços). */
+const SQL_WHERE_FEMALE_URL = `
+  ativo = TRUE
+  AND (
+    LOWER(TRIM(COALESCE(sexo, ''))) IN ('feminino', 'female', 'f', 'mulher', 'femenino')
+    OR LOWER(TRIM(COALESCE(sexo, ''))) LIKE 'fem%'
+  )
+  AND TRIM(foto_perfil_base64) ~ '^https?://'
+`;
+
 async function pickRandomFemaleModel(client) {
   const q = `
-    SELECT id, nome, foto_perfil_base64 AS foto_url
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
     FROM modelos
-    WHERE ativo = TRUE
-      AND LOWER(TRIM(sexo)) = 'feminino'
-      AND foto_perfil_base64 ~ '^https?://'
+    WHERE ${SQL_WHERE_FEMALE_URL}
     ORDER BY RANDOM()
     LIMIT 1
   `;
@@ -92,15 +101,18 @@ async function pickFemaleModelLeastUsedInPlaylist(playlistId, client) {
   }
   const pid = Number(playlistId);
   const q = `
-    SELECT m.id, m.nome, m.foto_perfil_base64 AS foto_url,
+    SELECT m.id, m.nome, TRIM(m.foto_perfil_base64) AS foto_url,
       COALESCE((
         SELECT COUNT(*)::int FROM radio_tracks t
         WHERE t.playlist_id = $1 AND t.cover_modelo_id = m.id
       ), 0) AS uso_nesta_playlist
     FROM modelos m
     WHERE m.ativo = TRUE
-      AND LOWER(TRIM(m.sexo)) = 'feminino'
-      AND m.foto_perfil_base64 ~ '^https?://'
+      AND (
+        LOWER(TRIM(COALESCE(m.sexo, ''))) IN ('feminino', 'female', 'f', 'mulher', 'femenino')
+        OR LOWER(TRIM(COALESCE(m.sexo, ''))) LIKE 'fem%'
+      )
+      AND TRIM(m.foto_perfil_base64) ~ '^https?://'
     ORDER BY uso_nesta_playlist ASC, RANDOM()
     LIMIT 1
   `;
@@ -110,12 +122,15 @@ async function pickFemaleModelLeastUsedInPlaylist(playlistId, client) {
 
 async function pickFemaleModelById(client, modeloId) {
   const q = `
-    SELECT id, nome, foto_perfil_base64 AS foto_url
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
     FROM modelos
     WHERE id = $1
       AND ativo = TRUE
-      AND LOWER(TRIM(sexo)) = 'feminino'
-      AND foto_perfil_base64 ~ '^https?://'
+      AND (
+        LOWER(TRIM(COALESCE(sexo, ''))) IN ('feminino', 'female', 'f', 'mulher', 'femenino')
+        OR LOWER(TRIM(COALESCE(sexo, ''))) LIKE 'fem%'
+      )
+      AND TRIM(foto_perfil_base64) ~ '^https?://'
   `;
   const { rows } = client ? await client.query(q, [modeloId]) : await pool.query(q, [modeloId]);
   return rows[0] || null;
@@ -131,8 +146,17 @@ async function renderCoverJpeg(imageBuffer, nomeDestaque) {
     .grayscale()
     .toBuffer();
 
-  const overlay = buildOverlaySvg(nomeDestaque);
-  return sharp(base).composite([{ input: overlay, left: 0, top: 0 }]).jpeg({ quality: 88, mozjpeg: true }).toBuffer();
+  const overlaySvg = buildOverlaySvg(nomeDestaque);
+  /** Rasterizar SVG → PNG (density) para o texto laranja aparecer de forma fiável com librsvg. */
+  const overlayPng = await sharp(overlaySvg, { density: 144 })
+    .resize(COVER_W, COVER_H)
+    .png()
+    .toBuffer();
+
+  return sharp(base)
+    .composite([{ input: overlayPng, left: 0, top: 0, blend: 'over' }])
+    .jpeg({ quality: 88, mozjpeg: true })
+    .toBuffer();
 }
 
 /**
