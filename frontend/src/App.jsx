@@ -3,6 +3,7 @@ import DynamicTextListField from './components/DynamicTextListField';
 import OperacaoAgenda from './components/OperacaoAgenda';
 import AgendaCentral from './components/AgendaCentral';
 import WebsiteModelsPage from './components/WebsiteModelsPage';
+import WebsiteHomeOrderPage from './components/WebsiteHomeOrderPage';
 import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
 import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
 import WebsiteModeloEditorPage from './components/WebsiteModeloEditorPage';
@@ -2469,7 +2470,7 @@ function App({ authUser, onLogout = () => {} }) {
       novo_modelo: '',
       editar_modelo: '',
       inscricoes: 'Candidaturas recebidas pelo site — lista simples e detalhe ao clicar.',
-      home: 'Página placeholder — sem alteração de dados ainda.',
+      home: 'Ordem dos modelos em destaque na home do site.',
       instagram: 'Página placeholder — sem alteração de dados ainda.',
       radio: 'Página placeholder — sem alteração de dados ainda.',
     };
@@ -3911,7 +3912,7 @@ function App({ authUser, onLogout = () => {} }) {
             />
           )}
           {module === 'website' && websiteSubView === 'inscricoes' && <WebsiteInscricoesPage />}
-          {module === 'website' && websiteSubView === 'home' && <WebsitePlaceholderPage title="Home" />}
+          {module === 'website' && websiteSubView === 'home' && <WebsiteHomeOrderPage />}
           {module === 'website' && websiteSubView === 'instagram' && (
             <WebsitePlaceholderPage title="Instagram" />
           )}
