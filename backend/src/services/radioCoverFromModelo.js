@@ -1,5 +1,6 @@
 /**
- * Capas Andy Radio a partir do elenco: foto do cadastro (feminino), P&B, nome em laranja.
+ * Capas Andy Radio a partir do elenco: foto do cadastro (feminino), P&B, primeiro nome em laranja (rodapé).
+ * Regra de upload de faixas (radio.js): capa embutida no MP3 primeiro; senão, modelo aleatória.
  */
 
 const crypto = require('crypto');
@@ -19,37 +20,48 @@ function escapeXml(s) {
     .replace(/"/g, '&quot;');
 }
 
-function fontSizeForName(n) {
-  const len = String(n || '').length;
-  if (len <= 18) return 32;
-  if (len <= 28) return 26;
-  if (len <= 40) return 22;
-  return 18;
+/** Primeiro token do nome, em maiúsculas (para overlay). */
+function firstNameUpper(nome) {
+  const s = String(nome || '').trim();
+  if (!s) return '';
+  return s.split(/\s+/)[0].toUpperCase();
 }
 
-function truncateName(n, max = 42) {
+function fontSizeForFirstName(len) {
+  if (len <= 10) return 40;
+  if (len <= 16) return 32;
+  if (len <= 22) return 26;
+  return 22;
+}
+
+function truncateName(n, max = 36) {
   const t = String(n || '').trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1)}…`;
 }
 
 /**
- * Nome da modelo em destaque no centro (estilo “título”), laranja + contorno — SVG compatível com librsvg.
+ * Primeiro nome em destaque na parte inferior (faixa escura), laranja + contorno — SVG compatível com librsvg.
  */
 function buildOverlaySvg(displayName) {
-  const raw = String(displayName || '').trim();
-  const name = escapeXml(truncateName(raw, 34));
-  const fs = Math.min(48, Math.max(24, fontSizeForName(raw) + 6));
+  const raw = firstNameUpper(displayName);
+  const name = escapeXml(truncateName(raw, 28));
+  const fs = Math.min(48, Math.max(24, fontSizeForFirstName(raw.length)));
+  const padX = 16;
+  const barH = Math.min(200, fs + 52);
+  const barY = COVER_H - barH;
   const cx = COVER_W / 2;
-  const cy = COVER_H / 2;
-  const padX = 20;
-  const boxW = COVER_W - padX * 2;
-  const boxH = Math.min(160, fs + 48);
-  const boxY = cy - boxH / 2;
-  const textY = cy + fs * 0.28;
+  const textY = COVER_H - (barH / 2) + fs * 0.32;
   return Buffer.from(
     `<svg width="${COVER_W}" height="${COVER_H}" xmlns="http://www.w3.org/2000/svg">
-  <rect x="${padX}" y="${boxY}" width="${boxW}" height="${boxH}" rx="14" fill="rgba(0,0,0,0.58)"/>
+  <defs>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(0,0,0,0)"/>
+      <stop offset="35%" stop-color="rgba(0,0,0,0.55)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0.78)"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="${barY}" width="${COVER_W}" height="${barH}" fill="url(#bar)"/>
   <text x="${cx}" y="${textY}" text-anchor="middle"
     font-family="Arial, Helvetica, sans-serif"
     font-size="${fs}" font-weight="700"
@@ -94,68 +106,6 @@ async function pickRandomFemaleModel(client) {
   return rows[0] || null;
 }
 
-/**
- * Menos usos na playlist + não repetir a mesma modelo da **última faixa** quando há alternativa.
- * Lista todas as elegíveis em JS (evita empates RANDOM() sempre à mesma).
- */
-/**
- * @param excludeModeloId — modelo a evitar em sequência (faixa anterior no lote).
- * @param useExcludeOnly — se true, `excludeModeloId` veio do pedido (lote); não ler «última faixa» do BD (evita confundir com a faixa 36).
- */
-async function pickFemaleModelLeastUsedInPlaylist(playlistId, client, excludeModeloId, useExcludeOnly) {
-  if (playlistId == null || !Number.isFinite(Number(playlistId))) {
-    return pickRandomFemaleModel(client);
-  }
-  const pid = Number(playlistId);
-  const q = `
-    SELECT m.id, m.nome, TRIM(m.foto_perfil_base64) AS foto_url
-    FROM modelos m
-    WHERE m.ativo = TRUE
-      AND (
-        LOWER(TRIM(COALESCE(m.sexo, ''))) IN ('feminino', 'female', 'f', 'mulher', 'femenino')
-        OR LOWER(TRIM(COALESCE(m.sexo, ''))) LIKE 'fem%'
-      )
-      AND TRIM(m.foto_perfil_base64) ~ '^https?://'
-    ORDER BY m.id ASC
-  `;
-  const { rows: elegiveis } = await client ? await client.query(q) : await pool.query(q);
-  if (!elegiveis.length) return null;
-  if (elegiveis.length === 1) return elegiveis[0];
-
-  const usageSql = `SELECT cover_modelo_id, COUNT(*)::int AS c
-         FROM radio_tracks
-         WHERE playlist_id = $1 AND cover_modelo_id IS NOT NULL
-         GROUP BY cover_modelo_id`;
-  const { rows: usageRows } = await client ? await client.query(usageSql, [pid]) : await pool.query(usageSql, [pid]);
-  const uso = new Map(usageRows.map((r) => [Number(r.cover_modelo_id), r.c]));
-
-  let ultimaFaixaModeloId = null;
-  if (useExcludeOnly) {
-    ultimaFaixaModeloId =
-      excludeModeloId != null && Number.isFinite(Number(excludeModeloId)) ? Number(excludeModeloId) : null;
-  } else {
-    const lastSql = `SELECT cover_modelo_id FROM radio_tracks
-         WHERE playlist_id = $1
-         ORDER BY sort_order DESC, id DESC
-         LIMIT 1`;
-    const { rows: lastRows } = await client ? await client.query(lastSql, [pid]) : await pool.query(lastSql, [pid]);
-    ultimaFaixaModeloId =
-      lastRows[0]?.cover_modelo_id != null ? Number(lastRows[0].cover_modelo_id) : null;
-  }
-
-  let minUso = Infinity;
-  for (const m of elegiveis) {
-    const c = uso.get(m.id) || 0;
-    if (c < minUso) minUso = c;
-  }
-  let candidatos = elegiveis.filter((m) => (uso.get(m.id) || 0) === minUso);
-  if (candidatos.length > 1 && ultimaFaixaModeloId != null) {
-    const semRepetirSeguida = candidatos.filter((m) => m.id !== ultimaFaixaModeloId);
-    if (semRepetirSeguida.length > 0) candidatos = semRepetirSeguida;
-  }
-  return candidatos[Math.floor(Math.random() * candidatos.length)];
-}
-
 async function pickFemaleModelById(client, modeloId) {
   const q = `
     SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
@@ -173,7 +123,7 @@ async function pickFemaleModelById(client, modeloId) {
 }
 
 /**
- * Gera JPEG de capa (P&B + nome laranja em destaque).
+ * Gera JPEG de capa (P&B + primeiro nome em laranja no rodapé).
  */
 async function renderCoverJpeg(imageBuffer, nomeDestaque) {
   const base = await sharp(imageBuffer)
@@ -183,7 +133,6 @@ async function renderCoverJpeg(imageBuffer, nomeDestaque) {
     .toBuffer();
 
   const overlaySvg = buildOverlaySvg(nomeDestaque);
-  /** Rasterizar SVG → PNG (density) para o texto laranja aparecer de forma fiável com librsvg. */
   const overlayPng = await sharp(overlaySvg, { density: 144 })
     .resize(COVER_W, COVER_H)
     .png()
@@ -214,34 +163,21 @@ function autoCoverFromModelEnabled() {
 }
 
 /**
- * Gera capa P&B + nome laranja; devolve URL pública ou falha.
+ * Gera capa P&B + nome (primeiro token em maiúsculas no rodapé); devolve URL pública ou falha.
+ * Sem `modelo_id`: escolhe uma modelo feminina aleatória com foto URL.
  */
 async function generateFemaleModelCoverUrl(options = {}) {
   const modeloId = options.modelo_id != null ? Number(options.modelo_id) : null;
-  const playlistId = options.playlist_id != null ? Number(options.playlist_id) : null;
-  const useExcludeOnly = Object.prototype.hasOwnProperty.call(options, 'exclude_modelo_id');
-  const excludeModeloId =
-    useExcludeOnly && options.exclude_modelo_id != null && Number.isFinite(Number(options.exclude_modelo_id))
-      ? Number(options.exclude_modelo_id)
-      : useExcludeOnly
-        ? null
-        : undefined;
   let m;
   if (Number.isFinite(modeloId)) {
     m = await pickFemaleModelById(null, modeloId);
     if (!m) return { ok: false, reason: 'modelo_nao_encontrado_ou_nao_feminino' };
   } else {
-    m = await pickFemaleModelLeastUsedInPlaylist(
-      playlistId,
-      null,
-      excludeModeloId,
-      useExcludeOnly,
-    );
+    m = await pickRandomFemaleModel(null);
     if (!m) return { ok: false, reason: 'sem_modelos_femininos_com_foto' };
   }
   try {
     const img = await fetchImageBuffer(m.foto_url);
-    /** Nome completo do cadastro (modelos.nome), igual à referência do site — não vem do ficheiro MP3. */
     const jpeg = await renderCoverJpeg(img, m.nome);
     const { publicUrl } = await saveCoverJpeg(jpeg);
     return { ok: true, publicUrl, modelo_id: m.id, modelo_nome: m.nome };
@@ -252,12 +188,12 @@ async function generateFemaleModelCoverUrl(options = {}) {
 
 module.exports = {
   pickRandomFemaleModel,
-  pickFemaleModelLeastUsedInPlaylist,
   pickFemaleModelById,
   fetchImageBuffer,
   renderCoverJpeg,
   saveCoverJpeg,
   autoCoverFromModelEnabled,
   generateFemaleModelCoverUrl,
+  firstNameUpper,
   ORANGE,
 };

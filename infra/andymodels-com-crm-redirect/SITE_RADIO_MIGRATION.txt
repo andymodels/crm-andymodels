@@ -29,10 +29,10 @@ O que fazer no projeto DO SITE (Vite)
    e quando a capa veio do elenco CRM: modelo_nome (texto para #ea580c no site) e cover_modelo_id.
 
    Capas repetidas na lista: usar track.cover_url por faixa, NÃO playlist.cover_url em todas as linhas.
-   Se no CRM todas as faixas tiverem a mesma capa (ex.: MP3 com a mesma capa embutida), em Website → Rádio usar
-   «Capas modelo (substituir todas)» — o CRM não repete a mesma modelo na mesma playlist até esgotar o elenco.
+   No CRM, ao enviar cada MP3: capa embutida (ID3) se existir; senão foto aleatória de uma modelo feminina do cadastro
+   (P&B + primeiro nome em laranja no rodapé da imagem). Substituição manual: upload por faixa no CRM.
 
-   Nome laranja: o JPEG já inclui o nome em laranja; a API também envia modelo_nome para o site poder mostrar o mesmo nome em CSS laranja.
+   modelo_nome na API: nome do cadastro quando a capa foi gerada pelo CRM; se a capa veio do MP3, cover_modelo_id / modelo_nome podem ser nulos.
 
 5) CORS: o CRM já usa cors com origin dinâmico (pedidos de https://www.andymodels.com são aceites).
    Se algo falhar, confirma no Network do browser o erro (CORS vs 404).

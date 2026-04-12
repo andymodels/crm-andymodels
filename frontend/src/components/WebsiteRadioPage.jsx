@@ -368,67 +368,26 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const applyModelCoverTrack = async (trackId) => {
+  const uploadTrackCover = async (trackId, file) => {
+    if (!file?.size) return;
     setSaving(true);
     setError('');
     setOkMsg('');
     try {
+      const fd = new FormData();
+      fd.append('cover', file);
       const r = await fetchWithAuth(
-        `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover/from-model`,
+        `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
+          body: fd,
+          timeoutMs: API_REQUEST_MS_BULK,
         },
       );
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
-      let data = {};
-      try {
-        data = raw ? JSON.parse(raw) : {};
-      } catch {
-        data = {};
-      }
-      if (!r.ok) throw new Error(data?.message || parseErr(raw, r));
-      setOkMsg(
-        data.modelo_nome
-          ? `Capa gerada: ${data.modelo_nome} (nome do cadastro, P&B + laranja na imagem).`
-          : 'Capa gerada.',
-      );
-      await loadTracks(selectedId);
-    } catch (e) {
-      setError(e?.message ? String(e.message) : 'Erro.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const bulkPlaylistModelCovers = async (replace) => {
-    if (selectedId == null) return;
-    setSaving(true);
-    setError('');
-    setOkMsg('');
-    try {
-      const r = await fetchWithAuth(
-        `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/covers/from-model`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ replace }),
-        },
-      );
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      const data = raw ? JSON.parse(raw) : {};
-      if (!r.ok) throw new Error(data?.message || parseErr(raw, r));
-      const n = data.count ?? 0;
-      const errN = data.errors?.length ?? 0;
-      setOkMsg(
-        replace
-          ? `Capas modelo geradas: ${n}.` + (errN ? ` ${errN} falha(s).` : '')
-          : `Capas geradas onde faltavam: ${n}.` + (errN ? ` ${errN} falha(s).` : ''),
-      );
-      if (errN && data.errors) console.warn('[radio] capas em lote:', data.errors);
+      if (!r.ok) throw new Error(parseErr(raw, r));
+      setOkMsg('Capa atualizada com a imagem enviada.');
       await loadTracks(selectedId);
       await loadPlaylists();
     } catch (e) {
@@ -463,10 +422,11 @@ export default function WebsiteRadioPage() {
         para a rádio: o player do site lê o JSON em{' '}
         <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> no domínio do CRM
         (URL completa: <code className="rounded bg-slate-100 px-1 text-xs">PUBLIC_APP_URL</code>
-        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar.         As capas das
-        faixas são sempre geradas a partir do <strong className="font-semibold text-slate-700">elenco feminino</strong> do CRM
-        (foto P&amp;B, nome completo do cadastro em laranja); não usamos capa embutida no MP3. O sistema reparte as capas
-        pelas modelos com foto URL no cadastro — prioriza quem ainda foi menos vezes nesta playlist. Desligar geração:{' '}
+        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar.{' '}
+        <strong className="font-semibold text-slate-700">Capas por faixa (automático ao enviar MP3):</strong> usa primeiro a
+        capa embutida no ficheiro (ID3), se existir; se não houver, gera uma capa com foto aleatória de uma modelo feminina do
+        cadastro (P&amp;B + primeiro nome em laranja). Pode substituir por imagem manual em cada faixa. Para desligar só o
+        fallback modelo:{' '}
         <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
       </p>
 
@@ -739,28 +699,6 @@ export default function WebsiteRadioPage() {
                       ))}
                     </ul>
                   ) : null}
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <button
-                      type="button"
-                      disabled={saving || tracks.length === 0}
-                      onClick={() => bulkPlaylistModelCovers(false)}
-                      className="rounded-lg border border-orange-500 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-950 hover:bg-orange-100 disabled:opacity-50"
-                      title="Foto aleatória de modelo feminino, P&B, nome em laranja — só onde ainda não há capa"
-                    >
-                      Capas modelo (só vazias)
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving || tracks.length === 0}
-                      onClick={() => {
-                        if (!window.confirm('Substituir a capa de todas as faixas por novas fotos do elenco?')) return;
-                        bulkPlaylistModelCovers(true);
-                      }}
-                      className="rounded-lg border border-orange-600 bg-white px-3 py-2 text-xs font-semibold text-orange-900 hover:bg-orange-50 disabled:opacity-50"
-                    >
-                      Capas modelo (substituir todas)
-                    </button>
-                  </div>
                 </div>
               </div>
 
@@ -800,16 +738,21 @@ export default function WebsiteRadioPage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-slate-900">{t.title}</p>
                         <p className="truncate text-xs text-slate-500">{t.artist || '—'} · {fmtDur(t.duration_sec)}</p>
-                        <div className="mt-1 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="text-[11px] font-semibold text-orange-700 hover:underline"
-                            disabled={saving}
-                            onClick={() => applyModelCoverTrack(t.id)}
-                            title="Nova capa do elenco (feminino): foto P&B + primeiro nome em laranja"
-                          >
-                            Regenerar capa (modelo)
-                          </button>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <label className="cursor-pointer text-[11px] font-medium text-slate-600 hover:underline">
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              className="sr-only"
+                              disabled={saving}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) uploadTrackCover(t.id, f);
+                                e.target.value = '';
+                              }}
+                            />
+                            Enviar capa (imagem)
+                          </label>
                           <button
                             type="button"
                             className="text-[11px] text-red-600 hover:underline"

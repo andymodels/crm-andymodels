@@ -1,6 +1,6 @@
 /**
  * Gestão da Andy Radio no CRM: playlists, faixas, uploads (incl. múltiplos MP3).
- * Metadados: music-metadata (duração, título/artista ID3, capa embutida APIC).
+ * Metadados: music-metadata (duração, título/artista ID3, capa embutida APIC → gravada primeiro; senão modelo aleatória).
  */
 
 const crypto = require('crypto');
@@ -8,6 +8,7 @@ const path = require('path');
 const express = require('express');
 const multer = require('multer');
 const mm = require('music-metadata');
+const sharp = require('sharp');
 const { pool } = require('../config/db');
 const storage = require('../services/storage');
 const radioCover = require('../services/radioCoverFromModelo');
@@ -60,6 +61,8 @@ async function parseAudioMeta(buffer, mimetype, fallbackTitle) {
   let durationSec = null;
   let title = fallbackTitle;
   let artist = '';
+  /** Buffer da imagem embutida (APIC / capa do MP3), se existir. */
+  let embeddedCoverBuffer = null;
   try {
     const metadata = await mm.parseBuffer(buffer, mimetype || 'audio/mpeg', { duration: true });
     if (metadata.format.duration != null && Number.isFinite(metadata.format.duration)) {
@@ -75,10 +78,33 @@ async function parseAudioMeta(buffer, mimetype, fallbackTitle) {
       metadata.common.albumartist ||
       '';
     if (a) artist = String(a).trim();
+    const pics = metadata.common?.picture;
+    if (Array.isArray(pics) && pics.length > 0) {
+      const pic = pics[0];
+      if (pic?.data && pic.data.length) {
+        embeddedCoverBuffer = Buffer.from(pic.data);
+      }
+    }
   } catch (e) {
     console.warn('[radio] parseBuffer:', e?.message || e);
   }
-  return { durationSec, title, artist };
+  return { durationSec, title, artist, embeddedCoverBuffer };
+}
+
+/** Grava capa extraída do ficheiro de áudio (cores originais, JPEG). */
+async function saveEmbeddedCoverFromBuffer(imageBuffer) {
+  const processed = await sharp(imageBuffer)
+    .rotate()
+    .resize(1200, 1600, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 90, mozjpeg: true })
+    .toBuffer();
+  const rel = `radio/covers/id3-${crypto.randomUUID()}.jpg`;
+  await storage.saveFile({
+    buffer: processed,
+    relativePath: rel,
+    contentType: 'image/jpeg',
+  });
+  return storage.getPublicUrl(rel);
 }
 
 async function countTracks(playlistId) {
@@ -104,18 +130,40 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
   const safeExt = /^\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(ext) ? ext.toLowerCase() : '.mp3';
   const fallbackTitle = overrides.title || baseTitleFromFilename(originalname);
 
-  const { durationSec, title, artist } = await parseAudioMeta(buffer, mimetype, fallbackTitle);
+  const { durationSec, title, artist, embeddedCoverBuffer } = await parseAudioMeta(
+    buffer,
+    mimetype,
+    fallbackTitle,
+  );
 
-  /** Só capa do elenco (P&B + primeiro nome em laranja); não usamos capa embutida no MP3. */
+  /** 1) Capa embutida no MP3 (ID3). 2) Senão, modelo feminina aleatória (P&B + nome no rodapé), se activo. */
   let coverUrl = null;
   let coverModeloId = null;
-  if (!overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
-    const gen = await radioCover.generateFemaleModelCoverUrl({ playlist_id: playlistId });
+  if (overrides.cover_url != null) {
+    coverUrl = overrides.cover_url;
+    coverModeloId =
+      overrides.cover_modelo_id != null && overrides.cover_modelo_id !== undefined
+        ? overrides.cover_modelo_id
+        : null;
+  } else if (embeddedCoverBuffer && embeddedCoverBuffer.length > 0) {
+    try {
+      coverUrl = await saveEmbeddedCoverFromBuffer(embeddedCoverBuffer);
+      coverModeloId = null;
+    } catch (e) {
+      console.warn('[radio] capa embutida (ID3) inválida ou falha ao gravar:', e?.message || e);
+    }
+  }
+  if (
+    coverUrl == null &&
+    !overrides.skip_auto_model_cover &&
+    radioCover.autoCoverFromModelEnabled()
+  ) {
+    const gen = await radioCover.generateFemaleModelCoverUrl();
     if (gen.ok) {
       coverUrl = gen.publicUrl;
       coverModeloId = gen.modelo_id != null ? gen.modelo_id : null;
     } else {
-      console.warn('[radio] capa automática (modelo):', gen.reason);
+      console.warn('[radio] capa automática (modelo aleatório):', gen.reason);
     }
   }
 
@@ -137,8 +185,8 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       String(overrides.title || title).slice(0, 500),
       String(overrides.artist != null ? overrides.artist : artist).slice(0, 500),
       audioRel,
-      overrides.cover_url != null ? overrides.cover_url : coverUrl,
-      overrides.cover_modelo_id != null ? overrides.cover_modelo_id : coverModeloId,
+      coverUrl,
+      coverModeloId,
       durationSec,
       sortOrder,
     ],
@@ -159,7 +207,9 @@ router.get('/radio/meta', (_req, res) => {
   return res.json({
     max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
     max_bulk_audio_files: MAX_BULK,
-    cover_auto_model_default: radioCover.autoCoverFromModelEnabled(),
+    /** Capa: primeiro ID3 no MP3; senão modelo aleatória (desligar: RADIO_COVER_AUTO_MODEL=0). */
+    cover_embedded_first: true,
+    cover_fallback_random_model: radioCover.autoCoverFromModelEnabled(),
   });
 });
 
@@ -521,102 +571,6 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
       }
     }
     return res.json(rows[0]);
-  } catch (e) {
-    return next(e);
-  }
-});
-
-function removeStoredCoverIfUrl(coverUrl) {
-  const rel = coverUrl ? storage.relativePathFromPublicUrl(coverUrl) : null;
-  if (rel) {
-    return storage.removeFile(rel).catch(() => {});
-  }
-  return Promise.resolve();
-}
-
-/** Capa gerada: foto aleatória de modelo feminino (P&B + nome em laranja). Body opcional: { modelo_id } */
-router.post('/radio/tracks/:trackId/cover/from-model', express.json(), async (req, res, next) => {
-  try {
-    const trackId = Number(req.params.trackId);
-    if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
-    const modeloId = req.body?.modelo_id != null ? Number(req.body.modelo_id) : null;
-    const tr = await pool.query(`SELECT playlist_id FROM radio_tracks WHERE id = $1`, [trackId]);
-    const plId = tr.rows[0]?.playlist_id;
-    const gen = await radioCover.generateFemaleModelCoverUrl(
-      Number.isFinite(modeloId)
-        ? { modelo_id: modeloId }
-        : { playlist_id: plId != null ? Number(plId) : null },
-    );
-    if (!gen.ok) {
-      return res.status(400).json({
-        message:
-          gen.reason === 'sem_modelos_femininos_com_foto'
-            ? 'Não há modelos femininos ativos com foto URL no cadastro.'
-            : gen.reason === 'modelo_nao_encontrado_ou_nao_feminino'
-              ? 'Modelo não encontrado, inativo ou não feminino / sem foto.'
-              : String(gen.reason || 'Falha ao gerar capa.'),
-      });
-    }
-    const cur = await pool.query(`SELECT id, cover_url FROM radio_tracks WHERE id = $1`, [trackId]);
-    if (!cur.rows.length) return res.status(404).json({ message: 'Faixa não encontrada.' });
-    await removeStoredCoverIfUrl(cur.rows[0].cover_url);
-    const { rows } = await pool.query(
-      `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
-      [gen.publicUrl, gen.modelo_id, trackId],
-    );
-    return res.json({
-      ...rows[0],
-      audio_url: storage.getPublicUrl(rows[0].audio_storage_path),
-      modelo_id: gen.modelo_id,
-      modelo_nome: gen.modelo_nome,
-    });
-  } catch (e) {
-    return next(e);
-  }
-});
-
-/** Aplica capa «modelo» a todas as faixas (ou só as sem capa se replace=false). */
-router.post('/radio/playlists/:playlistId/covers/from-model', express.json(), async (req, res, next) => {
-  try {
-    const playlistId = Number(req.params.playlistId);
-    if (!Number.isFinite(playlistId)) return res.status(400).json({ message: 'ID inválido.' });
-    const replace = Boolean(req.body?.replace);
-    const p = await pool.query(`SELECT id FROM radio_playlists WHERE id = $1`, [playlistId]);
-    if (!p.rows.length) return res.status(404).json({ message: 'Playlist não encontrada.' });
-
-    const { rows: tracks } = await pool.query(
-      `SELECT id, cover_url FROM radio_tracks WHERE playlist_id = $1 ORDER BY sort_order ASC, id ASC`,
-      [playlistId],
-    );
-    const updated = [];
-    const errors = [];
-    let prevModeloId = null;
-    for (const t of tracks) {
-      if (!replace && t.cover_url) continue;
-      const gen = await radioCover.generateFemaleModelCoverUrl({
-        playlist_id: playlistId,
-        exclude_modelo_id: prevModeloId,
-      });
-      if (!gen.ok) {
-        errors.push({ track_id: t.id, reason: gen.reason });
-        continue;
-      }
-      await removeStoredCoverIfUrl(t.cover_url);
-      const { rows } = await pool.query(
-        `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = $2, updated_at = NOW() WHERE id = $3 RETURNING id`,
-        [gen.publicUrl, gen.modelo_id, t.id],
-      );
-      if (rows.length) {
-        updated.push({
-          track_id: t.id,
-          modelo_id: gen.modelo_id,
-          modelo_nome: gen.modelo_nome,
-          cover_url: gen.publicUrl,
-        });
-      }
-      prevModeloId = gen.modelo_id != null ? gen.modelo_id : null;
-    }
-    return res.json({ ok: true, count: updated.length, updated, errors });
   } catch (e) {
     return next(e);
   }
