@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
 
 function fmtDur(sec) {
@@ -7,6 +7,17 @@ function fmtDur(sec) {
   const m = Math.floor(n / 60);
   const s = n % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formMatchesPlaylist(form, p) {
+  if (!form || !p) return true;
+  return (
+    form.name.trim() === String(p.name || '').trim() &&
+    String(form.description || '') === String(p.description || '') &&
+    form.status === p.status &&
+    (form.auto_next_playlist !== false) === (p.auto_next_playlist !== false) &&
+    Boolean(form.active) === Boolean(p.active)
+  );
 }
 
 /**
@@ -29,6 +40,12 @@ export default function WebsiteRadioPage() {
   const [radioMeta, setRadioMeta] = useState(null);
   /** Upload em lote de MP3 (feedback visual — o pedido pode demorar). */
   const [bulkUploadStatus, setBulkUploadStatus] = useState(null);
+  /** Ficheiros MP3 escolhidos — só sobem ao clicar «Enviar músicas». */
+  const [pendingAudioFiles, setPendingAudioFiles] = useState([]);
+  /** Rascunho local da playlist selecionada — grava com «Guardar alterações». */
+  const [editForm, setEditForm] = useState(null);
+  /** Evita repor o rascunho ao dar refresh às playlists (perdia edição não guardada). */
+  const editFormSyncedForPlaylistId = useRef(null);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -91,6 +108,32 @@ export default function WebsiteRadioPage() {
     if (selectedId != null) loadTracks(selectedId);
   }, [selectedId, loadTracks]);
 
+  const selected = playlists.find((p) => p.id === selectedId);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setEditForm(null);
+      editFormSyncedForPlaylistId.current = null;
+      return;
+    }
+    const p = playlists.find((x) => x.id === selectedId);
+    if (!p) return;
+    if (editFormSyncedForPlaylistId.current === selectedId) return;
+    editFormSyncedForPlaylistId.current = selectedId;
+    setEditForm({
+      name: p.name || '',
+      description: p.description ?? '',
+      status: p.status === 'draft' ? 'draft' : 'published',
+      auto_next_playlist: p.auto_next_playlist !== false,
+      active: p.active !== false,
+    });
+  }, [selectedId, playlists]);
+
+  const playlistEditDirty = useMemo(() => {
+    if (!editForm || !selected) return false;
+    return !formMatchesPlaylist(editForm, selected);
+  }, [editForm, selected]);
+
   const parseErr = (raw, r) => {
     let data = {};
     try {
@@ -120,7 +163,7 @@ export default function WebsiteRadioPage() {
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
       setNewPlName('');
-      setOkMsg('Playlist criada.');
+      setOkMsg('Playlist criada. Selecione-a à esquerda e use «Guardar alterações» se quiser mudar nome ou opções.');
       await loadPlaylists();
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro.');
@@ -129,23 +172,28 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const updatePlaylist = async (p, patch) => {
+  const savePlaylistEdits = async () => {
+    if (!selected || !editForm) return;
+    const name = String(editForm.name || '').trim();
+    if (!name) {
+      setError('O nome da playlist não pode ficar vazio.');
+      return;
+    }
     setSaving(true);
     setError('');
     setOkMsg('');
     try {
       const body = {
-        name: p.name,
-        slug: p.slug,
-        description: p.description ?? '',
-        cover_url: p.cover_url,
-        sort_order: p.sort_order,
-        active: p.active,
-        status: p.status,
-        auto_next_playlist: p.auto_next_playlist !== false,
-        ...patch,
+        name,
+        description: String(editForm.description ?? ''),
+        status: editForm.status === 'draft' ? 'draft' : 'published',
+        auto_next_playlist: Boolean(editForm.auto_next_playlist),
+        active: Boolean(editForm.active),
+        slug: selected.slug,
+        cover_url: selected.cover_url,
+        sort_order: selected.sort_order,
       };
-      const r = await fetchWithAuth(`${API_BASE}/radio/playlists/${encodeURIComponent(String(p.id))}`, {
+      const r = await fetchWithAuth(`${API_BASE}/radio/playlists/${encodeURIComponent(String(selected.id))}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -153,7 +201,8 @@ export default function WebsiteRadioPage() {
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
-      setOkMsg('Playlist atualizada.');
+      setOkMsg('Playlist guardada.');
+      editFormSyncedForPlaylistId.current = null;
       await loadPlaylists();
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro.');
@@ -173,7 +222,10 @@ export default function WebsiteRadioPage() {
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
-      if (selectedId === p.id) setSelectedId(null);
+      if (selectedId === p.id) {
+        setSelectedId(null);
+        editFormSyncedForPlaylistId.current = null;
+      }
       setOkMsg('Playlist apagada.');
       await loadPlaylists();
     } catch (e) {
@@ -247,6 +299,7 @@ export default function WebsiteRadioPage() {
       const errN = data.errors?.length;
       setOkMsg(errN ? `${msg} (${errN} erro(s) — ver consola)` : msg);
       if (errN && data.errors) console.warn('[radio bulk]', data.errors);
+      setPendingAudioFiles([]);
       await loadTracks(selectedId);
       await loadPlaylists();
     } catch (e) {
@@ -354,7 +407,6 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  /** Capa automática: foto aleatória de modelo feminino do cadastro, P&B, nome em laranja. */
   const applyModelCoverTrack = async (trackId) => {
     setSaving(true);
     setError('');
@@ -425,7 +477,21 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const selected = playlists.find((p) => p.id === selectedId);
+  const onPickAudioFiles = (fileList) => {
+    if (!fileList?.length) return;
+    setPendingAudioFiles(Array.from(fileList));
+    setError('');
+  };
+
+  const sendPendingAudio = () => {
+    if (pendingAudioFiles.length === 0) return;
+    bulkUpload(pendingAudioFiles);
+  };
+
+  const clearPendingAudio = () => {
+    setPendingAudioFiles([]);
+    setError('');
+  };
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -433,7 +499,7 @@ export default function WebsiteRadioPage() {
       <p className="mt-1 max-w-3xl text-sm text-slate-500">
         Playlists e faixas MP3 ficam neste CRM. O site público pode consumir{' '}
         <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> (JSON com
-        playlists e URLs absolutas).         Duração e capa ID3 no MP3 são usadas quando existem; se não houver capa no ficheiro,
+        playlists e URLs absolutas). Duração e capa ID3 no MP3 são usadas quando existem; se não houver capa no ficheiro,
         o sistema pode gerar uma automaticamente com foto de uma modelo feminina do cadastro (P&B, nome em laranja),{' '}
         <strong className="font-semibold text-slate-700">sem repetir a mesma modelo na mesma playlist</strong> até
         esgotar o elenco (depois volta a aleatorizar). No site, cada playlist pode ter «avançar à seguinte ao terminar»
@@ -483,22 +549,22 @@ export default function WebsiteRadioPage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(220px,280px)_1fr]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Playlists</p>
-          <p className="mt-1 text-xs text-slate-500">Arraste para ordenar. Clique para escolher e editar faixas.</p>
-          <div className="mt-3 flex gap-2">
+          <p className="mt-1 text-xs text-slate-500">Arraste para ordenar. Clique no nome para selecionar.</p>
+          <div className="mt-3 grid gap-2">
             <input
               type="text"
               value={newPlName}
               onChange={(e) => setNewPlName(e.target.value)}
               placeholder="Nome da nova playlist"
-              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
             <button
               type="button"
               disabled={saving}
               onClick={createPlaylist}
-              className="shrink-0 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              +
+              Criar playlist
             </button>
           </div>
           <ul className="mt-4 space-y-2">
@@ -525,45 +591,18 @@ export default function WebsiteRadioPage() {
                 >
                   <p className="text-sm font-semibold text-slate-900">{p.name}</p>
                   <p className="text-[11px] text-slate-500">
-                    {p.slug} · {p.track_count ?? 0} faixa(s) · {p.status === 'draft' ? 'rascunho' : 'publicada'}
+                    {p.slug} · {p.track_count ?? 0} faixa(s) · {p.status === 'draft' ? 'rascunho' : 'publicada'} ·{' '}
+                    {p.active !== false ? 'ativa' : 'inativa'}
                   </p>
                 </button>
-                <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-200/80 pt-2">
-                  <select
-                    value={p.status}
-                    onChange={(e) => updatePlaylist(p, { status: e.target.value })}
-                    disabled={saving}
-                    className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px]"
-                  >
-                    <option value="published">Publicada</option>
-                    <option value="draft">Rascunho</option>
-                  </select>
-                  <label className="flex max-w-[200px] items-start gap-1 text-[11px] leading-tight text-slate-600">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={p.auto_next_playlist !== false}
-                      onChange={(e) => updatePlaylist(p, { auto_next_playlist: e.target.checked })}
-                      disabled={saving}
-                    />
-                    <span>Avançar à playlist seguinte quando esta terminar (site)</span>
-                  </label>
-                  <label className="flex items-center gap-1 text-[11px] text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={p.active}
-                      onChange={(e) => updatePlaylist(p, { active: e.target.checked })}
-                      disabled={saving}
-                    />
-                    Ativa
-                  </label>
+                <div className="mt-2 flex justify-end border-t border-slate-200/80 pt-2">
                   <button
                     type="button"
-                    className="ml-auto text-[11px] text-red-600 hover:underline"
+                    className="text-[11px] text-red-600 hover:underline"
                     disabled={saving}
                     onClick={() => deletePlaylist(p)}
                   >
-                    Apagar
+                    Apagar playlist
                   </button>
                 </div>
               </li>
@@ -576,7 +615,82 @@ export default function WebsiteRadioPage() {
             <p className="text-sm text-slate-500">Selecione uma playlist à esquerda ou crie uma nova.</p>
           ) : (
             <>
-              <div className="flex flex-wrap items-end justify-between gap-3">
+              {editForm && selected ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Editar playlist</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Altere os campos e clique em «Guardar alterações». Nada é gravado no servidor até guardar.
+                  </p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-700">
+                      <span className="mb-1 block font-medium">Nome</span>
+                      <input
+                        type="text"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm((f) => (f ? { ...f, name: e.target.value } : f))}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700 sm:col-span-2">
+                      <span className="mb-1 block font-medium">Descrição (opcional)</span>
+                      <textarea
+                        value={editForm.description}
+                        onChange={(e) => setEditForm((f) => (f ? { ...f, description: e.target.value } : f))}
+                        rows={2}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700">
+                      <span className="mb-1 block font-medium">Estado</span>
+                      <select
+                        value={editForm.status}
+                        onChange={(e) =>
+                          setEditForm((f) => (f ? { ...f, status: e.target.value === 'draft' ? 'draft' : 'published' } : f))
+                        }
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      >
+                        <option value="published">Publicada</option>
+                        <option value="draft">Rascunho</option>
+                      </select>
+                    </label>
+                    <div className="flex flex-col gap-2 text-sm text-slate-700">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={editForm.auto_next_playlist}
+                          onChange={(e) =>
+                            setEditForm((f) => (f ? { ...f, auto_next_playlist: e.target.checked } : f))
+                          }
+                        />
+                        Avançar à playlist seguinte quando esta terminar (site)
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={editForm.active}
+                          onChange={(e) => setEditForm((f) => (f ? { ...f, active: e.target.checked } : f))}
+                        />
+                        Playlist ativa
+                      </label>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={saving || !playlistEditDirty}
+                      onClick={savePlaylistEdits}
+                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-40"
+                    >
+                      Guardar alterações
+                    </button>
+                    {playlistEditDirty ? (
+                      <span className="text-xs text-amber-700">Alterações por guardar</span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Faixas</p>
                   <p className="mt-1 text-sm font-medium text-slate-900">{selected?.name}</p>
@@ -615,29 +729,62 @@ export default function WebsiteRadioPage() {
                     </label>
                   </div>
                 </div>
-                <div className="flex flex-col items-stretch gap-2 sm:items-end">
+                <div className="flex w-full max-w-md flex-col gap-2 sm:w-auto sm:items-end">
                   <p className="text-right text-[11px] text-slate-500">
-                    Máx. {radioMeta?.max_bulk_audio_files ?? 25} ficheiros por envio
+                    Máx. {radioMeta?.max_bulk_audio_files ?? 25} ficheiros por envio — escolha os ficheiros e depois
+                    «Enviar músicas»
                   </p>
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,.mp3,.m4a,.wav"
+                    multiple
+                    className="sr-only"
+                    id="radio-bulk-audio-input"
+                    disabled={saving}
+                    onChange={(e) => {
+                      const f = e.target.files;
+                      if (f?.length) onPickAudioFiles(f);
+                      e.target.value = '';
+                    }}
+                  />
                   <label
+                    htmlFor="radio-bulk-audio-input"
                     className={`cursor-pointer rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-950 hover:bg-amber-100 ${
                       saving ? 'pointer-events-none opacity-60' : ''
                     }`}
                   >
-                    <input
-                      type="file"
-                      accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,.mp3,.m4a,.wav"
-                      multiple
-                      className="sr-only"
-                      disabled={saving}
-                      onChange={(e) => {
-                        const f = e.target.files;
-                        if (f?.length) bulkUpload(f);
-                        e.target.value = '';
-                      }}
-                    />
-                    {saving && bulkUploadStatus ? 'A enviar…' : 'Carregar vários MP3'}
+                    Escolher ficheiros MP3
                   </label>
+                  {pendingAudioFiles.length > 0 ? (
+                    <div className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left text-xs text-slate-700">
+                      <p className="font-semibold text-slate-800">{pendingAudioFiles.length} ficheiro(s) selecionado(s)</p>
+                      <ul className="mt-2 max-h-28 list-inside list-disc overflow-y-auto text-[11px] text-slate-600">
+                        {pendingAudioFiles.map((f) => (
+                          <li key={f.name + f.size} className="truncate">
+                            {f.name}
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={saving || bulkUploadStatus != null}
+                          onClick={sendPendingAudio}
+                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          Enviar músicas
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={clearPendingAudio}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                        >
+                          Limpar seleção
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap justify-end gap-2">
                     <button
                       type="button"
@@ -742,7 +889,9 @@ export default function WebsiteRadioPage() {
                 </ul>
               )}
               {!loadingTracks && tracks.length === 0 ? (
-                <p className="mt-4 text-sm text-slate-500">Nenhuma faixa — use «Carregar vários MP3».</p>
+                <p className="mt-4 text-sm text-slate-500">
+                  Nenhuma faixa — escolha ficheiros com «Escolher ficheiros MP3» e clique «Enviar músicas».
+                </p>
               ) : null}
             </>
           )}
