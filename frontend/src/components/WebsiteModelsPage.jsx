@@ -59,6 +59,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deletingId, setDeletingId] = useState(null);
 
   const [siteGender, setSiteGender] = useState('women');
   const [creatorsOnly, setCreatorsOnly] = useState(false);
@@ -72,51 +73,49 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
     return prioritizeFeaturedStable(filtered);
   }, [rows, siteGender, creatorsOnly]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setError('');
+  const loadModels = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const r = await fetchWithAuth(`${API_BASE}/admin/models`);
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      let parsed;
       try {
-        const r = await fetchWithAuth(`${API_BASE}/admin/models`);
-        const raw = await r.text();
-        throwIfHtmlOrCannotPost(raw, r.status);
-        let parsed;
-        try {
-          parsed = raw ? JSON.parse(raw) : null;
-        } catch {
-          throw new Error('Resposta inválida do servidor.');
-        }
-        if (r.ok && parsed != null) {
-          const arr = extractWebsiteModelsArray(parsed);
-          if (!cancelled) setRows(arr);
-          return;
-        }
-        const msg = parsed && typeof parsed.message === 'string' ? parsed.message : `HTTP ${r.status}`;
-        const r2 = await fetchWithTimeout(`${API_BASE}/website/models`);
-        const raw2 = await r2.text();
-        throwIfHtmlOrCannotPost(raw2, r2.status);
-        let data2;
-        try {
-          data2 = raw2 ? JSON.parse(raw2) : [];
-        } catch {
-          throw new Error(msg || 'Resposta inválida do servidor.');
-        }
-        if (!r2.ok) {
-          const msg2 = data2 && typeof data2.message === 'string' ? data2.message : msg;
-          throw new Error(msg2);
-        }
-        if (!cancelled) setRows(Array.isArray(data2) ? data2 : []);
-      } catch (e) {
-        if (!cancelled) setError(e?.message ? String(e.message) : 'Erro ao carregar.');
-      } finally {
-        if (!cancelled) setLoading(false);
+        parsed = raw ? JSON.parse(raw) : null;
+      } catch {
+        throw new Error('Resposta inválida do servidor.');
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      if (r.ok && parsed != null) {
+        const arr = extractWebsiteModelsArray(parsed);
+        setRows(arr);
+        return;
+      }
+      const msg = parsed && typeof parsed.message === 'string' ? parsed.message : `HTTP ${r.status}`;
+      const r2 = await fetchWithTimeout(`${API_BASE}/website/models`);
+      const raw2 = await r2.text();
+      throwIfHtmlOrCannotPost(raw2, r2.status);
+      let data2;
+      try {
+        data2 = raw2 ? JSON.parse(raw2) : [];
+      } catch {
+        throw new Error(msg || 'Resposta inválida do servidor.');
+      }
+      if (!r2.ok) {
+        const msg2 = data2 && typeof data2.message === 'string' ? data2.message : msg;
+        throw new Error(msg2);
+      }
+      setRows(Array.isArray(data2) ? data2 : []);
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro ao carregar.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
 
   const openEdit = useCallback(
     (slug, modelId) => {
@@ -127,11 +126,56 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
     [onOpenEdit],
   );
 
+  const deleteModel = useCallback(
+    async (m) => {
+      const id = m?.id;
+      if (id == null || id === '') {
+        window.alert('Não é possível apagar: modelo sem identificador no site.');
+        return;
+      }
+      const name = m?.name != null ? String(m.name) : 'este modelo';
+      const ok = window.confirm(
+        `Deseja mesmo apagar definitivamente o modelo «${name}» no site? Esta ação não pode ser desfeita.`,
+      );
+      if (!ok) return;
+      const idStr = String(id);
+      setDeletingId(idStr);
+      setError('');
+      try {
+        const r = await fetchWithAuth(`${API_BASE}/admin/models/${encodeURIComponent(idStr)}`, {
+          method: 'DELETE',
+        });
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        let data = null;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = null;
+        }
+        if (!r.ok) {
+          const msg =
+            data && typeof data.message === 'string' && data.message.trim()
+              ? data.message.trim()
+              : `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        setRows((prev) => prev.filter((row) => row && String(row.id) !== idStr));
+      } catch (e) {
+        setError(e?.message ? String(e.message) : 'Erro ao apagar.');
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [],
+  );
+
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="text-base font-semibold text-slate-800">Modelos no site</h3>
       <p className="mt-1 text-sm text-slate-500">
-        Lista do admin do site (inclui fora do ar). Clique num modelo para editar no CRM.
+        Lista do admin do site (inclui fora do ar). Clique no cartão para editar; use «Apagar» para remover o modelo do
+        site (com confirmação).
       </p>
 
       <>
@@ -189,53 +233,78 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
                 const canOpen = Boolean(slug);
                 const inactive = modelIsInactive(m);
+                const modelId = m?.id != null ? m.id : null;
+                const canDelete = modelId != null && String(modelId).trim() !== '';
+                const deletingThis = deletingId != null && String(deletingId) === String(modelId);
                 return (
                   <li key={key} className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-sm">
-                    <button
-                      type="button"
-                      disabled={!canOpen}
-                      onClick={() => canOpen && openEdit(slug, m?.id != null ? m.id : null)}
-                      className={`w-full text-left ${canOpen ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-80'}`}
-                    >
+                    <div className="relative">
+                      {canDelete ? (
+                        <button
+                          type="button"
+                          disabled={deletingThis}
+                          onClick={() => deleteModel(m)}
+                          className="absolute right-1 top-1 z-[2] rounded-md border border-red-200 bg-white/95 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
+                          title="Apagar modelo no site"
+                        >
+                          {deletingThis ? '…' : 'Apagar'}
+                        </button>
+                      ) : null}
                       <div
-                        className="relative w-full overflow-hidden bg-slate-200"
-                        style={{ aspectRatio: '4/5' }}
+                        role={canOpen ? 'button' : undefined}
+                        tabIndex={canOpen ? 0 : undefined}
+                        onClick={() => canOpen && openEdit(slug, modelId)}
+                        onKeyDown={(e) => {
+                          if (!canOpen) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            openEdit(slug, modelId);
+                          }
+                        }}
+                        className={`w-full text-left ${
+                          canOpen ? 'cursor-pointer hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-amber-400/40' : 'cursor-not-allowed opacity-80'
+                        }`}
                       >
-                        {firstImage ? (
-                          <img
-                            src={firstImage}
-                            alt=""
-                            loading="lazy"
-                            draggable={false}
-                            className="absolute inset-0 h-full w-full object-cover object-top"
-                            onError={(e) => {
-                              const entry = mediaItems.find((item) => item.type === 'image');
-                              if (!entry?.url || !entry?.thumb || entry.thumb === entry.url) return;
-                              const el = e.currentTarget;
-                              if (el.dataset.wmImgFallback === '1') return;
-                              el.dataset.wmImgFallback = '1';
-                              el.src = entry.url;
-                            }}
-                          />
-                        ) : (
-                          <div className="flex h-full items-center justify-center text-xs text-slate-500">
-                            Sem imagem
-                          </div>
-                        )}
+                        <div
+                          className="relative w-full overflow-hidden bg-slate-200"
+                          style={{ aspectRatio: '4/5' }}
+                        >
+                          {firstImage ? (
+                            <img
+                              src={firstImage}
+                              alt=""
+                              loading="lazy"
+                              draggable={false}
+                              className="absolute inset-0 h-full w-full object-cover object-top"
+                              onError={(e) => {
+                                const entry = mediaItems.find((item) => item.type === 'image');
+                                if (!entry?.url || !entry?.thumb || entry.thumb === entry.url) return;
+                                const el = e.currentTarget;
+                                if (el.dataset.wmImgFallback === '1') return;
+                                el.dataset.wmImgFallback = '1';
+                                el.src = entry.url;
+                              }}
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-xs text-slate-500">
+                              Sem imagem
+                            </div>
+                          )}
+                        </div>
+                        <p
+                          className="border-t border-slate-200 bg-white px-1.5 py-1 text-xs font-medium leading-tight text-slate-900 truncate"
+                          title={name}
+                        >
+                          {name}
+                          {inactive ? (
+                            <span className="ml-2 text-xs font-normal text-slate-500">(fora do ar)</span>
+                          ) : null}
+                          {!canOpen ? (
+                            <span className="ml-2 text-xs font-normal text-amber-700">(sem slug)</span>
+                          ) : null}
+                        </p>
                       </div>
-                      <p
-                        className="border-t border-slate-200 bg-white px-1.5 py-1 text-xs font-medium leading-tight text-slate-900 truncate"
-                        title={name}
-                      >
-                        {name}
-                        {inactive ? (
-                          <span className="ml-2 text-xs font-normal text-slate-500">(fora do ar)</span>
-                        ) : null}
-                        {!canOpen ? (
-                          <span className="ml-2 text-xs font-normal text-amber-700">(sem slug)</span>
-                        ) : null}
-                      </p>
-                    </button>
+                    </div>
                   </li>
                 );
               })}

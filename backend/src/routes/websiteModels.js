@@ -239,7 +239,7 @@ function normalizeWebsiteModelPatchBody(body) {
   return out;
 }
 
-/** Encaminha POST/PUT multipart ao site (campos de texto + ficheiros photos/gallery). */
+/** Encaminha POST/PUT multipart ao site (campos de texto + ficheiros: photos = imagens, gallery = vídeo). */
 async function forwardMultipartModelToWebsite(method, urlString, req) {
   const token = websiteAdminBearerToken();
   const fd = new FormData();
@@ -390,6 +390,23 @@ router.get('/admin/models/:id', async (req, res, next) => {
     }
     const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
     const { statusCode, raw } = await fetchWebsiteAdminJson(url);
+    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/**
+ * Apaga modelo no site: DELETE …/api/admin/models/:id
+ */
+router.delete('/admin/models/:id', async (req, res, next) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ message: 'ID invalido.' });
+    }
+    const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
+    const { statusCode, raw } = await websiteDeleteRequest(url);
     return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);

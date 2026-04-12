@@ -66,17 +66,29 @@ function createInitialForm() {
   };
 }
 
-function instagramUsernameFromStored(raw) {
+/** Valor do campo no CRM: URL completa no instagram.com; handles só texto viram https://instagram.com/… */
+function instagramDisplayFromStored(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
+  const noAt = s.replace(/^@/, '');
   try {
-    const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, '')}`);
-    if (!u.hostname.includes('instagram.com')) return s.replace(/^@/, '');
-    const path = u.pathname.replace(/^\//, '').replace(/\/$/, '');
-    return path || '';
+    const u = new URL(/^https?:\/\//i.test(noAt) ? noAt : `https://${noAt.replace(/^\/+/, '')}`);
+    if (u.hostname.replace(/^www\./, '').includes('instagram.com')) {
+      u.hash = '';
+      const host = u.hostname.replace(/^www\./, '');
+      let path = u.pathname || '/';
+      if (path !== '/' && path.length > 1) path = path.replace(/\/$/, '');
+      return `https://${host}${path}${u.search || ''}`;
+    }
+    if (/^https?:\/\//i.test(noAt)) return noAt;
   } catch {
-    return s.replace(/^@/, '').replace(/^instagram\.com\//i, '');
+    /* handle só texto */
   }
+  const bare = noAt.replace(/^\//, '').split(/[/?#]/)[0];
+  if (bare && /^[\w.]+$/.test(bare)) {
+    return `https://instagram.com/${bare}`;
+  }
+  return noAt;
 }
 
 function instagramUrlFromUsername(username) {
@@ -122,7 +134,7 @@ function parseVideoUrl(raw) {
 const WEBSITE_GALLERY_GRID_CLASS =
   'grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1';
 
-/** Imagens enviadas no campo `photos` do multipart. */
+/** Imagens: campo multipart `photos`. Vídeos: campo `gallery` (contrato do admin do site; não usar `videos`). */
 function isImageFileForGalleryUpload(f) {
   if (!(f instanceof File)) return false;
   const t = String(f.type || '');
@@ -213,6 +225,19 @@ function formToWebsiteModelPut(form) {
   if (ig) {
     if (!/^https?:\/\//i.test(ig)) {
       ig = instagramUrlFromUsername(ig);
+    } else {
+      try {
+        const u = new URL(ig);
+        if (u.hostname.replace(/^www\./, '').includes('instagram.com')) {
+          u.hash = '';
+          const host = u.hostname.replace(/^www\./, '');
+          let path = u.pathname || '/';
+          if (path !== '/' && path.length > 1) path = path.replace(/\/$/, '');
+          ig = `https://${host}${path}${u.search || ''}`;
+        }
+      } catch {
+        /* mantém */
+      }
     }
   } else {
     ig = '';
@@ -324,7 +349,7 @@ function mapDetailToForm(detail) {
     medida_sapato: detail.shoes != null ? String(detail.shoes) : '',
     medida_cabelo: detail.hair != null ? String(detail.hair) : '',
     medida_olhos: detail.eyes != null ? String(detail.eyes) : '',
-    instagram: instagramUsernameFromStored(igStored),
+    instagram: instagramDisplayFromStored(igStored),
     mostrar_instagram: (() => {
       const v = detail.show_instagram ?? detail.instagram_visible;
       if (v === undefined || v === null) return true;
@@ -725,7 +750,7 @@ export default function WebsiteModeloEditorPage({
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
           });
           pendingVideoFiles.forEach((x) => {
-            fd.append('videos', x.file, x.file.name || 'video.mp4');
+            fd.append('gallery', x.file, x.file.name || 'video.mp4');
           });
           r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
             method: 'PUT',
@@ -798,7 +823,7 @@ export default function WebsiteModeloEditorPage({
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
           });
           pendingVideoFiles.forEach((x) => {
-            fd.append('videos', x.file, x.file.name || 'video.mp4');
+            fd.append('gallery', x.file, x.file.name || 'video.mp4');
           });
           r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
             method: 'POST',
@@ -1192,26 +1217,23 @@ export default function WebsiteModeloEditorPage({
             />
           </div>
           <Field label="Instagram" className="md:col-span-2">
-            <div className="flex max-w-xl flex-wrap items-center gap-0.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              <span className="shrink-0 select-none text-slate-500">https://instagram.com/</span>
-              <input
-                value={form.instagram}
-                onChange={(e) => setField('instagram', e.target.value.replace(/^@/, '').trim())}
-                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-slate-900 outline-none ring-0"
-                placeholder="usuario"
-                autoComplete="off"
-              />
-            </div>
-            <label className="mt-2 flex cursor-pointer items-start gap-2 text-sm text-slate-700">
+            <input
+              value={form.instagram}
+              onChange={(e) => setField('instagram', e.target.value.replace(/^@/, '').trim())}
+              type="text"
+              inputMode="url"
+              autoComplete="off"
+              className="w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="https://www.instagram.com/seu_perfil/ ou @usuario"
+            />
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
                 checked={form.mostrar_instagram}
                 onChange={(e) => setField('mostrar_instagram', e.target.checked)}
-                className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+                className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
               />
-              <span>
-                Mostrar Instagram no site público — desmarque para manter o @ guardado mas não exibir link no perfil.
-              </span>
+              <span>Exibir online</span>
             </label>
           </Field>
           <Field label="TikTok">
@@ -1566,11 +1588,12 @@ export default function WebsiteModeloEditorPage({
                                     href={openIg}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500 px-2 text-center text-xs font-semibold text-white shadow-inner hover:opacity-95"
+                                    title={openIg}
+                                    className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500 px-1.5 py-2 text-center text-white shadow-inner hover:opacity-95"
                                   >
-                                    Instagram — abrir no browser ↗
-                                    <span className="mt-1 text-[10px] font-normal opacity-90">
-                                      (pré-visualização embutida bloqueada)
+                                    <span className="text-xs font-semibold">Instagram ↗</span>
+                                    <span className="max-h-[45%] w-full overflow-hidden break-all text-left text-[9px] font-normal leading-tight text-white/95">
+                                      {openIg}
                                     </span>
                                   </a>
                                 );
