@@ -33,14 +33,6 @@ function truncateName(n, max = 42) {
   return `${t.slice(0, max - 1)}…`;
 }
 
-/** Só o primeiro nome (como no site): destaque legível na capa. */
-function firstNameOnly(fullName) {
-  const t = String(fullName || '').trim();
-  if (!t) return '';
-  const parts = t.split(/\s+/).filter(Boolean);
-  return parts[0] || t;
-}
-
 function buildOverlaySvg(displayName) {
   const fs = fontSizeForName(displayName);
   const name = escapeXml(truncateName(displayName, 44));
@@ -90,31 +82,30 @@ async function pickRandomFemaleModel(client) {
 }
 
 /**
- * Modelo feminino cuja imagem ainda não foi usada como capa nesta playlist (evita repetir até esgotar o elenco).
+ * Modelo feminino com **menos capas** já usadas nesta playlist (equilibra entre todas).
+ * Assim 15 faixas com 5 modelos → ~3 cada; evita a mesma cara em todas quando há várias no cadastro.
+ * Se só existir 1 modelo elegível, só ela pode aparecer (limite do elenco no CRM).
  */
-async function pickFemaleModelUnusedInPlaylist(playlistId, client) {
+async function pickFemaleModelLeastUsedInPlaylist(playlistId, client) {
   if (playlistId == null || !Number.isFinite(Number(playlistId))) {
     return pickRandomFemaleModel(client);
   }
   const pid = Number(playlistId);
   const q = `
-    SELECT m.id, m.nome, m.foto_perfil_base64 AS foto_url
+    SELECT m.id, m.nome, m.foto_perfil_base64 AS foto_url,
+      COALESCE((
+        SELECT COUNT(*)::int FROM radio_tracks t
+        WHERE t.playlist_id = $1 AND t.cover_modelo_id = m.id
+      ), 0) AS uso_nesta_playlist
     FROM modelos m
     WHERE m.ativo = TRUE
       AND LOWER(TRIM(m.sexo)) = 'feminino'
       AND m.foto_perfil_base64 ~ '^https?://'
-      AND NOT EXISTS (
-        SELECT 1 FROM radio_tracks t
-        WHERE t.playlist_id = $1
-          AND t.cover_modelo_id IS NOT NULL
-          AND t.cover_modelo_id = m.id
-      )
-    ORDER BY RANDOM()
+    ORDER BY uso_nesta_playlist ASC, RANDOM()
     LIMIT 1
   `;
   const { rows } = client ? await client.query(q, [pid]) : await pool.query(q, [pid]);
-  if (rows.length) return rows[0];
-  return pickRandomFemaleModel(client);
+  return rows[0] || null;
 }
 
 async function pickFemaleModelById(client, modeloId) {
@@ -173,12 +164,13 @@ async function generateFemaleModelCoverUrl(options = {}) {
     m = await pickFemaleModelById(null, modeloId);
     if (!m) return { ok: false, reason: 'modelo_nao_encontrado_ou_nao_feminino' };
   } else {
-    m = await pickFemaleModelUnusedInPlaylist(playlistId, null);
+    m = await pickFemaleModelLeastUsedInPlaylist(playlistId, null);
     if (!m) return { ok: false, reason: 'sem_modelos_femininos_com_foto' };
   }
   try {
     const img = await fetchImageBuffer(m.foto_url);
-    const jpeg = await renderCoverJpeg(img, firstNameOnly(m.nome));
+    /** Nome completo do cadastro (modelos.nome), igual à referência do site — não vem do ficheiro MP3. */
+    const jpeg = await renderCoverJpeg(img, m.nome);
     const { publicUrl } = await saveCoverJpeg(jpeg);
     return { ok: true, publicUrl, modelo_id: m.id, modelo_nome: m.nome };
   } catch (e) {
@@ -188,13 +180,12 @@ async function generateFemaleModelCoverUrl(options = {}) {
 
 module.exports = {
   pickRandomFemaleModel,
-  pickFemaleModelUnusedInPlaylist,
+  pickFemaleModelLeastUsedInPlaylist,
   pickFemaleModelById,
   fetchImageBuffer,
   renderCoverJpeg,
   saveCoverJpeg,
   autoCoverFromModelEnabled,
   generateFemaleModelCoverUrl,
-  firstNameOnly,
   ORANGE,
 };

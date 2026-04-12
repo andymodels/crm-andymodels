@@ -392,7 +392,7 @@ export default function WebsiteRadioPage() {
       if (!r.ok) throw new Error(data?.message || parseErr(raw, r));
       setOkMsg(
         data.modelo_nome
-          ? `Capa gerada: ${data.modelo_nome} (elenco feminino, primeiro nome em laranja na imagem).`
+          ? `Capa gerada: ${data.modelo_nome} (nome do cadastro, P&B + laranja na imagem).`
           : 'Capa gerada.',
       );
       await loadTracks(selectedId);
@@ -463,10 +463,10 @@ export default function WebsiteRadioPage() {
         para a rádio: o player do site lê o JSON em{' '}
         <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> no domínio do CRM
         (URL completa: <code className="rounded bg-slate-100 px-1 text-xs">PUBLIC_APP_URL</code>
-        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar. As capas das
+        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar.         As capas das
         faixas são sempre geradas a partir do <strong className="font-semibold text-slate-700">elenco feminino</strong> do CRM
-        (foto P&amp;B, primeiro nome em laranja); não usamos capa embutida no ficheiro MP3. O mesmo elenco alimenta o site.
-        Sem repetir a mesma modelo na mesma playlist até esgotar o elenco. Desligar geração:{' '}
+        (foto P&amp;B, nome completo do cadastro em laranja); não usamos capa embutida no MP3. O sistema reparte as capas
+        pelas modelos com foto URL no cadastro — prioriza quem ainda foi menos vezes nesta playlist. Desligar geração:{' '}
         <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
       </p>
 
