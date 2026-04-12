@@ -33,6 +33,14 @@ function truncateName(n, max = 42) {
   return `${t.slice(0, max - 1)}…`;
 }
 
+/** Só o primeiro nome (como no site): destaque legível na capa. */
+function firstNameOnly(fullName) {
+  const t = String(fullName || '').trim();
+  if (!t) return '';
+  const parts = t.split(/\s+/).filter(Boolean);
+  return parts[0] || t;
+}
+
 function buildOverlaySvg(displayName) {
   const fs = fontSizeForName(displayName);
   const name = escapeXml(truncateName(displayName, 44));
@@ -170,7 +178,7 @@ async function generateFemaleModelCoverUrl(options = {}) {
   }
   try {
     const img = await fetchImageBuffer(m.foto_url);
-    const jpeg = await renderCoverJpeg(img, m.nome);
+    const jpeg = await renderCoverJpeg(img, firstNameOnly(m.nome));
     const { publicUrl } = await saveCoverJpeg(jpeg);
     return { ok: true, publicUrl, modelo_id: m.id, modelo_nome: m.nome };
   } catch (e) {
@@ -187,5 +195,6 @@ module.exports = {
   saveCoverJpeg,
   autoCoverFromModelEnabled,
   generateFemaleModelCoverUrl,
+  firstNameOnly,
   ORANGE,
 };

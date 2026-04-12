@@ -368,52 +368,6 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const uploadPlaylistCover = async (playlistId, file) => {
-    if (!(file instanceof File)) return;
-    const fd = new FormData();
-    fd.append('cover', file, file.name);
-    setSaving(true);
-    setError('');
-    try {
-      const r = await fetchWithAuth(`${API_BASE}/radio/playlists/${encodeURIComponent(String(playlistId))}/cover`, {
-        method: 'POST',
-        body: fd,
-      });
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      if (!r.ok) throw new Error(parseErr(raw, r));
-      setOkMsg('Capa da playlist atualizada.');
-      await loadPlaylists();
-    } catch (e) {
-      setError(e?.message ? String(e.message) : 'Erro.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const uploadTrackCover = async (trackId, file) => {
-    if (!(file instanceof File)) return;
-    const fd = new FormData();
-    fd.append('cover', file, file.name);
-    setSaving(true);
-    setError('');
-    try {
-      const r = await fetchWithAuth(`${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover`, {
-        method: 'POST',
-        body: fd,
-      });
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      if (!r.ok) throw new Error(parseErr(raw, r));
-      setOkMsg('Capa da faixa atualizada.');
-      await loadTracks(selectedId);
-    } catch (e) {
-      setError(e?.message ? String(e.message) : 'Erro.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const applyModelCoverTrack = async (trackId) => {
     setSaving(true);
     setError('');
@@ -438,7 +392,7 @@ export default function WebsiteRadioPage() {
       if (!r.ok) throw new Error(data?.message || parseErr(raw, r));
       setOkMsg(
         data.modelo_nome
-          ? `Capa gerada com foto de ${data.modelo_nome} (aleatório do elenco feminino).`
+          ? `Capa gerada: ${data.modelo_nome} (elenco feminino, primeiro nome em laranja na imagem).`
           : 'Capa gerada.',
       );
       await loadTracks(selectedId);
@@ -509,9 +463,10 @@ export default function WebsiteRadioPage() {
         para a rádio: o player do site lê o JSON em{' '}
         <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> no domínio do CRM
         (URL completa: <code className="rounded bg-slate-100 px-1 text-xs">PUBLIC_APP_URL</code>
-        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar. Duração e
-        capa ID3 no MP3 quando existem; capa automática por modelo (P&B + nome em laranja) sem repetir a mesma modelo na
-        mesma playlist até esgotar o elenco. Desligar capa automática:{' '}
+        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar. As capas das
+        faixas são sempre geradas a partir do <strong className="font-semibold text-slate-700">elenco feminino</strong> do CRM
+        (foto P&amp;B, primeiro nome em laranja); não usamos capa embutida no ficheiro MP3. O mesmo elenco alimenta o site.
+        Sem repetir a mesma modelo na mesma playlist até esgotar o elenco. Desligar geração:{' '}
         <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
       </p>
 
@@ -715,32 +670,12 @@ export default function WebsiteRadioPage() {
                   </p>
                   {selected?.cover_url ? (
                     <p className="mt-1 text-[11px] text-slate-500">
-                      Capa:{' '}
+                      Capa da playlist:{' '}
                       <a href={selected.cover_url} className="text-amber-800 underline" target="_blank" rel="noreferrer">
-                        ver imagem
+                        ver
                       </a>
                     </p>
                   ) : null}
-                  <div className="mt-2">
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="sr-only"
-                      id="ig-pl-cover"
-                      disabled={saving}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f && selectedId) uploadPlaylistCover(selectedId, f);
-                        e.target.value = '';
-                      }}
-                    />
-                    <label
-                      htmlFor="ig-pl-cover"
-                      className="inline-block cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
-                    >
-                      Capa da playlist (imagem)
-                    </label>
-                  </div>
                 </div>
                 <div className="flex w-full max-w-lg flex-col gap-2 sm:w-auto sm:items-stretch">
                   <p className="text-[11px] text-slate-500 sm:text-right">
@@ -866,32 +801,14 @@ export default function WebsiteRadioPage() {
                         <p className="truncate text-sm font-semibold text-slate-900">{t.title}</p>
                         <p className="truncate text-xs text-slate-500">{t.artist || '—'} · {fmtDur(t.duration_sec)}</p>
                         <div className="mt-1 flex flex-wrap gap-2">
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            className="sr-only"
-                            id={`cover-tr-${t.id}`}
-                            disabled={saving}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) uploadTrackCover(t.id, f);
-                              e.target.value = '';
-                            }}
-                          />
-                          <label
-                            htmlFor={`cover-tr-${t.id}`}
-                            className="cursor-pointer text-[11px] font-medium text-amber-800 hover:underline"
-                          >
-                            Capa ficheiro
-                          </label>
                           <button
                             type="button"
                             className="text-[11px] font-semibold text-orange-700 hover:underline"
                             disabled={saving}
                             onClick={() => applyModelCoverTrack(t.id)}
-                            title="Elenco feminino: foto P&B + nome em laranja"
+                            title="Nova capa do elenco (feminino): foto P&B + primeiro nome em laranja"
                           >
-                            Capa modelo
+                            Regenerar capa (modelo)
                           </button>
                           <button
                             type="button"

@@ -60,8 +60,6 @@ async function parseAudioMeta(buffer, mimetype, fallbackTitle) {
   let durationSec = null;
   let title = fallbackTitle;
   let artist = '';
-  let coverBuffer = null;
-  let coverExt = 'jpg';
   try {
     const metadata = await mm.parseBuffer(buffer, mimetype || 'audio/mpeg', { duration: true });
     if (metadata.format.duration != null && Number.isFinite(metadata.format.duration)) {
@@ -77,29 +75,10 @@ async function parseAudioMeta(buffer, mimetype, fallbackTitle) {
       metadata.common.albumartist ||
       '';
     if (a) artist = String(a).trim();
-    const pic = metadata.common.picture && metadata.common.picture[0];
-    if (pic && pic.data && pic.data.length) {
-      coverBuffer = Buffer.from(pic.data);
-      const fmt = String(pic.format || '').toLowerCase();
-      if (fmt.includes('png')) coverExt = 'png';
-      else if (fmt.includes('jpeg') || fmt.includes('jpg')) coverExt = 'jpg';
-      else coverExt = 'jpg';
-    }
   } catch (e) {
     console.warn('[radio] parseBuffer:', e?.message || e);
   }
-  return { durationSec, title, artist, coverBuffer, coverExt };
-}
-
-async function saveEmbeddedCover(coverBuffer, coverExt) {
-  if (!coverBuffer || !coverBuffer.length) return null;
-  const rel = `radio/covers/${crypto.randomUUID()}.${coverExt}`;
-  await storage.saveFile({
-    buffer: coverBuffer,
-    relativePath: rel,
-    contentType: coverExt === 'png' ? 'image/png' : 'image/jpeg',
-  });
-  return storage.getPublicUrl(rel);
+  return { durationSec, title, artist };
 }
 
 async function countTracks(playlistId) {
@@ -125,22 +104,12 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
   const safeExt = /^\.(mp3|m4a|aac|wav|ogg|flac)$/i.test(ext) ? ext.toLowerCase() : '.mp3';
   const fallbackTitle = overrides.title || baseTitleFromFilename(originalname);
 
-  const { durationSec, title, artist, coverBuffer, coverExt } = await parseAudioMeta(
-    buffer,
-    mimetype,
-    fallbackTitle,
-  );
+  const { durationSec, title, artist } = await parseAudioMeta(buffer, mimetype, fallbackTitle);
 
+  /** Só capa do elenco (P&B + primeiro nome em laranja); não usamos capa embutida no MP3. */
   let coverUrl = null;
-  if (!overrides.skip_embedded_cover && coverBuffer) {
-    try {
-      coverUrl = await saveEmbeddedCover(coverBuffer, coverExt);
-    } catch (e) {
-      console.warn('[radio] capa embutida:', e?.message || e);
-    }
-  }
   let coverModeloId = null;
-  if (!coverUrl && !overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
+  if (!overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
     const gen = await radioCover.generateFemaleModelCoverUrl({ playlist_id: playlistId });
     if (gen.ok) {
       coverUrl = gen.publicUrl;
