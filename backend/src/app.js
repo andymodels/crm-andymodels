@@ -21,6 +21,8 @@ const publicAgendaPresencaRouter = require('./routes/publicAgendaPresenca');
 const agendaRouter = require('./routes/agenda');
 const websiteModelsRouter = require('./routes/websiteModels');
 const websiteInstagramRouter = require('./routes/websiteInstagram');
+const publicRadioRouter = require('./routes/publicRadio');
+const radioRouter = require('./routes/radio');
 const publicApplicationsRouter = require('./routes/publicApplications');
 const { UPLOAD_ROOT } = require('./services/storage');
 
@@ -94,6 +96,7 @@ app.use('/api', modeloPortalRouter);
 app.use('/api', publicContratoAssinaturaRouter);
 app.use('/api', publicAgendaPresencaRouter);
 app.use('/api', publicApplicationsRouter);
+app.use('/api', publicRadioRouter);
 
 // Restante da API exige sessão admin
 app.use('/api', requireAdminAuth);
@@ -108,6 +111,7 @@ app.use('/api', cadastroLinksRouter);
 app.use('/api', agendaRouter);
 app.use('/api', websiteModelsRouter);
 app.use('/api', websiteInstagramRouter);
+app.use('/api', radioRouter);
 
 /** Pedidos /api sem rota: JSON (evita 404 em HTML e confunde o frontend). */
 app.use('/api', (req, res) => {

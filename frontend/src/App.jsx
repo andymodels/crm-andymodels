@@ -5,6 +5,7 @@ import AgendaCentral from './components/AgendaCentral';
 import WebsiteModelsPage from './components/WebsiteModelsPage';
 import WebsiteHomeOrderPage from './components/WebsiteHomeOrderPage';
 import WebsiteInstagramPage from './components/WebsiteInstagramPage';
+import WebsiteRadioPage from './components/WebsiteRadioPage';
 import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
 import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
 import WebsiteModeloEditorPage from './components/WebsiteModeloEditorPage';
@@ -2473,7 +2474,7 @@ function App({ authUser, onLogout = () => {} }) {
       inscricoes: 'Candidaturas recebidas pelo site — lista simples e detalhe ao clicar.',
       home: 'Ordem dos modelos em destaque na home do site.',
       instagram: 'Posts da home (imagem + link; sem embed no tile).',
-      radio: 'Página placeholder — sem alteração de dados ainda.',
+      radio: 'Playlists AndyRadio, faixas MP3, capas e ordem — API pública em /api/public/radio/v2.',
     };
     return lines[websiteSubView] || '';
   }, [module, websiteSubView]);
@@ -3915,7 +3916,7 @@ function App({ authUser, onLogout = () => {} }) {
           {module === 'website' && websiteSubView === 'inscricoes' && <WebsiteInscricoesPage />}
           {module === 'website' && websiteSubView === 'home' && <WebsiteHomeOrderPage />}
           {module === 'website' && websiteSubView === 'instagram' && <WebsiteInstagramPage />}
-          {module === 'website' && websiteSubView === 'radio' && <WebsitePlaceholderPage title="Rádio" />}
+          {module === 'website' && websiteSubView === 'radio' && <WebsiteRadioPage />}
 
           {module === 'seguranca' && (
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">

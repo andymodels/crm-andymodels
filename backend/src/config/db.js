@@ -875,6 +875,52 @@ const initDb = async () => {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications (created_at DESC);
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS radio_playlists (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      cover_url TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      status TEXT NOT NULL DEFAULT 'published',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_radio_playlists_slug ON radio_playlists (slug);
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS radio_tracks (
+      id SERIAL PRIMARY KEY,
+      playlist_id INTEGER NOT NULL REFERENCES radio_playlists(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      artist TEXT NOT NULL DEFAULT '',
+      audio_storage_path TEXT NOT NULL,
+      cover_url TEXT,
+      duration_sec INTEGER,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_radio_tracks_playlist_sort ON radio_tracks (playlist_id, sort_order);
+  `);
+  try {
+    await pool.query(`
+      ALTER TABLE radio_playlists ADD CONSTRAINT radio_playlists_status_chk
+      CHECK (status IN ('draft', 'published'));
+    `);
+  } catch (e) {
+    if (!String(e.message || '').includes('already exists')) {
+      console.warn('[initDb] radio_playlists status chk:', e.message);
+    }
+  }
 };
 
 module.exports = {

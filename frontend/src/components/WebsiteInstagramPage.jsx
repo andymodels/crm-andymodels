@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_BASE, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { getWebsitePublicOrigin } from '../utils/websiteMediaDisplay';
 
@@ -34,7 +34,7 @@ function sortByPosition(list) {
  * Pré-visualização: só imagem 3:4, P&B → cor ao hover (como no front público).
  */
 export default function WebsiteInstagramPage() {
-  const [items, setItems] = useState([]);
+  const [ordered, setOrdered] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
@@ -42,6 +42,9 @@ export default function WebsiteInstagramPage() {
   const [newFile, setNewFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [imageUrlById, setImageUrlById] = useState({});
+  const [dragFrom, setDragFrom] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const newFileInputRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,7 +63,8 @@ export default function WebsiteInstagramPage() {
         const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
         throw new Error(msg);
       }
-      setItems(sortByPosition(extractInstagramList(data)));
+      const list = sortByPosition(extractInstagramList(data));
+      setOrdered(list);
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro ao carregar.');
     } finally {
@@ -71,6 +75,57 @@ export default function WebsiteInstagramPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const patchPosition = useCallback(async (id, position) => {
+    const r = await fetchWithAuth(`${API_BASE}/website/instagram/${encodeURIComponent(String(id))}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position: Number(position) }),
+    });
+    const raw = await r.text();
+    throwIfHtmlOrCannotPost(raw, r.status);
+    let data;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = {};
+    }
+    if (!r.ok) {
+      const msg =
+        data && typeof data.message === 'string' && data.message.trim()
+          ? data.message.trim()
+          : `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+  }, []);
+
+  const reorderAndSave = useCallback(
+    async (from, to) => {
+      if (from == null || to == null || from === to) return;
+      const next = [...ordered];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      setOrdered(next);
+      setSaving(true);
+      setError('');
+      setOkMsg('');
+      try {
+        for (let i = 0; i < next.length; i += 1) {
+          const it = next[i];
+          if (it?.id == null) continue;
+          await patchPosition(it.id, i + 1);
+        }
+        setOkMsg('Ordem atualizada no site.');
+        await load();
+      } catch (e) {
+        setError(e?.message ? String(e.message) : 'Erro ao reordenar.');
+        await load();
+      } finally {
+        setSaving(false);
+      }
+    },
+    [ordered, load, patchPosition],
+  );
 
   const addPost = async () => {
     const url = String(newUrl || '').trim();
@@ -108,57 +163,11 @@ export default function WebsiteInstagramPage() {
       }
       setNewUrl('');
       setNewFile(null);
+      if (newFileInputRef.current) newFileInputRef.current.value = '';
       setOkMsg('Post adicionado. O site pode demorar a extrair a imagem se não enviou ficheiro.');
       await load();
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro ao adicionar.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const patchPosition = async (id, position) => {
-    const r = await fetchWithAuth(`${API_BASE}/website/instagram/${encodeURIComponent(String(id))}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position: Number(position) }),
-    });
-    const raw = await r.text();
-    throwIfHtmlOrCannotPost(raw, r.status);
-    let data;
-    try {
-      data = raw ? JSON.parse(raw) : {};
-    } catch {
-      data = {};
-    }
-    if (!r.ok) {
-      const msg =
-        data && typeof data.message === 'string' && data.message.trim()
-          ? data.message.trim()
-          : `HTTP ${r.status}`;
-      throw new Error(msg);
-    }
-  };
-
-  const move = async (index, dir) => {
-    const j = index + dir;
-    if (j < 0 || j >= items.length) return;
-    const a = items[index];
-    const b = items[j];
-    const posA = Number(a.position);
-    const posB = Number(b.position);
-    const useA = !Number.isNaN(posA) ? posA : index + 1;
-    const useB = !Number.isNaN(posB) ? posB : j + 1;
-    setSaving(true);
-    setError('');
-    setOkMsg('');
-    try {
-      await patchPosition(a.id, useB);
-      await patchPosition(b.id, useA);
-      setOkMsg('Ordem atualizada no site.');
-      await load();
-    } catch (e) {
-      setError(e?.message ? String(e.message) : 'Erro ao reordenar.');
     } finally {
       setSaving(false);
     }
@@ -237,15 +246,68 @@ export default function WebsiteInstagramPage() {
     }
   };
 
-  const sorted = useMemo(() => sortByPosition(items), [items]);
+  const applyImageFile = async (id, file) => {
+    if (!(file instanceof File)) return;
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('image', file, file.name || 'image.jpg');
+      const r = await fetchWithAuth(`${API_BASE}/website/instagram/${encodeURIComponent(String(id))}/image`, {
+        method: 'POST',
+        body: fd,
+      });
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      let data;
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = {};
+      }
+      if (!r.ok) {
+        const msg =
+          data && typeof data.message === 'string' && data.message.trim()
+            ? data.message.trim()
+            : `HTTP ${r.status}`;
+        throw new Error(msg);
+      }
+      setOkMsg('Imagem enviada.');
+      await load();
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro ao enviar imagem.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onNewFileChosen = (e) => {
+    const f = e.target.files?.[0];
+    setNewFile(f || null);
+  };
+
+  const onNewDropZoneDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const onNewDropZoneDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const f = e.dataTransfer?.files?.[0];
+    if (f && /^image\//i.test(f.type)) {
+      setNewFile(f);
+    }
+  };
 
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="text-base font-semibold text-slate-800">Instagram na home</h3>
       <p className="mt-1 max-w-3xl text-sm text-slate-500">
         Os cartões no site mostram só a foto (corte 3:4), sem legenda no tile — o clique abre o post no Instagram.
-        Aqui gere URLs, ordem e imagem de capa (o backend do site extrai thumbnail ou pode enviar ficheiro / URL
-        direta).
+        Arraste os cartões para mudar a ordem (é gravado ao largar). Para a imagem de capa: o Instagram não permite
+        arrastar a miniatura diretamente para aqui; use captura de ecrã, export ou ficheiro e carregue abaixo.
       </p>
 
       {loading ? (
@@ -260,52 +322,108 @@ export default function WebsiteInstagramPage() {
         </p>
       ) : null}
 
-      <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+      <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Adicionar post</p>
-        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-          <label className="min-w-[220px] flex-1 text-sm text-slate-600">
-            <span className="mb-1 block font-medium text-slate-800">URL do post (Instagram)</span>
-            <input
-              type="url"
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-              placeholder="https://www.instagram.com/p/… ou /reel/…"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="text-sm text-slate-600">
-            <span className="mb-1 block font-medium text-slate-800">Imagem (opcional)</span>
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(e) => setNewFile(e.target.files?.[0] || null)}
-              className="text-sm"
-            />
-          </label>
+        <label className="mt-3 block text-sm text-slate-700">
+          <span className="mb-1 block font-medium text-slate-900">URL do post (Instagram)</span>
+          <input
+            type="url"
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            placeholder="https://www.instagram.com/p/… ou /reel/…"
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+          />
+        </label>
+
+        <div className="mt-4">
+          <p className="text-sm font-medium text-slate-900">Imagem de capa (recomendado)</p>
+          <p className="mt-1 text-xs text-slate-600">
+            Não dá para puxar a foto diretamente do Instagram para esta janela — escolha um ficheiro (ou arraste para a
+            caixa).
+          </p>
+          <input
+            ref={newFileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            id="ig-new-post-image"
+            onChange={onNewFileChosen}
+          />
+          <div
+            onDragOver={onNewDropZoneDragOver}
+            onDrop={onNewDropZoneDrop}
+            className="mt-2 flex flex-col items-stretch gap-3 rounded-xl border-2 border-dashed border-amber-400/80 bg-amber-50/50 p-4 sm:flex-row sm:items-center"
+          >
+            <label
+              htmlFor="ig-new-post-image"
+              className="inline-flex cursor-pointer items-center justify-center rounded-lg border-2 border-slate-900 bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              Escolher imagem no computador
+            </label>
+            <div className="min-w-0 flex-1 text-sm text-slate-700">
+              {newFile instanceof File ? (
+                <span className="font-medium text-slate-900">{newFile.name}</span>
+              ) : (
+                <span className="text-slate-500">Nenhum ficheiro — opcional se o site extrair a miniatura sozinho.</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end">
           <button
             type="button"
             disabled={saving}
             onClick={addPost}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
           >
-            Adicionar
+            {saving ? 'A guardar…' : 'Adicionar post'}
           </button>
         </div>
       </div>
 
-      {!loading && sorted.length === 0 ? (
+      {!loading && ordered.length === 0 ? (
         <p className="mt-8 text-sm text-slate-500">Nenhum post na lista (ou API do site indisponível).</p>
       ) : null}
 
-      {sorted.length > 0 ? (
-        <ul className="mt-8 grid list-none grid-cols-2 gap-px bg-slate-200 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {sorted.map((it, index) => {
+      {ordered.length > 0 ? (
+        <ul className="mt-8 grid list-none grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+          {ordered.map((it, index) => {
             const src = absolutizeImageSrc(it.image_url);
             const href = String(it.url || '').trim();
             const id = it.id;
             return (
-              <li key={id != null ? `ig-${id}` : `ig-${index}`} className="bg-white p-2">
-                <div className="group relative w-full overflow-hidden bg-slate-100" style={{ aspectRatio: '3/4' }}>
+              <li
+                key={id != null ? `ig-${id}` : `ig-${index}`}
+                draggable={!saving}
+                onDragStart={() => setDragFrom(index)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverIndex(index);
+                }}
+                onDragLeave={() => setDragOverIndex((x) => (x === index ? null : x))}
+                onDrop={() => {
+                  if (dragFrom == null) return;
+                  reorderAndSave(dragFrom, index);
+                  setDragFrom(null);
+                  setDragOverIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDragFrom(null);
+                  setDragOverIndex(null);
+                }}
+                className={`rounded-xl border bg-white p-2 shadow-sm transition ${
+                  dragFrom === index ? 'ring-2 ring-amber-400' : ''
+                } ${
+                  dragOverIndex === index && dragFrom != null && dragFrom !== index
+                    ? 'ring-2 ring-sky-400 ring-offset-2'
+                    : 'border-slate-200'
+                }`}
+              >
+                <div className="group relative w-full cursor-grab overflow-hidden bg-slate-100 active:cursor-grabbing" style={{ aspectRatio: '3/4' }}>
+                  <span className="absolute left-2 top-2 z-[1] flex h-7 w-7 items-center justify-center rounded-full bg-black/75 text-xs font-bold text-white">
+                    {index + 1}
+                  </span>
                   {href ? (
                     <a
                       href={href}
@@ -313,12 +431,15 @@ export default function WebsiteInstagramPage() {
                       rel="noopener noreferrer"
                       className="relative block h-full w-full"
                       title="Abrir no Instagram"
+                      onClick={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
                     >
                       {src ? (
                         <img
                           src={src}
                           alt=""
                           loading="lazy"
+                          draggable={false}
                           className="absolute inset-0 h-full w-full object-cover object-top grayscale transition-all duration-700 group-hover:scale-[1.03] group-hover:grayscale-0"
                         />
                       ) : (
@@ -333,29 +454,11 @@ export default function WebsiteInstagramPage() {
                     </div>
                   )}
                 </div>
-                <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+                <div className="mt-2 space-y-2 text-[11px] text-slate-600">
                   <div className="flex flex-wrap items-center gap-1">
                     <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700">
-                      #{index + 1} pos. {it.position != null ? it.position : '—'}
+                      pos. {it.position != null ? it.position : '—'}
                     </span>
-                    <button
-                      type="button"
-                      disabled={saving || index <= 0}
-                      onClick={() => move(index, -1)}
-                      className="rounded border border-slate-200 px-1.5 py-0.5 hover:bg-slate-50 disabled:opacity-40"
-                      title="Subir"
-                    >
-                      ▲
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving || index >= sorted.length - 1}
-                      onClick={() => move(index, 1)}
-                      className="rounded border border-slate-200 px-1.5 py-0.5 hover:bg-slate-50 disabled:opacity-40"
-                      title="Descer"
-                    >
-                      ▼
-                    </button>
                     <button
                       type="button"
                       disabled={saving}
@@ -365,10 +468,32 @@ export default function WebsiteInstagramPage() {
                       Remover
                     </button>
                   </div>
-                  <div className="flex gap-1">
+
+                  <div>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      id={`ig-card-img-${id}`}
+                      disabled={saving}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) applyImageFile(id, f);
+                        e.target.value = '';
+                      }}
+                    />
+                    <label
+                      htmlFor={`ig-card-img-${id}`}
+                      className="flex cursor-pointer items-center justify-center rounded-lg border border-amber-500/70 bg-amber-50 px-2 py-2 text-center text-[11px] font-semibold text-amber-950 hover:bg-amber-100"
+                    >
+                      Carregar imagem (ficheiro)
+                    </label>
+                  </div>
+
+                  <div className="flex gap-1 border-t border-slate-100 pt-2">
                     <input
                       type="url"
-                      placeholder="URL direta da imagem (opcional)"
+                      placeholder="Ou URL https da imagem"
                       value={imageUrlById[id] ?? ''}
                       onChange={(e) =>
                         setImageUrlById((prev) => ({
@@ -376,15 +501,15 @@ export default function WebsiteInstagramPage() {
                           [id]: e.target.value,
                         }))
                       }
-                      className="min-w-0 flex-1 rounded border border-slate-200 px-2 py-1 text-[10px]"
+                      className="min-w-0 flex-1 rounded border border-slate-200 px-2 py-1.5 text-[10px]"
                     />
                     <button
                       type="button"
                       disabled={saving}
                       onClick={() => applyImageUrl(id)}
-                      className="shrink-0 rounded border border-slate-300 bg-white px-2 py-1 text-[10px] font-medium hover:bg-slate-50"
+                      className="shrink-0 rounded border border-slate-400 bg-slate-100 px-2 py-1.5 text-[10px] font-semibold text-slate-800 hover:bg-slate-200"
                     >
-                      Aplicar
+                      Aplicar URL
                     </button>
                   </div>
                 </div>
@@ -392,6 +517,10 @@ export default function WebsiteInstagramPage() {
             );
           })}
         </ul>
+      ) : null}
+
+      {saving && ordered.length > 0 ? (
+        <p className="mt-3 text-xs text-slate-500">A sincronizar com o site…</p>
       ) : null}
     </section>
   );
