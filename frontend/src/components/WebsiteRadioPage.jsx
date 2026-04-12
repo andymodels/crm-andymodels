@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, API_REQUEST_MS_BULK, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
 
 function fmtDur(sec) {
   if (sec == null || !Number.isFinite(Number(sec))) return '—';
@@ -289,7 +289,7 @@ export default function WebsiteRadioPage() {
     try {
       const r = await fetchWithAuth(
         `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/tracks/bulk`,
-        { method: 'POST', body: fd },
+        { method: 'POST', body: fd, timeoutMs: API_REQUEST_MS_BULK },
       );
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
@@ -303,7 +303,14 @@ export default function WebsiteRadioPage() {
       await loadTracks(selectedId);
       await loadPlaylists();
     } catch (e) {
-      setError(e?.message ? String(e.message) : 'Erro no upload.');
+      const msg = String(e?.message || '');
+      const aborted =
+        e?.name === 'AbortError' || /aborted/i.test(msg) || msg.includes('The user aborted');
+      setError(
+        aborted
+          ? 'O envio demorou demasiado e foi interrompido (limite de tempo). Tente menos ficheiros de uma vez ou verifique a rede; o servidor pode ainda estar a processar — atualize a lista de faixas daqui a instantes.'
+          : msg || 'Erro no upload.',
+      );
     } finally {
       setBulkUploadStatus(null);
       setSaving(false);

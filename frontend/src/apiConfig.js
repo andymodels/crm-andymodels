@@ -22,10 +22,12 @@ const API_URL = useViteProxy
 export const API_BASE = API_URL ? `${API_URL}/api` : '/api';
 
 export const API_REQUEST_MS = 25_000;
+/** Upload em lote (ex.: vários MP3 na Rádio) — o servidor pode demorar minutos; 25s cortava o pedido com «Fetch is aborted». */
+export const API_REQUEST_MS_BULK = 10 * 60 * 1000;
 
-export function fetchWithTimeout(url, options = {}) {
+export function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUEST_MS) {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), API_REQUEST_MS);
+  const id = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { credentials: 'include', ...options, signal: controller.signal }).finally(() => {
     clearTimeout(id);
   });
@@ -34,9 +36,11 @@ export function fetchWithTimeout(url, options = {}) {
 /**
  * Rotas protegidas do CRM: envia cookie de sessão (`credentials: 'include'`) como o resto da app.
  * Opcional: `sessionStorage.crm_api_token` com JWT para `Authorization: Bearer` (ex.: domínio sem cookie).
+ * Opcional: `timeoutMs` — tempo máximo antes de abortar (predef.: API_REQUEST_MS). Uploads grandes: usar API_REQUEST_MS_BULK.
  */
 export function fetchWithAuth(url, options = {}) {
-  const headers = new Headers(options.headers ?? {});
+  const { timeoutMs, ...rest } = options;
+  const headers = new Headers(rest.headers ?? {});
   try {
     if (typeof sessionStorage !== 'undefined') {
       const t = sessionStorage.getItem('crm_api_token');
@@ -45,11 +49,16 @@ export function fetchWithAuth(url, options = {}) {
   } catch {
     /* ignore */
   }
-  return fetchWithTimeout(url, {
-    ...options,
-    headers,
-    credentials: 'include',
-  });
+  const ms = timeoutMs != null ? Number(timeoutMs) : API_REQUEST_MS;
+  return fetchWithTimeout(
+    url,
+    {
+      ...rest,
+      headers,
+      credentials: 'include',
+    },
+    ms,
+  );
 }
 
 export function throwIfHtmlOrCannotPost(raw, httpStatus) {
