@@ -20,6 +20,7 @@ const publicContratoAssinaturaRouter = require('./routes/publicContratoAssinatur
 const publicAgendaPresencaRouter = require('./routes/publicAgendaPresenca');
 const agendaRouter = require('./routes/agenda');
 const websiteModelsRouter = require('./routes/websiteModels');
+const websiteInstagramRouter = require('./routes/websiteInstagram');
 const publicApplicationsRouter = require('./routes/publicApplications');
 const { UPLOAD_ROOT } = require('./services/storage');
 
@@ -106,6 +107,7 @@ app.use('/api', financeiroRouter);
 app.use('/api', cadastroLinksRouter);
 app.use('/api', agendaRouter);
 app.use('/api', websiteModelsRouter);
+app.use('/api', websiteInstagramRouter);
 
 /** Pedidos /api sem rota: JSON (evita 404 em HTML e confunde o frontend). */
 app.use('/api', (req, res) => {
