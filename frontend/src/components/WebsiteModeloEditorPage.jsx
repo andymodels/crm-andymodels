@@ -3,9 +3,9 @@ import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
 import {
+  extractYoutubeVideoId,
   getWebsiteModelPublicUrl,
   normalizeHttpUrl,
-  youtubeEmbedFromUrl,
   youtubePosterFromAnyUrl,
 } from '../utils/websiteMediaDisplay';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
@@ -102,29 +102,6 @@ function mediaArrayFromDetail(detail) {
   if (!detail || typeof detail !== 'object') return [];
   const m = detail.media;
   return Array.isArray(m) ? m.slice() : [];
-}
-
-/** Alinhado ao site: URL de vídeo para embed (YouTube Shorts/watch, Vimeo, Instagram inalterado). */
-function parseVideoUrl(raw) {
-  if (raw == null) return '';
-  const url = normalizeHttpUrl(String(raw).trim());
-  if (!url) return '';
-  const yt = youtubeEmbedFromUrl(url);
-  if (yt) return yt;
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, '');
-    if (host.includes('vimeo.com')) {
-      const m = u.pathname.match(/\/(\d+)/);
-      if (m) return `https://player.vimeo.com/video/${m[1]}`;
-    }
-    if (host.includes('instagram.com')) {
-      return url;
-    }
-  } catch {
-    return String(raw || '').trim();
-  }
-  return url;
 }
 
 /** Grelha como no site institucional. */
@@ -1010,8 +987,9 @@ export default function WebsiteModeloEditorPage({
     const raw = String(form.video_url || '').trim();
     if (!raw) return;
     const normalized = normalizeHttpUrl(raw);
-    const embed = parseVideoUrl(normalized);
-    const urlForItem = embed || normalized;
+    const ytId = extractYoutubeVideoId(normalized);
+    /** URL canónica watch?v= para o site público reconhecer YouTube (embed no cliente); não gravar só /embed/. */
+    const urlForItem = ytId ? `https://www.youtube.com/watch?v=${ytId}` : normalized;
     const thumb =
       youtubePosterFromAnyUrl(normalized) || youtubePosterFromAnyUrl(urlForItem) || '';
     setApiMedia((prev) => [...prev, { type: 'video', url: urlForItem, thumb }]);
@@ -1534,10 +1512,11 @@ export default function WebsiteModeloEditorPage({
                   inputMode="url"
                   autoComplete="off"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="YouTube, Instagram (reel, post)…"
+                  placeholder="Link do YouTube (recomendado no site)…"
                 />
                 <span className="mt-1 block text-xs text-slate-500">
-                  Enviado no perfil do modelo. «Adicionar à galeria» inclui o mesmo URL na grelha abaixo.
+                  No site público, o YouTube costuma reproduzir melhor. «Adicionar à galeria» grava o link na grelha
+                  (YouTube fica em formato compatível com o embed).
                 </span>
               </label>
               <button
