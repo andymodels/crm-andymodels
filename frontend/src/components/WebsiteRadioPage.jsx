@@ -497,14 +497,15 @@ export default function WebsiteRadioPage() {
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="text-base font-semibold text-slate-800">Andy Radio</h3>
       <p className="mt-1 max-w-3xl text-sm text-slate-500">
-        Playlists e faixas MP3 ficam neste CRM. O site público pode consumir{' '}
-        <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> (JSON com
-        playlists e URLs absolutas). Duração e capa ID3 no MP3 são usadas quando existem; se não houver capa no ficheiro,
-        o sistema pode gerar uma automaticamente com foto de uma modelo feminina do cadastro (P&B, nome em laranja),{' '}
-        <strong className="font-semibold text-slate-700">sem repetir a mesma modelo na mesma playlist</strong> até
-        esgotar o elenco (depois volta a aleatorizar). No site, cada playlist pode ter «avançar à seguinte ao terminar»
-        (campo <code className="rounded bg-slate-100 px-1 text-xs">auto_next_playlist</code> na API pública). Desligar
-        capa automática: <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
+        <strong className="font-semibold text-slate-800">Único backend (CRM):</strong> o que gravar aqui fica nesta API.
+        O front do andymodels.com <strong className="font-semibold text-slate-700">não</strong> deve ter outro servidor só
+        para a rádio: o player do site lê o JSON em{' '}
+        <code className="rounded bg-slate-100 px-1 text-xs text-slate-800">GET /api/public/radio/v2</code> no domínio do CRM
+        (URL completa: <code className="rounded bg-slate-100 px-1 text-xs">PUBLIC_APP_URL</code>
+        + esse caminho). «Enviar músicas» e «Guardar alterações» são o que «sobem» o conteúdo para o site usar. Duração e
+        capa ID3 no MP3 quando existem; capa automática por modelo (P&B + nome em laranja) sem repetir a mesma modelo na
+        mesma playlist até esgotar o elenco. Desligar capa automática:{' '}
+        <code className="rounded bg-slate-100 px-1 text-xs">RADIO_COVER_AUTO_MODEL=0</code>.
       </p>
 
       {radioMeta ? (
@@ -695,10 +696,9 @@ export default function WebsiteRadioPage() {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Faixas</p>
                   <p className="mt-1 text-sm font-medium text-slate-900">{selected?.name}</p>
                   <p className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] leading-snug text-slate-700">
-                    <strong className="font-semibold text-slate-800">Enviar MP3:</strong> 1) «Escolher ficheiros MP3» → 2) clique
-                    «Enviar músicas» (o botão só fica clicável depois de escolher ficheiros). O site público lê os dados em{' '}
-                    <code className="rounded bg-white px-0.5 text-[10px]">/api/public/radio/v2</code> após o envio concluir
-                    aqui no CRM.
+                    <strong className="font-semibold text-slate-800">Enviar MP3:</strong> 1) «Escolher ficheiros MP3» → 2){' '}
+                    «Enviar músicas». Isto grava no CRM; o andymodels.com (player) usa só a API do CRM, sem outro backend no
+                    site.
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
                     {tracks.length} / {radioMeta?.max_tracks_per_playlist ?? 50} faixas nesta playlist

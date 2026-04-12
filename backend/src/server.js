@@ -34,9 +34,11 @@ server.once('listening', () => {
     );
   }
   try {
-    initDb().catch((err) => {
-      console.error('[initDb] falhou (API continua ativa):', err.message || err);
-    });
+    initDb()
+      .then(() => require('./jobs/purgeRadioTestPlaylistsOnce').purgeRadioTestPlaylistsOnce())
+      .catch((err) => {
+        console.error('[initDb] falhou (API continua ativa):', err.message || err);
+      });
   } catch (err) {
     console.error('[initDb] erro ao agendar:', err.message || err);
   }

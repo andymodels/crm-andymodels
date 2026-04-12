@@ -34,6 +34,13 @@ router.get('/public/radio/v2', async (req, res, next) => {
     return res.status(503).json({ message: 'Base de dados indisponível.' });
   }
   try {
+    const crmPublicBase = String(process.env.PUBLIC_APP_URL || '')
+      .trim()
+      .replace(/\/$/, '');
+    const selfUrl =
+      crmPublicBase !== ''
+        ? `${crmPublicBase}/api/public/radio/v2`
+        : `${req.protocol}://${req.get('host')}/api/public/radio/v2`;
     const { rows: playlists } = await pool.query(
       `SELECT id, name, slug, description, cover_url, sort_order, active, status, auto_next_playlist
        FROM radio_playlists
@@ -71,8 +78,11 @@ router.get('/public/radio/v2', async (req, res, next) => {
       });
     }
 
+    // crm_public_base / radio_json_url: o front estático do andymodels.com deve usar este endpoint no domínio do CRM (sem API no site).
     return res.json({
       version: 2,
+      crm_public_base: crmPublicBase || null,
+      radio_json_url: selfUrl,
       generated_at: new Date().toISOString(),
       playlists: outPlaylists,
       tracks_flat: tracksFlat,

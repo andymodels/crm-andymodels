@@ -2474,7 +2474,8 @@ function App({ authUser, onLogout = () => {} }) {
       inscricoes: 'Candidaturas recebidas pelo site — lista simples e detalhe ao clicar.',
       home: 'Ordem dos modelos em destaque na home do site.',
       instagram: 'Posts da home (imagem + link; sem embed no tile).',
-      radio: 'Playlists AndyRadio, faixas MP3, capas e ordem — API pública em /api/public/radio/v2.',
+      radio:
+        'AndyRadio: playlists e MP3 (único backend CRM). O andymodels.com usa GET /api/public/radio/v2 no domínio do CRM.',
     };
     return lines[websiteSubView] || '';
   }, [module, websiteSubView]);
