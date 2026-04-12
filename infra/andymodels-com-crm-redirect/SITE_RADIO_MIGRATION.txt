@@ -39,6 +39,15 @@ O que fazer no projeto DO SITE (Vite)
 
 6) Rodapé e /radio: usar a MESMA constante RADIO_FEED_URL e o mesmo normalizador — uma só fila de dados.
 
+7) Crossfade entre faixas (opcional, estilo rádio — sem silêncio entre músicas)
+   - O CRM não mistura áudio no servidor; isto é feito no browser com dois elementos <audio>.
+   - Copiar para o projeto do site: `infra/andymodels-com-crm-redirect/andy-radio-crossfade-player.js`
+     (classe `AndyRadioCrossfadePlayer`, crossfade padrão 20 s; em faixas mais curtas que 20 s, o overlap
+     é limitado à duração da faixa para não dar erro).
+   - Integrar no `RadioContext` / player: `setQueue(tracks_flat ou fila escolhida)` e `play()`; usar
+     `onTrackChange` para atualizar UI (título, capa). Requer interação do utilizador antes de `play()`
+     (política de autoplay dos browsers).
+
 Admin /api/admin/radio no site
 ================================
 Pode ficar como está (admin do site) ou migrar depois; não bloqueia o player público.

@@ -590,9 +590,13 @@ router.post('/radio/playlists/:playlistId/covers/from-model', express.json(), as
     );
     const updated = [];
     const errors = [];
+    let prevModeloId = null;
     for (const t of tracks) {
       if (!replace && t.cover_url) continue;
-      const gen = await radioCover.generateFemaleModelCoverUrl({ playlist_id: playlistId });
+      const gen = await radioCover.generateFemaleModelCoverUrl({
+        playlist_id: playlistId,
+        exclude_modelo_id: prevModeloId,
+      });
       if (!gen.ok) {
         errors.push({ track_id: t.id, reason: gen.reason });
         continue;
@@ -610,6 +614,7 @@ router.post('/radio/playlists/:playlistId/covers/from-model', express.json(), as
           cover_url: gen.publicUrl,
         });
       }
+      prevModeloId = gen.modelo_id != null ? gen.modelo_id : null;
     }
     return res.json({ ok: true, count: updated.length, updated, errors });
   } catch (e) {
