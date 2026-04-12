@@ -69,6 +69,26 @@ export function youtubeEmbedFromUrl(u) {
   return id ? `https://www.youtube.com/embed/${id}` : '';
 }
 
+/** Query string recomendada para iframes no site público (evita alguns casos de ecrã preto / reprodução bloqueada). */
+export function youtubeEmbedQueryParams() {
+  return 'rel=0&modestbranding=1&playsinline=1';
+}
+
+/** Vimeo: player embed (evitar usar URL da página como <video src>). */
+export function vimeoEmbedFromUrl(u) {
+  const str = String(u || '').trim();
+  if (!str) return '';
+  try {
+    const url = new URL(normalizeHttpUrl(str));
+    const host = url.hostname.replace(/^www\./, '');
+    if (!host.includes('vimeo.com')) return '';
+    const m = url.pathname.match(/\/(?:video\/)?(\d+)/);
+    return m ? `https://player.vimeo.com/video/${m[1]}` : '';
+  } catch {
+    return '';
+  }
+}
+
 /** iframe embed do Instagram (reel, reels, post, tv). */
 export function instagramEmbedUrl(raw) {
   const s = normalizeHttpUrl(String(raw || '').trim());

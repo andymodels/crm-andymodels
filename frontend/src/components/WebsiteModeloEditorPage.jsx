@@ -3,16 +3,13 @@ import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
 import {
-  absolutizeWebsiteAssetUrl,
   getWebsiteModelPublicUrl,
-  instagramEmbedUrl,
-  isDirectVideoFileUrl,
-  isInstagramMediaUrl,
   normalizeHttpUrl,
   youtubeEmbedFromUrl,
   youtubePosterFromAnyUrl,
 } from '../utils/websiteMediaDisplay';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
+import WebsitePublicVideoEmbed from './WebsitePublicVideoEmbed';
 
 const emptyFormaRecebimento = () => ({
   tipo: 'PIX',
@@ -134,7 +131,20 @@ function parseVideoUrl(raw) {
 const WEBSITE_GALLERY_GRID_CLASS =
   'grid w-full grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-1';
 
-/** Imagens: campo multipart `photos`. Vídeos: campo `gallery` (contrato do admin do site; não usar `videos`). */
+/** Mensagem útil em respostas JSON do proxy / site. */
+function extractApiErrorMessage(data) {
+  if (!data || typeof data !== 'object') return '';
+  for (const k of ['message', 'error', 'msg', 'detail', 'details']) {
+    const v = data[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
+
+/**
+ * Multipart: o site costuma usar um único campo `photos` para imagens e vídeo (MP4/WebM).
+ * O campo `gallery` em alguns builds provoca erro 500 no processamento — não usar para ficheiros.
+ */
 function isImageFileForGalleryUpload(f) {
   if (!(f instanceof File)) return false;
   const t = String(f.type || '');
@@ -750,7 +760,7 @@ export default function WebsiteModeloEditorPage({
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
           });
           pendingVideoFiles.forEach((x) => {
-            fd.append('gallery', x.file, x.file.name || 'video.mp4');
+            fd.append('photos', x.file, x.file.name || 'video.mp4');
           });
           r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
             method: 'PUT',
@@ -768,11 +778,11 @@ export default function WebsiteModeloEditorPage({
         throwIfHtmlOrCannotPost(raw1, r1.status);
         const data1 = parseJsonSafe(raw1) || {};
         if (!r1.ok) {
-          const serverMsg = data1 && typeof data1.message === 'string' && data1.message.trim() ? data1.message.trim() : '';
+          const serverMsg = extractApiErrorMessage(data1);
           let msg = serverMsg || `HTTP ${r1.status}`;
           if (r1.status === 500 && !serverMsg) {
             msg =
-              'Erro no servidor (500). O site não aceita ficheiro de vídeo (MP4) neste envio — use só fotos ou o campo «Vídeo (URL)».';
+              'Erro interno no site (HTTP 500) ao guardar. MP4 é um formato normal; a falha costuma ser limite de tamanho, tempo de processamento ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
           }
           throw new Error(`[Dados do modelo] ${msg}`);
         }
@@ -823,7 +833,7 @@ export default function WebsiteModeloEditorPage({
             fd.append('photos', x.file, x.file.name || 'photo.jpg');
           });
           pendingVideoFiles.forEach((x) => {
-            fd.append('gallery', x.file, x.file.name || 'video.mp4');
+            fd.append('photos', x.file, x.file.name || 'video.mp4');
           });
           r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
             method: 'POST',
@@ -841,11 +851,11 @@ export default function WebsiteModeloEditorPage({
         throwIfHtmlOrCannotPost(raw0, r0.status);
         const data0 = parseJsonSafe(raw0) || {};
         if (!r0.ok) {
-          const serverMsg = data0 && typeof data0.message === 'string' && data0.message.trim() ? data0.message.trim() : '';
+          const serverMsg = extractApiErrorMessage(data0);
           let msg = serverMsg || `HTTP ${r0.status}`;
           if (r0.status === 500 && !serverMsg) {
             msg =
-              'Erro no servidor (500). O site não aceita ficheiro de vídeo (MP4) neste envio — use só fotos ou o campo «Vídeo (URL)».';
+              'Erro interno no site (HTTP 500) ao criar. MP4 é um formato normal; a falha costuma ser limite de tamanho ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
           }
           throw new Error(`[Criar modelo] ${msg}`);
         }
@@ -1498,8 +1508,8 @@ export default function WebsiteModeloEditorPage({
                 Adicionar mídias
               </label>
               <span className="text-xs text-slate-500">
-                Arraste os cartões para reordenar; use Capa e Polaroid em cada um. Fotos e vídeo (MP4…) no mesmo envio;
-                também pode usar «Vídeo (URL)» ou «Adicionar à galeria».
+                Arraste os cartões para reordenar; Capa e Polaroid. Fotos e MP4/WebM no mesmo envio (campo «photos» no
+                site). Alternativa: «Vídeo (URL)» ou «Adicionar à galeria».
               </span>
             </div>
 
@@ -1565,74 +1575,10 @@ export default function WebsiteModeloEditorPage({
                       >
                         <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio: '4/5' }}>
                           {isVideo ? (
-                            (() => {
-                              const u = item && typeof item === 'object' ? item.url : '';
-                              const ytEmb = youtubeEmbedFromUrl(u);
-                              const igEmb = instagramEmbedUrl(u);
-                              const directVid = isDirectVideoFileUrl(u);
-                              if (ytEmb) {
-                                return (
-                                  <iframe
-                                    title="YouTube"
-                                    src={ytEmb}
-                                    className="absolute inset-0 h-full w-full border-0"
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                    allowFullScreen
-                                  />
-                                );
-                              }
-                              if (igEmb) {
-                                const openIg = normalizeHttpUrl(String(u || '').trim()) || u;
-                                return (
-                                  <a
-                                    href={openIg}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    title={openIg}
-                                    className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500 px-1.5 py-2 text-center text-white shadow-inner hover:opacity-95"
-                                  >
-                                    <span className="text-xs font-semibold">Instagram ↗</span>
-                                    <span className="max-h-[45%] w-full overflow-hidden break-all text-left text-[9px] font-normal leading-tight text-white/95">
-                                      {openIg}
-                                    </span>
-                                  </a>
-                                );
-                              }
-                              if (directVid) {
-                                return (
-                                  <video
-                                    src={absolutizeWebsiteAssetUrl(String(u))}
-                                    className="absolute inset-0 h-full w-full object-cover object-top"
-                                    controls
-                                    muted
-                                    playsInline
-                                    preload="metadata"
-                                  />
-                                );
-                              }
-                              if (mediaPrimary) {
-                                return (
-                                  <WebsiteMediaImg
-                                    item={item}
-                                    alt=""
-                                    loading="lazy"
-                                    draggable={false}
-                                    className="absolute inset-0 h-full w-full object-cover object-top"
-                                  />
-                                );
-                              }
-                              return (
-                                <div
-                                  className={`absolute inset-0 flex flex-col items-center justify-center px-2 text-center text-xs font-semibold text-white shadow-inner ${
-                                    isInstagramMediaUrl(u)
-                                      ? 'bg-gradient-to-br from-purple-700 via-pink-600 to-amber-500'
-                                      : 'bg-slate-600'
-                                  }`}
-                                >
-                                  {isInstagramMediaUrl(u) ? 'Instagram' : 'Vídeo'}
-                                </div>
-                              );
-                            })()
+                            <WebsitePublicVideoEmbed
+                              url={item && typeof item === 'object' ? item.url : ''}
+                              item={item}
+                            />
                           ) : mediaPrimary ? (
                             <WebsiteMediaImg
                               item={item}

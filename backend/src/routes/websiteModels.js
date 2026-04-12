@@ -239,7 +239,7 @@ function normalizeWebsiteModelPatchBody(body) {
   return out;
 }
 
-/** Encaminha POST/PUT multipart ao site (campos de texto + ficheiros: photos = imagens, gallery = vídeo). */
+/** Encaminha POST/PUT multipart ao site (campos de texto + ficheiros; o CRM envia imagens e vídeo no campo `photos`). */
 async function forwardMultipartModelToWebsite(method, urlString, req) {
   const token = websiteAdminBearerToken();
   const fd = new FormData();
