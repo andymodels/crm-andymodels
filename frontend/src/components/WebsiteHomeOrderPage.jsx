@@ -20,10 +20,13 @@ function extractWebsiteModelsArray(data) {
   return [];
 }
 
-function isFeaturedModel(m) {
+/** Mesma regra que o job automático no backend: modelos na categoria «home». */
+function isHomeCategoryModel(m) {
   if (!m || typeof m !== 'object') return false;
-  const f = m.featured;
-  return f === true || f === 1 || f === '1';
+  const c = String(m.category || '').trim().toLowerCase();
+  if (c === 'home') return true;
+  const arr = Array.isArray(m.categories) ? m.categories : [];
+  return arr.some((x) => String(x || '').trim().toLowerCase() === 'home');
 }
 
 /** Escolhe o campo numérico de ordem que a API já devolve; senão usa home_order (o site deve aceitar no PUT). */
@@ -99,7 +102,7 @@ export default function WebsiteHomeOrderPage() {
         throw new Error(msg);
       }
       const arr = extractWebsiteModelsArray(parsed);
-      const feat = arr.filter(isFeaturedModel);
+      const feat = arr.filter((m) => isHomeCategoryModel(m));
       const field = feat.length ? detectOrderField(feat[0]) : 'home_order';
       setOrderField(field);
       feat.sort((a, b) => getOrderValue(a, field) - getOrderValue(b, field));
@@ -175,7 +178,8 @@ export default function WebsiteHomeOrderPage() {
         <div>
           <h3 className="text-base font-semibold text-slate-800">Ordem da Home</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Modelos em destaque no site — arraste as miniaturas para definir a ordem (1 = primeiro na home). Campo no
+            Modelos da categoria «home» no site — arraste para definir a ordem (1 = primeiro). A ordem também é
+            embaralhada automaticamente de hora a hora no servidor. Campo no
             site: <span className="font-mono text-slate-700">{orderField}</span>
           </p>
         </div>
@@ -200,7 +204,7 @@ export default function WebsiteHomeOrderPage() {
 
       {!loading && !error && ordered.length === 0 ? (
         <p className="mt-6 text-sm text-slate-600">
-          Nenhum modelo em destaque. Na ficha do modelo (Website → Modelos), ative «Em destaque na home» e guarde.
+          Nenhum modelo na categoria «home». Na ficha do modelo (Website → Modelos), defina a categoria home e guarde.
         </p>
       ) : null}
 

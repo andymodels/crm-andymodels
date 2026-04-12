@@ -40,6 +40,12 @@ server.once('listening', () => {
   } catch (err) {
     console.error('[initDb] erro ao agendar:', err.message || err);
   }
+  try {
+    const { startHomeOrderShuffle } = require('./jobs/homeOrderShuffle');
+    startHomeOrderShuffle();
+  } catch (err) {
+    console.warn('[home-shuffle] ao iniciar:', err.message || err);
+  }
 });
 
 server.on('error', (err) => {
