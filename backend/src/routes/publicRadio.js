@@ -92,4 +92,46 @@ router.get('/public/radio/v2', async (req, res, next) => {
   }
 });
 
+/**
+ * Lista única de faixas (ordem: playlists publicadas, depois faixas por sort_order).
+ * Útil para o site trocar fetch('/api/radio') por fetch(CRM_URL) com o mínimo de mapeamento:
+ * const { tracks } = await r.json();
+ */
+router.get('/public/radio/tracks-only', async (req, res, next) => {
+  if (!pool) {
+    return res.status(503).json({ message: 'Base de dados indisponível.' });
+  }
+  try {
+    const { rows: playlists } = await pool.query(
+      `SELECT id, name, slug, sort_order
+       FROM radio_playlists
+       WHERE active = TRUE AND status = 'published'
+       ORDER BY sort_order ASC, id ASC`,
+    );
+
+    const tracks = [];
+    for (const p of playlists) {
+      const { rows: tr } = await pool.query(
+        `SELECT id, playlist_id, title, artist, audio_storage_path, cover_url, duration_sec, sort_order
+         FROM radio_tracks
+         WHERE playlist_id = $1 AND active = TRUE
+         ORDER BY sort_order ASC, id ASC`,
+        [p.id],
+      );
+      const meta = { id: p.id, slug: p.slug };
+      for (const t of tr) {
+        tracks.push(mapTrackRow(t, meta));
+      }
+    }
+
+    return res.json({
+      version: 1,
+      source: 'crm',
+      tracks,
+    });
+  } catch (e) {
+    return next(e);
+  }
+});
+
 module.exports = router;

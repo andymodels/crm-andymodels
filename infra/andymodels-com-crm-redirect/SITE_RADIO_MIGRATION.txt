@@ -1,0 +1,42 @@
+Diagnóstico (site andymodels.com)
+================================
+Hoje: RadioContext.jsx e RadioHubPage.jsx fazem fetch('/api/radio') → no ar:
+https://www.andymodels.com/api/radio (backend ANTIGO do site), NÃO o CRM.
+
+Por isso o CRM pode estar certo e a página /radio não muda.
+
+O que fazer no projeto DO SITE (Vite)
+=====================================
+1) .env.production (e .env local se quiseres testar CRM em dev):
+
+   VITE_RADIO_API_URL=https://crm-andymodels.onrender.com/api/public/radio/v2
+
+   (Substitui pelo URL real do CRM se for outro.)
+
+2) Criar frontend/src/config/radio.js:
+
+   export const RADIO_FEED_URL =
+     import.meta.env.VITE_RADIO_API_URL?.trim() || '/api/radio';
+
+3) Substituir fetch('/api/radio') por fetch(RADIO_FEED_URL) em:
+   - frontend/src/context/RadioContext.jsx
+   - frontend/src/pages/RadioHubPage.jsx
+
+4) Mapear JSON:
+   - v2 completo: GET .../api/public/radio/v2 → { playlists, tracks_flat, version }
+   - OU lista só faixas (mais simples): GET .../api/public/radio/tracks-only → { tracks: [...] }
+   Cada faixa tem: id, title, artist, url (absoluto https), filename, position, cover_url, duration_sec, playlist_id, playlist_slug.
+
+5) CORS: o CRM já usa cors com origin dinâmico (pedidos de https://www.andymodels.com são aceites).
+   Se algo falhar, confirma no Network do browser o erro (CORS vs 404).
+
+6) Rodapé e /radio: usar a MESMA constante RADIO_FEED_URL e o mesmo normalizador — uma só fila de dados.
+
+Admin /api/admin/radio no site
+================================
+Pode ficar como está (admin do site) ou migrar depois; não bloqueia o player público.
+
+CRM — rotas úteis
+==================
+GET /api/public/radio/v2          — playlists + tracks_flat (completo)
+GET /api/public/radio/tracks-only — só { tracks: [...] } em ordem
