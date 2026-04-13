@@ -24,6 +24,26 @@ async function listTestPlaylistsByCriteria(client, explicitIds) {
   return rows;
 }
 
+/** Todas as playlists de rádio (para scripts de limpeza total). */
+async function listAllRadioPlaylistIds(client) {
+  const { rows } = await client.query(
+    `SELECT id, name, slug FROM radio_playlists ORDER BY id`,
+  );
+  return rows;
+}
+
+/**
+ * Apaga todas as playlists de rádio, faixas e ficheiros (áudio + capas) no storage actual (local ou B2).
+ * Executar com o mesmo STORAGE_DRIVER / credenciais B2 onde os ficheiros foram gravados.
+ */
+async function deleteAllRadioPlaylistsWithStorage(client) {
+  const lista = await listAllRadioPlaylistIds(client);
+  for (const r of lista) {
+    await deletePlaylistWithStorage(client, r.id);
+  }
+  return lista.length;
+}
+
 /** Igual a DELETE /api/radio/playlists/:id + capa da playlist. */
 async function deletePlaylistWithStorage(client, id) {
   const { rows: plRows } = await client.query(`SELECT cover_url FROM radio_playlists WHERE id = $1`, [id]);
@@ -66,5 +86,7 @@ async function deletePlaylistWithStorage(client, id) {
 
 module.exports = {
   listTestPlaylistsByCriteria,
+  listAllRadioPlaylistIds,
+  deleteAllRadioPlaylistsWithStorage,
   deletePlaylistWithStorage,
 };

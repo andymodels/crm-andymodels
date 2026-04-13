@@ -19,7 +19,8 @@
     "reset:teste": "node scripts/seed-perfil-teste.js --reset-completo",
     "reset:limpo": "node scripts/reset-limpo.js",
     "apagar:orcamentos-teste": "node scripts/apagar-orcamentos-teste.js",
-    "apagar:radio-teste": "node scripts/apagar-radio-playlists-teste.js"
+    "apagar:radio-teste": "node scripts/apagar-radio-playlists-teste.js",
+    "apagar:radio-tudo": "node scripts/apagar-toda-radio.js"
   },
   "keywords": [],
   "author": "",

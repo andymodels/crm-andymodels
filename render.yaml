@@ -45,11 +45,11 @@ services:
       # Depois que entrar, volte para "false" por segurança.
       - key: ADMIN_RESET_ON_START
         value: "false"
-      # Fotos/OS em Backblaze B2: no Dashboard Render → Environment → adicionar (não commitar segredos):
-      # STORAGE_DRIVER=b2
-      # B2_S3_ENDPOINT=https://s3.REGION.backblazeb2.com  (S3-Compatible API no painel B2)
-      # B2_KEY_ID=...  B2_APPLICATION_KEY=...  B2_BUCKET=...
-      # B2_PUBLIC_BASE_URL=https://fXXX.backblazeb2.com/file/NOME_DO_BUCKET  OU  B2_DOWNLOAD_HOST=fXXX.backblazeb2.com (mesmo host da Friendly URL)
+      # Ficheiros (fotos, OS, Andy Radio MP3/capas): Backblaze B2. No Dashboard → Environment preencha B2_* (não commitar segredos).
+      - key: STORAGE_DRIVER
+        value: b2
+      # Obrigatório para uploads funcionarem (criar no painel Backblaze → Application Key + Bucket → S3 endpoint):
+      # B2_S3_ENDPOINT, B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET, B2_PUBLIC_BASE_URL (ou B2_DOWNLOAD_HOST)
 
 databases:
   - name: andy-models-db
