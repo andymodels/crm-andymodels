@@ -95,6 +95,50 @@ const SQL_WHERE_FEMALE_URL = `
   AND TRIM(foto_perfil_base64) ~ '^https?://'
 `;
 
+/** Qualquer modelo ativo com foto URL (capa automática final — distribuição uniforme com ORDER BY RANDOM()). */
+const SQL_WHERE_ANY_MODEL_PHOTO_URL = `
+  ativo = TRUE
+  AND TRIM(foto_perfil_base64) ~ '^https?://'
+`;
+
+async function pickRandomModelWithPhoto(client) {
+  const q = `
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
+    FROM modelos
+    WHERE ${SQL_WHERE_ANY_MODEL_PHOTO_URL}
+    ORDER BY RANDOM()
+    LIMIT 1
+  `;
+  const { rows } = client ? await client.query(q) : await pool.query(q);
+  return rows[0] || null;
+}
+
+/** Evita repetir o mesmo modelo quando possível (outro aleatório). */
+async function pickRandomModelWithPhotoExcluding(excludeModeloId) {
+  const ex =
+    excludeModeloId != null && Number.isFinite(Number(excludeModeloId)) ? Number(excludeModeloId) : null;
+  const q =
+    ex != null
+      ? `
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
+    FROM modelos
+    WHERE ${SQL_WHERE_ANY_MODEL_PHOTO_URL}
+      AND id <> $1
+    ORDER BY RANDOM()
+    LIMIT 1
+  `
+      : `
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
+    FROM modelos
+    WHERE ${SQL_WHERE_ANY_MODEL_PHOTO_URL}
+    ORDER BY RANDOM()
+    LIMIT 1
+  `;
+  const { rows } = ex != null ? await pool.query(q, [ex]) : await pool.query(q);
+  if (rows[0]) return rows[0];
+  return pickRandomModelWithPhoto(null);
+}
+
 async function pickRandomFemaleModel(client) {
   const q = `
     SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
@@ -193,6 +237,29 @@ function autoCoverFromModelEnabled() {
  * Gera capa P&B + nome (primeiro token em maiúsculas no rodapé); devolve URL pública ou falha.
  * Sem `modelo_id`: escolhe uma modelo feminina aleatória com foto URL.
  */
+/**
+ * Capa a partir de modelo aleatório (todo o elenco com foto). Fallback principal após ID3 e capa externa.
+ */
+async function generateRandomModelCoverUrl(options = {}) {
+  const excludeModeloId =
+    options.exclude_modelo_id != null && Number.isFinite(Number(options.exclude_modelo_id))
+      ? Number(options.exclude_modelo_id)
+      : null;
+  const m =
+    excludeModeloId != null
+      ? await pickRandomModelWithPhotoExcluding(excludeModeloId)
+      : await pickRandomModelWithPhoto(null);
+  if (!m) return { ok: false, reason: 'sem_modelos_com_foto_url' };
+  try {
+    const img = await fetchImageBuffer(m.foto_url);
+    const jpeg = await renderCoverJpeg(img, m.nome);
+    const { publicUrl } = await saveCoverJpeg(jpeg);
+    return { ok: true, publicUrl, modelo_id: m.id, modelo_nome: m.nome };
+  } catch (e) {
+    return { ok: false, reason: String(e?.message || e) };
+  }
+}
+
 async function generateFemaleModelCoverUrl(options = {}) {
   const modeloId = options.modelo_id != null ? Number(options.modelo_id) : null;
   const excludeModeloId =
@@ -223,12 +290,15 @@ async function generateFemaleModelCoverUrl(options = {}) {
 module.exports = {
   pickRandomFemaleModel,
   pickRandomFemaleModelExcluding,
+  pickRandomModelWithPhoto,
+  pickRandomModelWithPhotoExcluding,
   pickFemaleModelById,
   fetchImageBuffer,
   renderCoverJpeg,
   saveCoverJpeg,
   autoCoverFromModelEnabled,
   generateFemaleModelCoverUrl,
+  generateRandomModelCoverUrl,
   firstNameUpper,
   ORANGE,
 };

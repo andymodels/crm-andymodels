@@ -79,9 +79,6 @@ export default function WebsiteRadioPage() {
   const [editForm, setEditForm] = useState(null);
   /** Evita repor o rascunho ao dar refresh às playlists (perdia edição não guardada). */
   const editFormSyncedForPlaylistId = useRef(null);
-  const playlistCoverFileInputRef = useRef(null);
-  /** ID da playlist para o próximo ficheiro escolhido (ref evita corrida com setState). */
-  const playlistCoverUploadTargetIdRef = useRef(null);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -403,116 +400,6 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const regenerateTrackCoverFromModel = async (trackId) => {
-    const endpoint = `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover/regenerate-model`;
-    const logPrefix = '[CRM][radio][nova-capa-modelo]';
-    setSaving(true);
-    setError('');
-    setOkMsg('');
-    try {
-      const trackAntes = tracks.find((t) => Number(t.id) === Number(trackId));
-      const coverUrlAntes = trackAntes?.cover_url ?? null;
-      console.log(logPrefix, 'frontend: clique → antes do fetch', {
-        trackId,
-        method: 'POST',
-        endpoint,
-        body: '{}',
-      });
-      const r = await fetchWithAuth(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      });
-      console.log(logPrefix, 'frontend: resposta HTTP recebida', {
-        trackId,
-        endpoint,
-        status: r.status,
-        ok: r.ok,
-        statusText: r.statusText,
-      });
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      if (!r.ok) throw new Error(parseErr(raw, r));
-      console.log(logPrefix, 'frontend: corpo OK (primeiros 240 chars)', {
-        trackId,
-        preview: String(raw).slice(0, 240),
-      });
-      let updatedFromApi = null;
-      try {
-        updatedFromApi = raw ? JSON.parse(raw) : null;
-      } catch {
-        /* merge opcional */
-      }
-      setOkMsg('Capa da faixa regenerada (nova modelo).');
-      await loadTracks(selectedId);
-      if (updatedFromApi && Number(updatedFromApi.id) === Number(trackId)) {
-        const coverUrlApi = updatedFromApi.cover_url ?? null;
-
-        setTracks((prev) => {
-          const next = prev.map((tr) =>
-            Number(tr.id) === Number(trackId)
-              ? { ...tr, ...updatedFromApi }
-              : tr
-          );
-
-          const row = next.find((t) => Number(t.id) === Number(trackId));
-
-          console.log('[CRM][radio][nova-capa-modelo]', {
-            trackId: trackId,
-            antes: coverUrlAntes,
-            resposta_api: coverUrlApi,
-            depois: row?.cover_url ?? null,
-            mudou: coverUrlAntes !== coverUrlApi,
-          });
-
-          return next;
-        });
-      }
-      await loadPlaylists();
-    } catch (e) {
-      console.error(logPrefix, 'frontend: erro após fetch', {
-        trackId,
-        endpoint,
-        message: e?.message ? String(e.message) : e,
-      });
-      setError(e?.message ? String(e.message) : 'Erro.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const uploadPlaylistCover = async (playlistId, file) => {
-    if (!file?.size || playlistId == null) return;
-    setSaving(true);
-    setError('');
-    setOkMsg('');
-    try {
-      const fd = new FormData();
-      fd.append('cover', file);
-      const r = await fetchWithAuth(
-        `${API_BASE}/radio/playlists/${encodeURIComponent(String(playlistId))}/cover`,
-        { method: 'POST', body: fd, timeoutMs: API_REQUEST_MS_BULK },
-      );
-      const raw = await r.text();
-      throwIfHtmlOrCannotPost(raw, r.status);
-      if (!r.ok) throw new Error(parseErr(raw, r));
-      const updated = raw ? JSON.parse(raw) : {};
-      setPlaylists((prev) => prev.map((pl) => (pl.id === playlistId ? { ...pl, ...updated } : pl)));
-      setOkMsg('Capa da playlist atualizada.');
-      editFormSyncedForPlaylistId.current = null;
-    } catch (e) {
-      setError(e?.message ? String(e.message) : 'Erro.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const openPlaylistCoverPicker = (playlistId, e) => {
-    e?.stopPropagation?.();
-    playlistCoverUploadTargetIdRef.current = playlistId;
-    queueMicrotask(() => playlistCoverFileInputRef.current?.click());
-  };
-
   const onPickAudioFiles = (fileList) => {
     if (!fileList?.length) return;
     setPendingAudioFiles(Array.from(fileList));
@@ -578,26 +465,8 @@ export default function WebsiteRadioPage() {
         <aside className="space-y-4">
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Playlists</h4>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Arraste para ordenar · clique no nome para abrir · miniatura à direita para alterar capa
-            </p>
+            <p className="mt-0.5 text-xs text-slate-500">Arraste para ordenar · clique no nome para abrir</p>
           </div>
-          <input
-            ref={playlistCoverFileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            className="sr-only"
-            aria-hidden
-            tabIndex={-1}
-            disabled={saving}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              const pid = playlistCoverUploadTargetIdRef.current;
-              playlistCoverUploadTargetIdRef.current = null;
-              e.target.value = '';
-              if (f && pid != null) uploadPlaylistCover(pid, f);
-            }}
-          />
           <div className="flex gap-2">
             <input
               type="text"
@@ -661,13 +530,9 @@ export default function WebsiteRadioPage() {
                     </div>
                   </div>
                   <div className="shrink-0 self-start pt-0.5">
-                    <button
-                      type="button"
-                      title="Alterar capa da playlist"
-                      disabled={saving}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => openPlaylistCoverPicker(p.id, e)}
-                      className="relative h-14 w-14 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm transition hover:border-slate-300 hover:ring-2 hover:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    <div
+                      className="relative h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm"
+                      aria-hidden
                     >
                       {coverSrc ? (
                         <img
@@ -679,7 +544,7 @@ export default function WebsiteRadioPage() {
                       ) : (
                         <AndyPlaylistCoverPlaceholder />
                       )}
-                    </button>
+                    </div>
                   </div>
                 </li>
               );
@@ -699,7 +564,7 @@ export default function WebsiteRadioPage() {
                   <div className="border-b border-slate-100 pb-4">
                     <h4 className="text-sm font-semibold text-slate-900">Detalhes da playlist</h4>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      Nome, estado e opções. Capa: clique na miniatura da playlist na coluna à esquerda.
+                      Nome, estado e opções. As capas das faixas são sempre automáticas (ID3 → lojas públicas → modelo).
                     </p>
                   </div>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -774,9 +639,8 @@ export default function WebsiteRadioPage() {
                       ) : null}
                     </p>
                     <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
-                      Capas das faixas: do ficheiro de áudio (ID3) quando existem; senão modelo automática. Pode pedir
-                      outra modelo por faixa. A capa da playlist (acima) é só a imagem que enviar — não é alterada ao
-                      adicionar músicas.
+                      Capa por faixa (automática): primeiro ID3 no ficheiro; senão capa oficial (iTunes/Deezer); senão
+                      modelo aleatório do elenco. Sem upload manual.
                     </p>
                   </div>
 
@@ -891,14 +755,6 @@ export default function WebsiteRadioPage() {
                             {t.artist || '—'} · {fmtDur(t.duration_sec)}
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-3">
-                            <button
-                              type="button"
-                              disabled={saving}
-                              onClick={() => regenerateTrackCoverFromModel(t.id)}
-                              className="text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:opacity-50"
-                            >
-                              Nova capa (modelo)
-                            </button>
                             <button
                               type="button"
                               className="text-xs text-red-600 hover:underline"

@@ -1,6 +1,6 @@
 /**
  * Gestão da Andy Radio no CRM: playlists, faixas, uploads (incl. múltiplos MP3).
- * Metadados: music-metadata (duração, título/artista ID3, capa embutida APIC → gravada primeiro; senão modelo aleatória).
+ * Capas de faixas só automáticas: ID3 → iTunes/Deezer → modelo aleatório (B2/storage, URL única). Sem upload manual de capa.
  */
 
 const crypto = require('crypto');
@@ -13,6 +13,7 @@ const { pool } = require('../config/db');
 const storage = require('../services/storage');
 const { radioStorageKey } = require('../services/radioStoragePaths');
 const radioCover = require('../services/radioCoverFromModelo');
+const radioExternalCover = require('../services/radioTrackCoverExternal');
 
 const router = express.Router();
 
@@ -36,11 +37,6 @@ const MAX_BULK = 25;
 const audioUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 120 * 1024 * 1024, files: MAX_BULK },
-});
-
-const coverUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
 });
 
 function slugify(name) {
@@ -151,32 +147,43 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
     fallbackTitle,
   );
 
-  /** 1) Capa embutida no MP3 (ID3). 2) Senão, modelo feminina aleatória (P&B + nome no rodapé), se activo. */
+  /**
+   * Capas 100% automáticas (sem upload manual): ID3 → iTunes/Deezer → modelo aleatório (elenco completo).
+   * Sem cache de APIs — cada passo executa pedidos novos.
+   */
   let coverUrl = null;
   let coverModeloId = null;
-  if (overrides.cover_url != null) {
-    coverUrl = overrides.cover_url;
-    coverModeloId =
-      overrides.cover_modelo_id != null && overrides.cover_modelo_id !== undefined
-        ? overrides.cover_modelo_id
-        : null;
-  } else if (embeddedCoverBuffer && embeddedCoverBuffer.length > 0) {
+  let coverSource = 'none';
+
+  if (embeddedCoverBuffer && embeddedCoverBuffer.length > 0) {
     try {
       coverUrl = await saveEmbeddedCoverFromBuffer(embeddedCoverBuffer);
       coverModeloId = null;
+      coverSource = 'id3_embedded';
     } catch (e) {
       console.warn('[radio] capa embutida (ID3) inválida ou falha ao gravar:', e?.message || e);
     }
   }
-  if (
-    coverUrl == null &&
-    !overrides.skip_auto_model_cover &&
-    radioCover.autoCoverFromModelEnabled()
-  ) {
-    const gen = await radioCover.generateFemaleModelCoverUrl();
+
+  if (coverUrl == null) {
+    try {
+      const extBuf = await radioExternalCover.fetchOfficialArtworkBuffer(artist, title);
+      if (extBuf && extBuf.length > 0) {
+        coverUrl = await saveEmbeddedCoverFromBuffer(extBuf);
+        coverModeloId = null;
+        coverSource = 'external_store';
+      }
+    } catch (e) {
+      console.warn('[radio] capa externa (iTunes/Deezer):', e?.message || e);
+    }
+  }
+
+  if (coverUrl == null && !overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
+    const gen = await radioCover.generateRandomModelCoverUrl({});
     if (gen.ok) {
       coverUrl = gen.publicUrl;
       coverModeloId = gen.modelo_id != null ? gen.modelo_id : null;
+      coverSource = 'model_auto';
     } else {
       console.warn('[radio] capa automática (modelo aleatório):', gen.reason);
     }
@@ -207,14 +214,9 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
     ],
   );
   const row = rows[0];
-  let coverSource = 'none';
-  if (overrides.cover_url != null) coverSource = 'override';
-  else if (embeddedCoverBuffer && embeddedCoverBuffer.length > 0 && coverUrl) coverSource = 'id3_embedded';
-  else if (coverUrl && coverModeloId != null) coverSource = 'model_auto';
-  else if (coverUrl) coverSource = 'other';
   let imageReceived = null;
-  if (coverSource === 'override') imageReceived = String(overrides.cover_url);
-  else if (coverSource === 'id3_embedded') imageReceived = '(apic_buffer_in_mp3)';
+  if (coverSource === 'id3_embedded') imageReceived = '(apic_buffer_in_mp3)';
+  else if (coverSource === 'external_store') imageReceived = '(itunes_or_deezer_artwork)';
   else if (coverSource === 'model_auto') imageReceived = '(generated_model_cover)';
   else imageReceived = coverUrl || null;
   logRadioCoverImage('track_insert_cover', {
@@ -241,8 +243,10 @@ router.get('/radio/meta', (_req, res) => {
   return res.json({
     max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
     max_bulk_audio_files: MAX_BULK,
-    /** Capa: primeiro ID3 no MP3; senão modelo aleatória (desligar: RADIO_COVER_AUTO_MODEL=0). */
+    /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → modelo aleatório (RADIO_COVER_AUTO_MODEL). Sem upload manual. */
+    cover_pipeline: ['id3_embedded', 'external_store', 'model_auto'],
     cover_embedded_first: true,
+    cover_external_api: radioExternalCover.externalCoverEnabled(),
     cover_fallback_random_model: radioCover.autoCoverFromModelEnabled(),
   });
 });
@@ -271,7 +275,7 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
     const sortOrder = Number(req.body?.sort_order);
     const active = req.body?.active === false ? false : true;
     const status = req.body?.status === 'draft' ? 'draft' : 'published';
-    const cover_url = req.body?.cover_url != null ? String(req.body.cover_url).trim() || null : null;
+    const cover_url = null;
     const auto_next_playlist = req.body?.auto_next_playlist === false ? false : true;
 
     const { rows } = await pool.query(
@@ -343,7 +347,7 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
       slug = await uniqueSlug(name, id);
     }
     const description = req.body?.description != null ? String(req.body.description) : p.description;
-    const cover_url = req.body?.cover_url !== undefined ? (req.body.cover_url ? String(req.body.cover_url) : null) : p.cover_url;
+    const cover_url = p.cover_url;
     const sort_order = req.body?.sort_order != null ? Number(req.body.sort_order) : p.sort_order;
     const active = req.body?.active != null ? Boolean(req.body.active) : p.active;
     const status = req.body?.status === 'draft' || req.body?.status === 'published' ? req.body.status : p.status;
@@ -368,15 +372,6 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
       ],
     );
     const out = rows[0];
-    logRadioCoverImage('playlist_put', {
-      playlist_id: id,
-      cover_url_in_request: req.body?.cover_url !== undefined,
-      image_url_received:
-        req.body?.cover_url !== undefined ? (req.body.cover_url ? String(req.body.cover_url) : null) : null,
-      previous_cover_url: p.cover_url || null,
-      image_url_saved: out.cover_url || null,
-      image_url_returned: out.cover_url || null,
-    });
     return res.json(out);
   } catch (e) {
     return next(e);
@@ -510,36 +505,18 @@ router.patch('/radio/tracks/:trackId', express.json(), async (req, res, next) =>
 
     const title = req.body?.title != null ? String(req.body.title).trim() : t.title;
     const artist = req.body?.artist != null ? String(req.body.artist) : t.artist;
-    const cover_url =
-      req.body?.cover_url !== undefined ? (req.body.cover_url ? String(req.body.cover_url).trim() : null) : t.cover_url;
     const sort_order = req.body?.sort_order != null ? Number(req.body.sort_order) : t.sort_order;
     const active = req.body?.active != null ? Boolean(req.body.active) : t.active;
-    let cover_modelo_id = t.cover_modelo_id;
-    if (req.body?.cover_url !== undefined) {
-      const newU = cover_url ? String(cover_url).trim() : null;
-      const oldU = t.cover_url ? String(t.cover_url).trim() : null;
-      if (newU !== oldU) cover_modelo_id = null;
-    }
 
     if (!title) return res.status(400).json({ message: 'Título inválido.' });
 
     const { rows } = await pool.query(
-      `UPDATE radio_tracks SET title = $1, artist = $2, cover_url = $3, cover_modelo_id = $4, sort_order = $5, active = $6, updated_at = NOW()
-       WHERE id = $7 RETURNING *`,
-      [title, artist, cover_url, cover_modelo_id, Number.isFinite(sort_order) ? sort_order : 0, active, trackId],
+      `UPDATE radio_tracks SET title = $1, artist = $2, sort_order = $3, active = $4, updated_at = NOW()
+       WHERE id = $5 RETURNING *`,
+      [title, artist, Number.isFinite(sort_order) ? sort_order : 0, active, trackId],
     );
     const out = rows[0];
-    const payload = { ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) };
-    if (req.body?.cover_url !== undefined) {
-      logRadioCoverImage('track_patch_cover', {
-        track_id: trackId,
-        image_url_received: req.body.cover_url ? String(req.body.cover_url).trim() : null,
-        previous_cover_url: t.cover_url || null,
-        image_url_saved: out.cover_url || null,
-        image_url_returned: payload.cover_url || null,
-      });
-    }
-    return res.json(payload);
+    return res.json({ ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) });
   } catch (e) {
     return next(e);
   }
@@ -596,185 +573,6 @@ router.delete('/radio/tracks/:trackId', async (req, res, next) => {
       }
     }
     return res.json({ ok: true });
-  } catch (e) {
-    return next(e);
-  }
-});
-
-router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (req, res, next) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido.' });
-    const f = req.file;
-    if (!f?.buffer) return res.status(400).json({ message: 'Envie cover (imagem).' });
-
-    const cur = await pool.query(`SELECT id, cover_url FROM radio_playlists WHERE id = $1`, [id]);
-    if (!cur.rows.length) return res.status(404).json({ message: 'Playlist não encontrada.' });
-    const oldCover = cur.rows[0].cover_url ? storage.relativePathFromPublicUrl(cur.rows[0].cover_url) : null;
-
-    const ext = path.extname(f.originalname || '').toLowerCase() || '.jpg';
-    const safe = ext === '.png' ? '.png' : '.jpg';
-    const rel = radioStorageKey(safe);
-    await storage.saveFile({
-      buffer: f.buffer,
-      relativePath: rel,
-      contentType: safe === '.png' ? 'image/png' : 'image/jpeg',
-    });
-    const cover_url = storage.getPublicUrl(rel);
-    const { rows } = await pool.query(`UPDATE radio_playlists SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *`, [
-      cover_url,
-      id,
-    ]);
-    if (oldCover) {
-      try {
-        await storage.removeFile(oldCover);
-      } catch (_e) {
-        /* */
-      }
-    }
-    const out = rows[0];
-    logRadioCoverImage('playlist_cover_upload', {
-      playlist_id: id,
-      image_url_received: {
-        type: 'multipart_file',
-        field: 'cover',
-        originalname: f.originalname || null,
-        size: f.buffer?.length ?? null,
-        mimetype: f.mimetype || null,
-      },
-      previous_cover_url: cur.rows[0].cover_url || null,
-      image_url_saved: out.cover_url || null,
-      image_url_returned: out.cover_url || null,
-    });
-    return res.json(out);
-  } catch (e) {
-    return next(e);
-  }
-});
-
-/** Nova capa automática (outra modelo); sem upload manual. */
-router.post('/radio/tracks/:trackId/cover/regenerate-model', async (req, res, next) => {
-  console.log(
-    '[CRM][radio][nova-capa-modelo]',
-    'backend: entrada na rota POST /radio/tracks/:trackId/cover/regenerate-model',
-    JSON.stringify({
-      ts: new Date().toISOString(),
-      method: req.method,
-      originalUrl: req.originalUrl,
-      trackId_param: req.params.trackId,
-    }),
-  );
-  try {
-    const trackId = Number(req.params.trackId);
-    if (!Number.isFinite(trackId)) {
-      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 400', { reason: 'id_invalido', trackId_param: req.params.trackId });
-      return res.status(400).json({ message: 'ID inválido.' });
-    }
-    if (!radioCover.autoCoverFromModelEnabled()) {
-      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 400', { reason: 'RADIO_COVER_AUTO_MODEL desativado', trackId });
-      return res.status(400).json({ message: 'Capa automática por modelo está desativada no servidor.' });
-    }
-
-    const cur = await pool.query(`SELECT id, cover_url, cover_modelo_id FROM radio_tracks WHERE id = $1`, [trackId]);
-    if (!cur.rows.length) {
-      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 404', { reason: 'faixa_nao_encontrada', trackId });
-      return res.status(404).json({ message: 'Faixa não encontrada.' });
-    }
-    const t = cur.rows[0];
-    const excludeId = t.cover_modelo_id != null ? Number(t.cover_modelo_id) : null;
-    const gen = await radioCover.generateFemaleModelCoverUrl(
-      excludeId != null && Number.isFinite(excludeId) ? { exclude_modelo_id: excludeId } : {},
-    );
-    if (!gen.ok) {
-      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 400', { reason: gen.reason || 'geracao_falhou', trackId });
-      return res.status(400).json({ message: gen.reason || 'Não foi possível gerar capa.' });
-    }
-
-    const oldCover = t.cover_url ? storage.relativePathFromPublicUrl(t.cover_url) : null;
-    const { rows } = await pool.query(
-      `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
-      [gen.publicUrl, gen.modelo_id, trackId],
-    );
-    if (oldCover) {
-      try {
-        await storage.removeFile(oldCover);
-      } catch (_e) {
-        /* */
-      }
-    }
-    const out = rows[0];
-    const payload = { ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) };
-    console.log('[CRM][radio][nova-capa-modelo]', 'backend: capa gerada e gravada', { trackId, cover_url: out.cover_url || null });
-    logRadioCoverImage('track_cover_regenerate_model', {
-      track_id: trackId,
-      image_url_received: {
-        type: 'generated_model',
-        exclude_modelo_id: excludeId,
-        generated_public_url: gen.publicUrl,
-      },
-      previous_cover_url: t.cover_url || null,
-      image_url_saved: out.cover_url || null,
-      image_url_returned: payload.cover_url || null,
-    });
-    console.log(
-      '[CRM][radio][nova-capa-modelo]',
-      'backend: resposta 200 JSON',
-      JSON.stringify({ ts: new Date().toISOString(), trackId, cover_url: out.cover_url || null }),
-    );
-    return res.json(payload);
-  } catch (e) {
-    console.error('[CRM][radio][nova-capa-modelo]', 'backend: exceção na rota', e?.message || e);
-    return next(e);
-  }
-});
-
-router.post('/radio/tracks/:trackId/cover', coverUpload.single('cover'), async (req, res, next) => {
-  try {
-    const trackId = Number(req.params.trackId);
-    if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
-    const f = req.file;
-    if (!f?.buffer) return res.status(400).json({ message: 'Envie cover (imagem).' });
-
-    const cur = await pool.query(`SELECT id, cover_url FROM radio_tracks WHERE id = $1`, [trackId]);
-    if (!cur.rows.length) return res.status(404).json({ message: 'Faixa não encontrada.' });
-    const oldCover = cur.rows[0].cover_url ? storage.relativePathFromPublicUrl(cur.rows[0].cover_url) : null;
-
-    const ext = path.extname(f.originalname || '').toLowerCase() || '.jpg';
-    const safe = ext === '.png' ? '.png' : '.jpg';
-    const rel = radioStorageKey(safe);
-    await storage.saveFile({
-      buffer: f.buffer,
-      relativePath: rel,
-      contentType: safe === '.png' ? 'image/png' : 'image/jpeg',
-    });
-    const cover_url = storage.getPublicUrl(rel);
-    const { rows } = await pool.query(
-      `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = NULL, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [cover_url, trackId],
-    );
-    if (oldCover) {
-      try {
-        await storage.removeFile(oldCover);
-      } catch (_e) {
-        /* */
-      }
-    }
-    const out = rows[0];
-    const payload = { ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) };
-    logRadioCoverImage('track_cover_upload', {
-      track_id: trackId,
-      image_url_received: {
-        type: 'multipart_file',
-        field: 'cover',
-        originalname: f.originalname || null,
-        size: f.buffer?.length ?? null,
-        mimetype: f.mimetype || null,
-      },
-      previous_cover_url: cur.rows[0].cover_url || null,
-      image_url_saved: out.cover_url || null,
-      image_url_returned: payload.cover_url || null,
-    });
-    return res.json(payload);
   } catch (e) {
     return next(e);
   }
