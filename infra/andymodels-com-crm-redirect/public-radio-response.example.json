@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "crm_public_base": "https://seu-crm.example.com",
+  "radio_json_url": "https://seu-crm.example.com/api/public/radio",
+  "generated_at": "2026-04-09T12:00:00.000Z",
+  "playlists": [
+    {
+      "id": 1,
+      "name": "Exemplo",
+      "slug": "exemplo",
+      "description": "",
+      "cover_url": "https://…/radio/….jpg",
+      "playlist_cover_url": "https://…/radio/….jpg",
+      "curator_name": "Nome do curador",
+      "curator_instagram": "https://instagram.com/…",
+      "position": 0,
+      "auto_next_playlist": true,
+      "tracks": []
+    }
+  ],
+  "tracks_flat": []
+}

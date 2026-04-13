@@ -48,6 +48,21 @@ function normalizeCuratorName(raw) {
   return raw != null ? String(raw).trim().slice(0, 200) : '';
 }
 
+/** Resposta API: espelha `cover_url` como `playlist_cover_url` (contrato alinhado ao site). */
+function playlistRowOut(row) {
+  if (!row || typeof row !== 'object') return row;
+  const cover =
+    row.cover_url != null && String(row.cover_url).trim() !== '' ? String(row.cover_url).trim() : null;
+  return { ...row, cover_url: cover, playlist_cover_url: cover };
+}
+
+/** URL de capa da playlist; vazio ou null → null na BD. */
+function normalizePlaylistCoverUrlFromBody(raw) {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim();
+  return s === '' ? null : s;
+}
+
 /** URL do Instagram do curador; vazio permitido. */
 function normalizeCuratorInstagram(raw) {
   let s = raw != null ? String(raw).trim() : '';
@@ -277,7 +292,7 @@ router.get('/radio/playlists', async (req, res, next) => {
        FROM radio_playlists p
        ORDER BY p.sort_order ASC, p.id ASC`,
     );
-    return res.json(rows);
+    return res.json(rows.map(playlistRowOut));
   } catch (e) {
     return next(e);
   }
@@ -321,7 +336,7 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
       image_url_saved: created.cover_url || null,
       image_url_returned: created.cover_url || null,
     });
-    return res.status(201).json(created);
+    return res.status(201).json(playlistRowOut(created));
   } catch (e) {
     return next(e);
   }
@@ -368,7 +383,17 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
       slug = await uniqueSlug(name, id);
     }
     const description = req.body?.description != null ? String(req.body.description) : p.description;
-    const cover_url = p.cover_url;
+    let cover_url = p.cover_url;
+    const bodyHasCover =
+      req.body &&
+      (Object.prototype.hasOwnProperty.call(req.body, 'cover_url') ||
+        Object.prototype.hasOwnProperty.call(req.body, 'playlist_cover_url'));
+    if (bodyHasCover) {
+      const raw = Object.prototype.hasOwnProperty.call(req.body, 'cover_url')
+        ? req.body.cover_url
+        : req.body.playlist_cover_url;
+      cover_url = normalizePlaylistCoverUrlFromBody(raw);
+    }
     const sort_order = req.body?.sort_order != null ? Number(req.body.sort_order) : p.sort_order;
     const active = req.body?.active != null ? Boolean(req.body.active) : p.active;
     const status = req.body?.status === 'draft' || req.body?.status === 'published' ? req.body.status : p.status;
@@ -401,7 +426,7 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
       ],
     );
     const out = rows[0];
-    return res.json(out);
+    return res.json(playlistRowOut(out));
   } catch (e) {
     return next(e);
   }
@@ -653,7 +678,7 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
       image_url_saved: out.cover_url || null,
       image_url_returned: out.cover_url || null,
     });
-    return res.json(out);
+    return res.json(playlistRowOut(out));
   } catch (e) {
     return next(e);
   }

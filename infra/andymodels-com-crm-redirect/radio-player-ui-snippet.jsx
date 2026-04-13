@@ -2,17 +2,20 @@
  * Snippets de UI para o AndyRadio no andymodels.com (não faz parte do build do CRM).
  * Copiar e integrar no site: ligação apenas visual — a lógica de áudio continua no vosso player.
  *
- * Dados: GET {CRM}/api/public/radio ou /api/public/radio/v2 → cada playlist tem
- *   curator_name, curator_instagram (strings; vazio = manter texto/link padrão «OldPlay» no site).
+ * Dados: GET {CRM}/api/radio | /api/public/radio | /api/public/radio/v2
+ *   playlist_cover_url (e cover_url) · curator_name · curator_instagram
+ *   fetch com cache: 'no-store'. Ver radioPublicJson.js.
  */
 
 const ORANGE = '#F27121';
 
 /** Texto «Curadoria by …» com link opcional. */
-export function RadioCuratorLine({ curatorName, curatorInstagram, defaultLabel = 'Curadoria by OldPlay', defaultHref }) {
+/** Textos por omissão vêm do site (não fixar marca no CRM). */
+export function RadioCuratorLine({ curatorName, curatorInstagram, defaultLabel = '', defaultHref }) {
   const name = curatorName != null ? String(curatorName).trim() : '';
   const ig = curatorInstagram != null ? String(curatorInstagram).trim() : '';
   if (!name) {
+    if (!defaultLabel) return null;
     return defaultHref ? (
       <a href={defaultHref} className="text-sm text-slate-600 underline hover:text-slate-900">
         {defaultLabel}

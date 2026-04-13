@@ -58,6 +58,172 @@ function formMatchesPlaylist(form, p) {
   );
 }
 
+function IconTrackPrevious({ className = 'h-6 w-6' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M5 5h2.5v14H5V5z" />
+      <path d="M16 6v12L9 12 16 6z" />
+    </svg>
+  );
+}
+
+function IconTrackNext({ className = 'h-6 w-6' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M8 6v12L15 12 8 6z" />
+      <path d="M16.5 5H19v14h-2.5V5z" />
+    </svg>
+  );
+}
+
+/**
+ * Pré-escuta no CRM (UI sem alterar a lógica de áudio do site): barra visível, seek, faixa anterior/seguinte.
+ */
+function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
+  const audioRef = useRef(null);
+  const [idx, setIdx] = useState(0);
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    setIdx(0);
+    setPos(0);
+    setDur(0);
+    setPlaying(false);
+  }, [playlistId]);
+
+  useEffect(() => {
+    if (tracks.length === 0) return;
+    setIdx((i) => Math.min(Math.max(0, i), tracks.length - 1));
+  }, [tracks.length]);
+
+  const cur = tracks[idx];
+  const src = cur?.audio_url;
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a || !src) return;
+    a.src = src;
+    a.load();
+    const onTime = () => setPos(a.currentTime);
+    const onDur = () => {
+      const x = a.duration;
+      setDur(Number.isFinite(x) && x > 0 ? x : 0);
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onEnded = () => {
+      setPlaying(false);
+      if (tracks.length > 1) setIdx((i) => (i + 1) % tracks.length);
+    };
+    a.addEventListener('timeupdate', onTime);
+    a.addEventListener('loadedmetadata', onDur);
+    a.addEventListener('durationchange', onDur);
+    a.addEventListener('play', onPlay);
+    a.addEventListener('pause', onPause);
+    a.addEventListener('ended', onEnded);
+    return () => {
+      a.removeEventListener('timeupdate', onTime);
+      a.removeEventListener('loadedmetadata', onDur);
+      a.removeEventListener('durationchange', onDur);
+      a.removeEventListener('play', onPlay);
+      a.removeEventListener('pause', onPause);
+      a.removeEventListener('ended', onEnded);
+    };
+  }, [src, tracks.length]);
+
+  const pct = dur > 0 ? Math.min(1000, Math.round((pos / dur) * 1000)) : 0;
+  const art = playlistCoverUrl || (cur ? trackCoverImgSrc(cur) : '');
+
+  const goPrev = () => {
+    if (tracks.length === 0) return;
+    setIdx((i) => (i - 1 + tracks.length) % tracks.length);
+  };
+  const goNext = () => {
+    if (tracks.length === 0) return;
+    setIdx((i) => (i + 1) % tracks.length);
+  };
+
+  const togglePlay = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) a.pause();
+    else void a.play().catch(() => {});
+  };
+
+  if (!tracks.length || !cur) return null;
+
+  return (
+    <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-sm font-semibold text-slate-900">Pré-escuta (CRM)</p>
+      <p className="mt-0.5 text-xs text-slate-500">
+        Mesmos ficheiros que o site; a barra e o botão «seguinte» devem corresponder ao player público.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+          {art ? (
+            <img src={art} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <AndyPlaylistCoverPlaceholder />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-slate-900">{cur.title || '—'}</p>
+          <p className="truncate text-xs text-slate-600">{cur.artist || '—'}</p>
+        </div>
+      </div>
+      <audio ref={audioRef} preload="metadata" className="hidden" />
+      <div className="mt-3 flex items-center gap-2">
+        <span className="w-10 shrink-0 text-right text-xs tabular-nums text-slate-600">{fmtDur(pos)}</span>
+        <input
+          type="range"
+          min={0}
+          max={1000}
+          step={1}
+          value={pct}
+          disabled={!dur}
+          onChange={(e) => {
+            const a = audioRef.current;
+            if (!a || !dur) return;
+            const next01 = Number(e.target.value) / 1000;
+            a.currentTime = next01 * dur;
+            setPos(a.currentTime);
+          }}
+          className="h-2 w-full min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-slate-200 accent-[#F27121] [&::-webkit-slider-runnable-track]:h-[3px] [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-slate-200 [&::-webkit-slider-thumb]:mt-[-5px] [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#F27121] [&::-webkit-slider-thumb]:bg-white"
+          aria-label="Posição na faixa"
+        />
+        <span className="w-10 shrink-0 text-xs tabular-nums text-slate-600">{fmtDur(dur)}</span>
+      </div>
+      <div className="mt-3 flex items-center justify-center gap-4 text-slate-800">
+        <button
+          type="button"
+          onClick={goPrev}
+          className="rounded-full p-2 text-slate-800 hover:bg-slate-100"
+          title="Faixa anterior"
+        >
+          <IconTrackPrevious className="h-7 w-7" />
+        </button>
+        <button
+          type="button"
+          onClick={togglePlay}
+          className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+        >
+          {playing ? 'Pausa' : 'Reproduzir'}
+        </button>
+        <button
+          type="button"
+          onClick={goNext}
+          className="rounded-full p-2 text-slate-800 hover:bg-slate-100"
+          title="Faixa seguinte"
+        >
+          <IconTrackNext className="h-7 w-7" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Gestão de playlists e faixas da rádio no site. */
 export default function WebsiteRadioPage() {
   const [playlists, setPlaylists] = useState([]);
@@ -192,12 +358,27 @@ export default function WebsiteRadioPage() {
     setError('');
     setOkMsg('');
     try {
+      const createPayload = {
+        name,
+        status: 'published',
+        active: true,
+        curator_name: '',
+        curator_instagram: '',
+      };
+      console.log('[radio CRM] POST /radio/playlists — payload enviado', createPayload);
       const r = await fetchWithAuth(`${API_BASE}/radio/playlists`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, status: 'published' }),
+        body: JSON.stringify(createPayload),
       });
       const raw = await r.text();
+      let createData;
+      try {
+        createData = raw ? JSON.parse(raw) : null;
+      } catch {
+        createData = raw;
+      }
+      console.log('[radio CRM] POST /radio/playlists — resposta', r.status, createData);
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
       setNewPlName('');
@@ -221,6 +402,10 @@ export default function WebsiteRadioPage() {
     setError('');
     setOkMsg('');
     try {
+      const coverStr =
+        selected.cover_url != null && String(selected.cover_url).trim() !== ''
+          ? String(selected.cover_url).trim()
+          : '';
       const body = {
         name,
         description: String(selected.description ?? ''),
@@ -228,20 +413,29 @@ export default function WebsiteRadioPage() {
         auto_next_playlist: Boolean(editForm.auto_next_playlist),
         active: Boolean(editForm.active),
         slug: selected.slug,
-        cover_url: selected.cover_url,
         sort_order: selected.sort_order,
+        cover_url: coverStr,
+        playlist_cover_url: coverStr,
         curator_name: String(editForm.curator_name ?? '').trim(),
         curator_instagram: String(editForm.curator_instagram ?? '').trim(),
       };
+      console.log('[radio CRM] PUT /radio/playlists/:id — payload enviado', body);
       const r = await fetchWithAuth(`${API_BASE}/radio/playlists/${encodeURIComponent(String(selected.id))}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const raw = await r.text();
+      let saved;
+      try {
+        saved = raw ? JSON.parse(raw) : null;
+      } catch {
+        saved = raw;
+      }
+      console.log('[radio CRM] PUT /radio/playlists/:id — resposta', r.status, saved);
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
-      setOkMsg('Playlist guardada.');
+      setOkMsg('Playlist guardada (persistida no servidor).');
       editFormSyncedForPlaylistId.current = null;
       await loadPlaylists();
     } catch (e) {
@@ -631,6 +825,14 @@ export default function WebsiteRadioPage() {
                       automáticas (ID3 → lojas públicas → modelo).
                     </p>
                   </div>
+                  {editForm.status !== 'published' || editForm.active === false ? (
+                    <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-950">
+                      <strong className="font-semibold">Visível no site:</strong> o JSON público (
+                      <code className="rounded bg-white/80 px-1">/api/public/radio/v2</code>) só inclui playlists com
+                      estado <strong>Publicada</strong> e com <strong>Playlist ativa no site</strong> ativada. Ajuste
+                      abaixo e guarde.
+                    </div>
+                  ) : null}
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <label className="block text-sm text-slate-700 sm:col-span-2">
                       <span className="mb-1 block font-medium text-slate-800">Nome</span>
@@ -649,7 +851,7 @@ export default function WebsiteRadioPage() {
                         onChange={(e) =>
                           setEditForm((f) => (f ? { ...f, curator_name: e.target.value } : f))
                         }
-                        placeholder="Opcional — no site vê-se «Curadoria by …»"
+                        placeholder="Opcional"
                         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
                       />
                     </label>
@@ -731,6 +933,30 @@ export default function WebsiteRadioPage() {
                       modelo aleatório do elenco. Sem upload manual.
                     </p>
                   </div>
+
+                  {!loadingTracks && tracks.length > 0 && selected ? (
+                    <RadioCrmPreviewPlayer
+                      playlistId={selected.id}
+                      tracks={tracks}
+                      playlistCoverUrl={playlistCoverUrl(selected)}
+                    />
+                  ) : null}
+
+                  {selected ? (
+                    <p className="mt-4 text-xs text-slate-600">
+                      <button
+                        type="button"
+                        className="font-medium text-slate-800 underline"
+                        onClick={() => window.open(`${API_BASE}/public/radio`, '_blank', 'noopener,noreferrer')}
+                      >
+                        Abrir JSON público (o que o site deve pedir)
+                      </button>
+                      . O servidor envia cabeçalhos anti-cache; no site use fetch com{' '}
+                      <span className="font-mono text-[11px]">cache: &apos;no-store&apos;</span>. Só playlists{' '}
+                      <strong>publicadas</strong> e <strong>ativas</strong> entram neste JSON — se não vir alterações,
+                      confira o estado da playlist.
+                    </p>
+                  ) : null}
 
                   <div className="mx-auto mt-6 w-full max-w-xl">
                     <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4">

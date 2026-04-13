@@ -1,6 +1,7 @@
 /**
  * API pública para o site Andy (AndyRadio) — sem autenticação.
- * GET /api/radio, /api/public/radio e /api/public/radio/v2 — mesmo JSON (playlists + curator_name / curator_instagram).
+ * GET /api/radio, /api/public/radio e /api/public/radio/v2 — mesmo JSON.
+ * Cada playlist: cover_url, playlist_cover_url (alias), curator_name, curator_instagram.
  */
 
 const express = require('express');
@@ -73,13 +74,17 @@ async function sendPublicRadio(req, res, next) {
 
       const curatorName = p.curator_name != null ? String(p.curator_name).trim() : '';
       const curatorIg = p.curator_instagram != null ? String(p.curator_instagram).trim() : '';
+      const coverRaw = p.cover_url != null && String(p.cover_url).trim() !== '' ? String(p.cover_url).trim() : null;
 
       outPlaylists.push({
         id: p.id,
         name: p.name,
         slug: p.slug,
         description: p.description || '',
-        cover_url: p.cover_url || null,
+        /** Capa da playlist (URL pública). */
+        cover_url: coverRaw,
+        /** Alias explícito para o site — mesmo valor que `cover_url`. */
+        playlist_cover_url: coverRaw,
         curator_name: curatorName || '',
         curator_instagram: curatorIg || '',
         position: p.sort_order,
@@ -88,6 +93,11 @@ async function sendPublicRadio(req, res, next) {
       });
     }
 
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
     return res.json({
       version: 2,
       crm_public_base: crmPublicBase || null,
@@ -138,6 +148,11 @@ router.get('/public/radio/tracks-only', async (req, res, next) => {
       }
     }
 
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
     return res.json({
       version: 1,
       source: 'crm',

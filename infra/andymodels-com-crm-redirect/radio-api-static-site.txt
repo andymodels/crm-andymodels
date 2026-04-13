@@ -1,19 +1,29 @@
 AndyRadio — front estático do andymodels.com (sem backend no domínio do site)
 ================================================================================
 
-O player da página Rádio do site deve obter o JSON a partir do MESMO backend do CRM,
-por exemplo:
+Endpoints (mesmo JSON):
+  GET https://SEU-CRM/api/radio
+  GET https://SEU-CRM/api/public/radio
+  GET https://SEU-CRM/api/public/radio/v2
 
-  https://SEU-CRM.onrender.com/api/public/radio/v2
+Substitua SEU-CRM por PUBLIC_APP_URL do CRM (sem barra final).
 
-Substitua SEU-CRM pelo valor de PUBLIC_APP_URL (sem barra final).
+Por playlist, usar no player:
+  playlist_cover_url  (ou cover_url — duplicado) → imagem da capa da playlist
+  curator_name        → texto de curadoria (se vazio, o site define o fallback)
+  curator_instagram   → URL do link (se vazio, não linkar ou usar fallback)
 
-No código do site (fetch / axios), use essa URL absoluta ou uma variável de ambiente
-do build, por exemplo:
+Fetch no site (evitar cache antigo no browser):
+  fetch(url, { cache: 'no-store', credentials: 'omit' })
 
+O servidor CRM envia Cache-Control: no-store neste JSON.
+
+Variável de build (exemplo):
   NEXT_PUBLIC_RADIO_JSON_URL=https://....onrender.com/api/public/radio/v2
 
-A resposta inclui os campos "crm_public_base" e "radio_json_url" para confirmar a origem.
+Ver exemplo mínimo: public-radio-response.example.json
+
+Helpers JS: radioPublicJson.js (playlistCoverArtUrl, curatorDisplay).
 
 Não é necessário outro Express/API só para a rádio no andymodels.com.
 
