@@ -52,7 +52,9 @@ function formMatchesPlaylist(form, p) {
     form.name.trim() === String(p.name || '').trim() &&
     form.status === p.status &&
     (form.auto_next_playlist !== false) === (p.auto_next_playlist !== false) &&
-    Boolean(form.active) === Boolean(p.active)
+    Boolean(form.active) === Boolean(p.active) &&
+    String(form.curator_name ?? '').trim() === String(p.curator_name ?? '').trim() &&
+    String(form.curator_instagram ?? '').trim() === String(p.curator_instagram ?? '').trim()
   );
 }
 
@@ -160,6 +162,8 @@ export default function WebsiteRadioPage() {
       status: p.status === 'draft' ? 'draft' : 'published',
       auto_next_playlist: p.auto_next_playlist !== false,
       active: p.active !== false,
+      curator_name: String(p.curator_name ?? '').trim(),
+      curator_instagram: String(p.curator_instagram ?? '').trim(),
     });
   }, [selectedId, playlists]);
 
@@ -226,6 +230,8 @@ export default function WebsiteRadioPage() {
         slug: selected.slug,
         cover_url: selected.cover_url,
         sort_order: selected.sort_order,
+        curator_name: String(editForm.curator_name ?? '').trim(),
+        curator_instagram: String(editForm.curator_instagram ?? '').trim(),
       };
       const r = await fetchWithAuth(`${API_BASE}/radio/playlists/${encodeURIComponent(String(selected.id))}`, {
         method: 'PUT',
@@ -632,6 +638,30 @@ export default function WebsiteRadioPage() {
                         type="text"
                         value={editForm.name}
                         onChange={(e) => setEditForm((f) => (f ? { ...f, name: e.target.value } : f))}
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700 sm:col-span-2">
+                      <span className="mb-1 block font-medium text-slate-800">Nome do curador</span>
+                      <input
+                        type="text"
+                        value={editForm.curator_name ?? ''}
+                        onChange={(e) =>
+                          setEditForm((f) => (f ? { ...f, curator_name: e.target.value } : f))
+                        }
+                        placeholder="Opcional — no site vê-se «Curadoria by …»"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-700 sm:col-span-2">
+                      <span className="mb-1 block font-medium text-slate-800">Instagram do curador</span>
+                      <input
+                        type="url"
+                        value={editForm.curator_instagram ?? ''}
+                        onChange={(e) =>
+                          setEditForm((f) => (f ? { ...f, curator_instagram: e.target.value } : f))
+                        }
+                        placeholder="https://instagram.com/… ou @utilizador"
                         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
                       />
                     </label>

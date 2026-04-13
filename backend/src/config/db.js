@@ -927,6 +927,14 @@ const initDb = async () => {
     ADD COLUMN IF NOT EXISTS auto_next_playlist BOOLEAN NOT NULL DEFAULT TRUE;
   `);
   await pool.query(`
+    ALTER TABLE radio_playlists
+    ADD COLUMN IF NOT EXISTS curator_name TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE radio_playlists
+    ADD COLUMN IF NOT EXISTS curator_instagram TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
     ALTER TABLE radio_tracks
     ADD COLUMN IF NOT EXISTS cover_modelo_id INTEGER REFERENCES modelos(id) ON DELETE SET NULL;
   `);

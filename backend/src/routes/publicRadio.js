@@ -1,6 +1,6 @@
 /**
  * API pública para o site Andy (AndyRadio) — sem autenticação.
- * GET /api/public/radio/v2 — playlists ativas + faixas com URLs absolutas.
+ * GET /api/radio, /api/public/radio e /api/public/radio/v2 — mesmo JSON (playlists + curator_name / curator_instagram).
  */
 
 const express = require('express');
@@ -20,7 +20,6 @@ function mapTrackRow(t, playlistMeta) {
     filename: String(t.audio_storage_path || '').split('/').pop() || '',
     url,
     cover_url: t.cover_url || null,
-    /** Nome da modelo quando a capa foi gerada pelo CRM (texto laranja também está desenhado na imagem). O site pode usar isto em CSS laranja. */
     modelo_nome: modeloNome,
     cover_modelo_id: t.cover_modelo_id != null ? Number(t.cover_modelo_id) : null,
     duration_sec: t.duration_sec != null ? Number(t.duration_sec) : null,
@@ -30,11 +29,7 @@ function mapTrackRow(t, playlistMeta) {
   };
 }
 
-/**
- * Contrato para o front do site: playlists ordenadas, cada uma com tracks[].
- * Inclui `tracks_flat` com todas as faixas (ordem: playlist, depois faixa) para compatível com fila única.
- */
-router.get('/public/radio/v2', async (req, res, next) => {
+async function sendPublicRadio(req, res, next) {
   if (!pool) {
     return res.status(503).json({ message: 'Base de dados indisponível.' });
   }
@@ -42,12 +37,15 @@ router.get('/public/radio/v2', async (req, res, next) => {
     const crmPublicBase = String(process.env.PUBLIC_APP_URL || '')
       .trim()
       .replace(/\/$/, '');
+    const pathForUrl = String(req.originalUrl || '').split('?')[0] || '/api/public/radio';
     const selfUrl =
       crmPublicBase !== ''
-        ? `${crmPublicBase}/api/public/radio/v2`
-        : `${req.protocol}://${req.get('host')}/api/public/radio/v2`;
+        ? `${crmPublicBase}${pathForUrl}`
+        : `${req.protocol}://${req.get('host')}${pathForUrl}`;
+
     const { rows: playlists } = await pool.query(
-      `SELECT id, name, slug, description, cover_url, sort_order, active, status, auto_next_playlist
+      `SELECT id, name, slug, description, cover_url, sort_order, active, status, auto_next_playlist,
+              curator_name, curator_instagram
        FROM radio_playlists
        WHERE active = TRUE AND status = 'published'
        ORDER BY sort_order ASC, id ASC`,
@@ -72,20 +70,24 @@ router.get('/public/radio/v2', async (req, res, next) => {
       };
       const mapped = tracks.map((t) => mapTrackRow(t, meta));
       mapped.forEach((t) => tracksFlat.push(t));
+
+      const curatorName = p.curator_name != null ? String(p.curator_name).trim() : '';
+      const curatorIg = p.curator_instagram != null ? String(p.curator_instagram).trim() : '';
+
       outPlaylists.push({
         id: p.id,
         name: p.name,
         slug: p.slug,
         description: p.description || '',
         cover_url: p.cover_url || null,
+        curator_name: curatorName || '',
+        curator_instagram: curatorIg || '',
         position: p.sort_order,
-        /** Se true, o player do site pode passar à playlist seguinte quando esta terminar (última faixa). */
         auto_next_playlist: p.auto_next_playlist !== false,
         tracks: mapped,
       });
     }
 
-    // crm_public_base / radio_json_url: o front estático do andymodels.com deve usar este endpoint no domínio do CRM (sem API no site).
     return res.json({
       version: 2,
       crm_public_base: crmPublicBase || null,
@@ -97,12 +99,15 @@ router.get('/public/radio/v2', async (req, res, next) => {
   } catch (e) {
     return next(e);
   }
-});
+}
+
+/** Alias curto para o site (mesmo JSON que /api/public/radio). */
+router.get('/radio', sendPublicRadio);
+router.get('/public/radio', sendPublicRadio);
+router.get('/public/radio/v2', sendPublicRadio);
 
 /**
  * Lista única de faixas (ordem: playlists publicadas, depois faixas por sort_order).
- * Útil para o site trocar fetch('/api/radio') por fetch(CRM_URL) com o mínimo de mapeamento:
- * const { tracks } = await r.json();
  */
 router.get('/public/radio/tracks-only', async (req, res, next) => {
   if (!pool) {

@@ -44,6 +44,18 @@ const coverUpload = multer({
   limits: { fileSize: 8 * 1024 * 1024, files: 1 },
 });
 
+function normalizeCuratorName(raw) {
+  return raw != null ? String(raw).trim().slice(0, 200) : '';
+}
+
+/** URL do Instagram do curador; vazio permitido. */
+function normalizeCuratorInstagram(raw) {
+  let s = raw != null ? String(raw).trim() : '';
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = `https://${s.replace(/^\/+/, '')}`;
+  return s.slice(0, 500);
+}
+
 function slugify(name) {
   const s = String(name || '')
     .toLowerCase()
@@ -282,10 +294,12 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
     const status = req.body?.status === 'draft' ? 'draft' : 'published';
     const cover_url = null;
     const auto_next_playlist = req.body?.auto_next_playlist === false ? false : true;
+    const curator_name = normalizeCuratorName(req.body?.curator_name);
+    const curator_instagram = normalizeCuratorInstagram(req.body?.curator_instagram);
 
     const { rows } = await pool.query(
-      `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, auto_next_playlist, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, auto_next_playlist, curator_name, curator_instagram, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
        RETURNING *`,
       [
         name,
@@ -296,6 +310,8 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
         active,
         status,
         auto_next_playlist,
+        curator_name,
+        curator_instagram,
       ],
     );
     const created = rows[0];
@@ -358,12 +374,18 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
     const status = req.body?.status === 'draft' || req.body?.status === 'published' ? req.body.status : p.status;
     const auto_next_playlist =
       req.body?.auto_next_playlist != null ? Boolean(req.body.auto_next_playlist) : p.auto_next_playlist;
+    const curator_name =
+      req.body?.curator_name !== undefined ? normalizeCuratorName(req.body.curator_name) : normalizeCuratorName(p.curator_name);
+    const curator_instagram =
+      req.body?.curator_instagram !== undefined
+        ? normalizeCuratorInstagram(req.body.curator_instagram)
+        : normalizeCuratorInstagram(p.curator_instagram);
 
     const { rows } = await pool.query(
       `UPDATE radio_playlists SET
          name = $1, slug = $2, description = $3, cover_url = $4, sort_order = $5, active = $6, status = $7,
-         auto_next_playlist = $8, updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
+         auto_next_playlist = $8, curator_name = $9, curator_instagram = $10, updated_at = NOW()
+       WHERE id = $11 RETURNING *`,
       [
         name,
         slug,
@@ -373,6 +395,8 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
         active,
         status,
         auto_next_playlist,
+        curator_name,
+        curator_instagram,
         id,
       ],
     );
