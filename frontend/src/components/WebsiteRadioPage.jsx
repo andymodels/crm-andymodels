@@ -9,6 +9,25 @@ function fmtDur(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** URL da capa da playlist (API: `cover_url`; alias opcional `playlist_cover_url`). */
+function playlistCoverUrl(p) {
+  if (!p) return '';
+  const u = p.playlist_cover_url ?? p.cover_url;
+  const s = u != null ? String(u).trim() : '';
+  return s;
+}
+
+function AndyPlaylistCoverPlaceholder() {
+  return (
+    <div
+      className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-700 to-slate-900"
+      aria-hidden
+    >
+      <span className="select-none text-lg font-black leading-none text-orange-500">A</span>
+    </div>
+  );
+}
+
 function formMatchesPlaylist(form, p) {
   if (!form || !p) return true;
   return (
@@ -42,7 +61,9 @@ export default function WebsiteRadioPage() {
   const [editForm, setEditForm] = useState(null);
   /** Evita repor o rascunho ao dar refresh às playlists (perdia edição não guardada). */
   const editFormSyncedForPlaylistId = useRef(null);
-  const playlistCoverInputRef = useRef(null);
+  const playlistCoverFileInputRef = useRef(null);
+  /** ID da playlist para o próximo ficheiro escolhido (ref evita corrida com setState). */
+  const playlistCoverUploadTargetIdRef = useRef(null);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -386,8 +407,8 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const uploadPlaylistCover = async (file) => {
-    if (!file?.size || selectedId == null) return;
+  const uploadPlaylistCover = async (playlistId, file) => {
+    if (!file?.size || playlistId == null) return;
     setSaving(true);
     setError('');
     setOkMsg('');
@@ -395,20 +416,27 @@ export default function WebsiteRadioPage() {
       const fd = new FormData();
       fd.append('cover', file);
       const r = await fetchWithAuth(
-        `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/cover`,
+        `${API_BASE}/radio/playlists/${encodeURIComponent(String(playlistId))}/cover`,
         { method: 'POST', body: fd, timeoutMs: API_REQUEST_MS_BULK },
       );
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
+      const updated = raw ? JSON.parse(raw) : {};
+      setPlaylists((prev) => prev.map((pl) => (pl.id === playlistId ? { ...pl, ...updated } : pl)));
       setOkMsg('Capa da playlist atualizada.');
       editFormSyncedForPlaylistId.current = null;
-      await loadPlaylists();
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro.');
     } finally {
       setSaving(false);
     }
+  };
+
+  const openPlaylistCoverPicker = (playlistId, e) => {
+    e?.stopPropagation?.();
+    playlistCoverUploadTargetIdRef.current = playlistId;
+    queueMicrotask(() => playlistCoverFileInputRef.current?.click());
   };
 
   const onPickAudioFiles = (fileList) => {
@@ -476,8 +504,26 @@ export default function WebsiteRadioPage() {
         <aside className="space-y-4">
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Playlists</h4>
-            <p className="mt-0.5 text-xs text-slate-500">Arraste para ordenar · clique para abrir</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Arraste para ordenar · clique no nome para abrir · miniatura à direita para alterar capa
+            </p>
           </div>
+          <input
+            ref={playlistCoverFileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            aria-hidden
+            tabIndex={-1}
+            disabled={saving}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              const pid = playlistCoverUploadTargetIdRef.current;
+              playlistCoverUploadTargetIdRef.current = null;
+              e.target.value = '';
+              if (f && pid != null) uploadPlaylistCover(pid, f);
+            }}
+          />
           <div className="flex gap-2">
             <input
               type="text"
@@ -496,41 +542,74 @@ export default function WebsiteRadioPage() {
             </button>
           </div>
           <ul className="space-y-2">
-            {playlists.map((p, idx) => (
-              <li
-                key={p.id}
-                draggable={!saving}
-                onDragStart={() => setPlDragFrom(idx)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => {
-                  if (plDragFrom == null) return;
-                  reorderPlaylists(plDragFrom, idx);
-                  setPlDragFrom(null);
-                }}
-                onDragEnd={() => setPlDragFrom(null)}
-                className={`cursor-grab rounded-xl border bg-white px-3 py-2.5 shadow-sm active:cursor-grabbing ${
-                  selectedId === p.id ? 'border-amber-400 ring-1 ring-amber-300' : 'border-slate-200'
-                } ${plDragFrom === idx ? 'ring-2 ring-amber-400' : ''}`}
-              >
-                <button type="button" onClick={() => setSelectedId(p.id)} className="w-full text-left">
-                  <p className="text-sm font-semibold text-slate-900">{p.name}</p>
-                  <p className="mt-0.5 text-[11px] text-slate-500">
-                    {p.track_count ?? 0} faixas · {p.status === 'draft' ? 'Rascunho' : 'Publicada'} ·{' '}
-                    {p.active !== false ? 'Ativa' : 'Inativa'}
-                  </p>
-                </button>
-                <div className="mt-2 flex justify-end border-t border-slate-100 pt-2">
-                  <button
-                    type="button"
-                    className="text-xs text-red-600 hover:underline"
-                    disabled={saving}
-                    onClick={() => deletePlaylist(p)}
-                  >
-                    Apagar
-                  </button>
-                </div>
-              </li>
-            ))}
+            {playlists.map((p, idx) => {
+              const coverSrc = playlistCoverUrl(p);
+              return (
+                <li
+                  key={p.id}
+                  draggable={!saving}
+                  onDragStart={() => setPlDragFrom(idx)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => {
+                    if (plDragFrom == null) return;
+                    reorderPlaylists(plDragFrom, idx);
+                    setPlDragFrom(null);
+                  }}
+                  onDragEnd={() => setPlDragFrom(null)}
+                  className={`flex gap-3 rounded-xl border bg-white px-3 py-2.5 shadow-sm ${
+                    selectedId === p.id ? 'border-amber-400 ring-1 ring-amber-300' : 'border-slate-200'
+                  } ${plDragFrom === idx ? 'ring-2 ring-amber-400' : ''} cursor-grab active:cursor-grabbing`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(p.id)}
+                      className="w-full text-left"
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{p.name}</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        {p.track_count ?? 0} faixas · {p.status === 'draft' ? 'Rascunho' : 'Publicada'} ·{' '}
+                        {p.active !== false ? 'Ativa' : 'Inativa'}
+                      </p>
+                    </button>
+                    <div className="mt-2 flex justify-start border-t border-slate-100 pt-2">
+                      <button
+                        type="button"
+                        className="text-xs text-red-600 hover:underline"
+                        disabled={saving}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deletePlaylist(p);
+                        }}
+                      >
+                        Apagar
+                      </button>
+                    </div>
+                  </div>
+                  <div className="shrink-0 self-start pt-0.5">
+                    <button
+                      type="button"
+                      title="Alterar capa da playlist"
+                      disabled={saving}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => openPlaylistCoverPicker(p.id, e)}
+                      className="relative h-14 w-14 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm transition hover:border-slate-300 hover:ring-2 hover:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {coverSrc ? (
+                        <img
+                          src={coverSrc}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <AndyPlaylistCoverPlaceholder />
+                      )}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </aside>
 
@@ -543,43 +622,11 @@ export default function WebsiteRadioPage() {
             <>
               {editForm && selected ? (
                 <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
-                    <div>
-                      <h4 className="text-sm font-semibold text-slate-900">Detalhes da playlist</h4>
-                      <p className="mt-0.5 text-xs text-slate-500">Nome, estado e opções</p>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <input
-                        ref={playlistCoverInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        className="sr-only"
-                        disabled={saving}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) uploadPlaylistCover(f);
-                          e.target.value = '';
-                        }}
-                      />
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => playlistCoverInputRef.current?.click()}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        Alterar capa da playlist
-                      </button>
-                      {selected?.cover_url ? (
-                        <a
-                          href={selected.cover_url}
-                          className="text-xs font-medium text-slate-600 hover:underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Ver capa
-                        </a>
-                      ) : null}
-                    </div>
+                  <div className="border-b border-slate-100 pb-4">
+                    <h4 className="text-sm font-semibold text-slate-900">Detalhes da playlist</h4>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Nome, estado e opções. Capa: clique na miniatura da playlist na coluna à esquerda.
+                    </p>
                   </div>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <label className="block text-sm text-slate-700 sm:col-span-2">
