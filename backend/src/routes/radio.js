@@ -577,6 +577,44 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
   }
 });
 
+/** Nova capa automática (outra modelo); sem upload manual. */
+router.post('/radio/tracks/:trackId/cover/regenerate-model', async (req, res, next) => {
+  try {
+    const trackId = Number(req.params.trackId);
+    if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
+    if (!radioCover.autoCoverFromModelEnabled()) {
+      return res.status(400).json({ message: 'Capa automática por modelo está desativada no servidor.' });
+    }
+
+    const cur = await pool.query(`SELECT id, cover_url, cover_modelo_id FROM radio_tracks WHERE id = $1`, [trackId]);
+    if (!cur.rows.length) return res.status(404).json({ message: 'Faixa não encontrada.' });
+    const t = cur.rows[0];
+    const excludeId = t.cover_modelo_id != null ? Number(t.cover_modelo_id) : null;
+    const gen = await radioCover.generateFemaleModelCoverUrl(
+      excludeId != null && Number.isFinite(excludeId) ? { exclude_modelo_id: excludeId } : {},
+    );
+    if (!gen.ok) {
+      return res.status(400).json({ message: gen.reason || 'Não foi possível gerar capa.' });
+    }
+
+    const oldCover = t.cover_url ? storage.relativePathFromPublicUrl(t.cover_url) : null;
+    const { rows } = await pool.query(
+      `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+      [gen.publicUrl, gen.modelo_id, trackId],
+    );
+    if (oldCover) {
+      try {
+        await storage.removeFile(oldCover);
+      } catch (_e) {
+        /* */
+      }
+    }
+    return res.json({ ...rows[0], audio_url: storage.getPublicUrl(rows[0].audio_storage_path) });
+  } catch (e) {
+    return next(e);
+  }
+});
+
 router.post('/radio/tracks/:trackId/cover', coverUpload.single('cover'), async (req, res, next) => {
   try {
     const trackId = Number(req.params.trackId);

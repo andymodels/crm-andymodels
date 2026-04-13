@@ -13,7 +13,6 @@ function formMatchesPlaylist(form, p) {
   if (!form || !p) return true;
   return (
     form.name.trim() === String(p.name || '').trim() &&
-    String(form.description || '') === String(p.description || '') &&
     form.status === p.status &&
     (form.auto_next_playlist !== false) === (p.auto_next_playlist !== false) &&
     Boolean(form.active) === Boolean(p.active)
@@ -43,6 +42,7 @@ export default function WebsiteRadioPage() {
   const [editForm, setEditForm] = useState(null);
   /** Evita repor o rascunho ao dar refresh às playlists (perdia edição não guardada). */
   const editFormSyncedForPlaylistId = useRef(null);
+  const playlistCoverInputRef = useRef(null);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -119,7 +119,6 @@ export default function WebsiteRadioPage() {
     editFormSyncedForPlaylistId.current = selectedId;
     setEditForm({
       name: p.name || '',
-      description: p.description ?? '',
       status: p.status === 'draft' ? 'draft' : 'published',
       auto_next_playlist: p.auto_next_playlist !== false,
       active: p.active !== false,
@@ -182,7 +181,7 @@ export default function WebsiteRadioPage() {
     try {
       const body = {
         name,
-        description: String(editForm.description ?? ''),
+        description: String(selected.description ?? ''),
         status: editForm.status === 'draft' ? 'draft' : 'published',
         auto_next_playlist: Boolean(editForm.auto_next_playlist),
         active: Boolean(editForm.active),
@@ -365,8 +364,30 @@ export default function WebsiteRadioPage() {
     }
   };
 
-  const uploadTrackCover = async (trackId, file) => {
-    if (!file?.size) return;
+  const regenerateTrackCoverFromModel = async (trackId) => {
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const r = await fetchWithAuth(
+        `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover/regenerate-model`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      if (!r.ok) throw new Error(parseErr(raw, r));
+      setOkMsg('Capa da faixa regenerada (nova modelo).');
+      await loadTracks(selectedId);
+      await loadPlaylists();
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const uploadPlaylistCover = async (file) => {
+    if (!file?.size || selectedId == null) return;
     setSaving(true);
     setError('');
     setOkMsg('');
@@ -374,18 +395,14 @@ export default function WebsiteRadioPage() {
       const fd = new FormData();
       fd.append('cover', file);
       const r = await fetchWithAuth(
-        `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover`,
-        {
-          method: 'POST',
-          body: fd,
-          timeoutMs: API_REQUEST_MS_BULK,
-        },
+        `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/cover`,
+        { method: 'POST', body: fd, timeoutMs: API_REQUEST_MS_BULK },
       );
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
-      setOkMsg('Capa atualizada com a imagem enviada.');
-      await loadTracks(selectedId);
+      setOkMsg('Capa da playlist atualizada.');
+      editFormSyncedForPlaylistId.current = null;
       await loadPlaylists();
     } catch (e) {
       setError(e?.message ? String(e.message) : 'Erro.');
@@ -531,16 +548,38 @@ export default function WebsiteRadioPage() {
                       <h4 className="text-sm font-semibold text-slate-900">Detalhes da playlist</h4>
                       <p className="mt-0.5 text-xs text-slate-500">Nome, estado e opções</p>
                     </div>
-                    {selected?.cover_url ? (
-                      <a
-                        href={selected.cover_url}
-                        className="text-xs font-medium text-amber-700 hover:underline"
-                        target="_blank"
-                        rel="noreferrer"
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <input
+                        ref={playlistCoverInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="sr-only"
+                        disabled={saving}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) uploadPlaylistCover(f);
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => playlistCoverInputRef.current?.click()}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                       >
-                        Ver capa da playlist
-                      </a>
-                    ) : null}
+                        Alterar capa da playlist
+                      </button>
+                      {selected?.cover_url ? (
+                        <a
+                          href={selected.cover_url}
+                          className="text-xs font-medium text-slate-600 hover:underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Ver capa
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <label className="block text-sm text-slate-700 sm:col-span-2">
@@ -549,15 +588,6 @@ export default function WebsiteRadioPage() {
                         type="text"
                         value={editForm.name}
                         onChange={(e) => setEditForm((f) => (f ? { ...f, name: e.target.value } : f))}
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
-                      />
-                    </label>
-                    <label className="block text-sm text-slate-700 sm:col-span-2">
-                      <span className="mb-1 block font-medium text-slate-800">Descrição (opcional)</span>
-                      <textarea
-                        value={editForm.description}
-                        onChange={(e) => setEditForm((f) => (f ? { ...f, description: e.target.value } : f))}
-                        rows={2}
                         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
                       />
                     </label>
@@ -623,18 +653,19 @@ export default function WebsiteRadioPage() {
                       ) : null}
                     </p>
                     <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
-                      As capas vêm do ficheiro de áudio quando existem; caso contrário são geradas automaticamente. Pode
-                      substituir por imagem em cada música.
+                      Capas das faixas: do ficheiro de áudio (ID3) quando existem; senão modelo automática. Pode pedir
+                      outra modelo por faixa. A capa da playlist (acima) é só a imagem que enviar — não é alterada ao
+                      adicionar músicas.
                     </p>
                   </div>
 
-                  <div className="mx-auto mt-8 w-full max-w-2xl">
-                    <div className="rounded-2xl border-2 border-amber-400/90 bg-gradient-to-b from-amber-50 via-white to-amber-50/30 p-6 shadow-lg ring-1 ring-amber-200/60 sm:p-8">
-                      <p className="text-center text-sm font-semibold text-slate-900">Adicionar músicas</p>
-                      <p className="mt-1 text-center text-xs text-slate-500">
-                        MP3 e outros formatos suportados · arraste ou clique para escolher
+                  <div className="mx-auto mt-6 w-full max-w-xl">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-4">
+                      <p className="text-center text-sm font-medium text-slate-900">Adicionar músicas</p>
+                      <p className="mt-0.5 text-center text-xs text-slate-500">
+                        MP3 e outros formatos · arraste ou clique
                       </p>
-                      <div className="mt-6 flex flex-col items-center">
+                      <div className="mt-3 flex flex-col items-center">
                         <input
                           type="file"
                           accept="audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/wav,audio/flac,.mp3,.m4a,.wav"
@@ -650,13 +681,13 @@ export default function WebsiteRadioPage() {
                         />
                         <label
                           htmlFor="radio-bulk-audio-input"
-                          className={`flex w-full max-w-md cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-amber-500 bg-amber-100/80 px-6 py-6 text-center text-base font-bold text-amber-950 shadow-inner transition hover:border-amber-600 hover:bg-amber-100 sm:py-8 sm:text-lg ${
+                          className={`flex w-full max-w-sm cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white px-4 py-2.5 text-center text-sm font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 ${
                             saving ? 'pointer-events-none opacity-60' : ''
                           }`}
                         >
                           Escolher ficheiros MP3
                         </label>
-                        <div className="mt-5 flex w-full max-w-md flex-wrap justify-center gap-3">
+                        <div className="mt-3 flex w-full max-w-sm flex-wrap items-center justify-center gap-2">
                           <button
                             type="button"
                             disabled={saving || bulkUploadStatus != null || pendingAudioFiles.length === 0}
@@ -666,7 +697,7 @@ export default function WebsiteRadioPage() {
                                 : 'Enviar os ficheiros selecionados'
                             }
                             onClick={sendPendingAudio}
-                            className="min-h-[48px] min-w-[160px] flex-1 rounded-xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white shadow-md hover:bg-slate-800 disabled:opacity-50 sm:flex-none"
+                            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                           >
                             Enviar músicas
                           </button>
@@ -674,18 +705,18 @@ export default function WebsiteRadioPage() {
                             type="button"
                             disabled={saving || pendingAudioFiles.length === 0}
                             onClick={clearPendingAudio}
-                            className="min-h-[48px] rounded-xl border-2 border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                           >
                             Limpar
                           </button>
                         </div>
-                        <p className="mt-3 text-center text-xs text-slate-600">
+                        <p className="mt-2 text-center text-xs text-slate-600">
                           {pendingAudioFiles.length === 0
                             ? 'Nenhum ficheiro selecionado.'
                             : `${pendingAudioFiles.length} na fila para envio.`}
                         </p>
                         {pendingAudioFiles.length > 0 ? (
-                          <ul className="mt-3 max-h-28 w-full max-w-md overflow-y-auto rounded-lg border border-amber-200/60 bg-white/90 p-3 text-left text-xs text-slate-700 shadow-inner">
+                          <ul className="mt-2 max-h-24 w-full max-w-sm overflow-y-auto rounded border border-slate-200 bg-white p-2 text-left text-xs text-slate-700">
                             {pendingAudioFiles.map((f) => (
                               <li key={f.name + f.size} className="truncate py-0.5">
                                 {f.name}
@@ -737,20 +768,14 @@ export default function WebsiteRadioPage() {
                             {t.artist || '—'} · {fmtDur(t.duration_sec)}
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-3">
-                            <label className="cursor-pointer text-xs font-medium text-slate-600 hover:text-amber-800">
-                              <input
-                                type="file"
-                                accept="image/jpeg,image/png,image/webp"
-                                className="sr-only"
-                                disabled={saving}
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0];
-                                  if (f) uploadTrackCover(t.id, f);
-                                  e.target.value = '';
-                                }}
-                              />
-                              Alterar capa
-                            </label>
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => regenerateTrackCoverFromModel(t.id)}
+                              className="text-xs font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:opacity-50"
+                            >
+                              Nova capa (modelo)
+                            </button>
                             <button
                               type="button"
                               className="text-xs text-red-600 hover:underline"

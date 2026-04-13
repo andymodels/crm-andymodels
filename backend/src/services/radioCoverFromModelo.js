@@ -107,6 +107,32 @@ async function pickRandomFemaleModel(client) {
   return rows[0] || null;
 }
 
+/** Aleatória entre o elenco; se `excludeModeloId` for definido, tenta outra modelo primeiro. */
+async function pickRandomFemaleModelExcluding(excludeModeloId) {
+  const ex =
+    excludeModeloId != null && Number.isFinite(Number(excludeModeloId)) ? Number(excludeModeloId) : null;
+  const q =
+    ex != null
+      ? `
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
+    FROM modelos
+    WHERE ${SQL_WHERE_FEMALE_URL}
+      AND id <> $1
+    ORDER BY RANDOM()
+    LIMIT 1
+  `
+      : `
+    SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
+    FROM modelos
+    WHERE ${SQL_WHERE_FEMALE_URL}
+    ORDER BY RANDOM()
+    LIMIT 1
+  `;
+  const { rows } = ex != null ? await pool.query(q, [ex]) : await pool.query(q);
+  if (rows[0]) return rows[0];
+  return pickRandomFemaleModel(null);
+}
+
 async function pickFemaleModelById(client, modeloId) {
   const q = `
     SELECT id, nome, TRIM(foto_perfil_base64) AS foto_url
@@ -169,10 +195,17 @@ function autoCoverFromModelEnabled() {
  */
 async function generateFemaleModelCoverUrl(options = {}) {
   const modeloId = options.modelo_id != null ? Number(options.modelo_id) : null;
+  const excludeModeloId =
+    options.exclude_modelo_id != null && Number.isFinite(Number(options.exclude_modelo_id))
+      ? Number(options.exclude_modelo_id)
+      : null;
   let m;
   if (Number.isFinite(modeloId)) {
     m = await pickFemaleModelById(null, modeloId);
     if (!m) return { ok: false, reason: 'modelo_nao_encontrado_ou_nao_feminino' };
+  } else if (excludeModeloId != null) {
+    m = await pickRandomFemaleModelExcluding(excludeModeloId);
+    if (!m) return { ok: false, reason: 'sem_modelos_femininos_com_foto' };
   } else {
     m = await pickRandomFemaleModel(null);
     if (!m) return { ok: false, reason: 'sem_modelos_femininos_com_foto' };
@@ -189,6 +222,7 @@ async function generateFemaleModelCoverUrl(options = {}) {
 
 module.exports = {
   pickRandomFemaleModel,
+  pickRandomFemaleModelExcluding,
   pickFemaleModelById,
   fetchImageBuffer,
   renderCoverJpeg,
