@@ -16,6 +16,20 @@ const radioCover = require('../services/radioCoverFromModelo');
 
 const router = express.Router();
 
+/**
+ * Debug: rastrear URLs de capa (BD: `cover_url`). Sem cache no servidor — cada upload gera novo path.
+ * Campos alinhados ao pedido de diagnóstico: recebida → gravada → devolvida.
+ */
+function logRadioCoverImage(event, payload) {
+  const line = {
+    scope: 'radio_cover',
+    event,
+    ts: new Date().toISOString(),
+    ...payload,
+  };
+  console.log('[radio/cover]', JSON.stringify(line));
+}
+
 const MAX_TRACKS_PER_PLAYLIST = 50;
 const MAX_BULK = 25;
 
@@ -192,7 +206,26 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       sortOrder,
     ],
   );
-  return rows[0];
+  const row = rows[0];
+  let coverSource = 'none';
+  if (overrides.cover_url != null) coverSource = 'override';
+  else if (embeddedCoverBuffer && embeddedCoverBuffer.length > 0 && coverUrl) coverSource = 'id3_embedded';
+  else if (coverUrl && coverModeloId != null) coverSource = 'model_auto';
+  else if (coverUrl) coverSource = 'other';
+  let imageReceived = null;
+  if (coverSource === 'override') imageReceived = String(overrides.cover_url);
+  else if (coverSource === 'id3_embedded') imageReceived = '(apic_buffer_in_mp3)';
+  else if (coverSource === 'model_auto') imageReceived = '(generated_model_cover)';
+  else imageReceived = coverUrl || null;
+  logRadioCoverImage('track_insert_cover', {
+    playlist_id: playlistId,
+    track_id: row.id,
+    cover_source: coverSource,
+    image_url_received: imageReceived,
+    image_url_saved: row.cover_url || null,
+    image_url_returned: row.cover_url || null,
+  });
+  return row;
 }
 
 function playlistFullPayload(currentCount) {
@@ -256,7 +289,14 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
         auto_next_playlist,
       ],
     );
-    return res.status(201).json(rows[0]);
+    const created = rows[0];
+    logRadioCoverImage('playlist_create', {
+      playlist_id: created.id,
+      image_url_received: cover_url,
+      image_url_saved: created.cover_url || null,
+      image_url_returned: created.cover_url || null,
+    });
+    return res.status(201).json(created);
   } catch (e) {
     return next(e);
   }
@@ -327,7 +367,17 @@ router.put('/radio/playlists/:id', express.json(), async (req, res, next) => {
         id,
       ],
     );
-    return res.json(rows[0]);
+    const out = rows[0];
+    logRadioCoverImage('playlist_put', {
+      playlist_id: id,
+      cover_url_in_request: req.body?.cover_url !== undefined,
+      image_url_received:
+        req.body?.cover_url !== undefined ? (req.body.cover_url ? String(req.body.cover_url) : null) : null,
+      previous_cover_url: p.cover_url || null,
+      image_url_saved: out.cover_url || null,
+      image_url_returned: out.cover_url || null,
+    });
+    return res.json(out);
   } catch (e) {
     return next(e);
   }
@@ -478,7 +528,18 @@ router.patch('/radio/tracks/:trackId', express.json(), async (req, res, next) =>
        WHERE id = $7 RETURNING *`,
       [title, artist, cover_url, cover_modelo_id, Number.isFinite(sort_order) ? sort_order : 0, active, trackId],
     );
-    return res.json({ ...rows[0], audio_url: storage.getPublicUrl(rows[0].audio_storage_path) });
+    const out = rows[0];
+    const payload = { ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) };
+    if (req.body?.cover_url !== undefined) {
+      logRadioCoverImage('track_patch_cover', {
+        track_id: trackId,
+        image_url_received: req.body.cover_url ? String(req.body.cover_url).trim() : null,
+        previous_cover_url: t.cover_url || null,
+        image_url_saved: out.cover_url || null,
+        image_url_returned: payload.cover_url || null,
+      });
+    }
+    return res.json(payload);
   } catch (e) {
     return next(e);
   }
@@ -571,7 +632,21 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
         /* */
       }
     }
-    return res.json(rows[0]);
+    const out = rows[0];
+    logRadioCoverImage('playlist_cover_upload', {
+      playlist_id: id,
+      image_url_received: {
+        type: 'multipart_file',
+        field: 'cover',
+        originalname: f.originalname || null,
+        size: f.buffer?.length ?? null,
+        mimetype: f.mimetype || null,
+      },
+      previous_cover_url: cur.rows[0].cover_url || null,
+      image_url_saved: out.cover_url || null,
+      image_url_returned: out.cover_url || null,
+    });
+    return res.json(out);
   } catch (e) {
     return next(e);
   }
@@ -579,21 +654,39 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
 
 /** Nova capa automática (outra modelo); sem upload manual. */
 router.post('/radio/tracks/:trackId/cover/regenerate-model', async (req, res, next) => {
+  console.log(
+    '[CRM][radio][nova-capa-modelo]',
+    'backend: entrada na rota POST /radio/tracks/:trackId/cover/regenerate-model',
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      method: req.method,
+      originalUrl: req.originalUrl,
+      trackId_param: req.params.trackId,
+    }),
+  );
   try {
     const trackId = Number(req.params.trackId);
-    if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
+    if (!Number.isFinite(trackId)) {
+      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 400', { reason: 'id_invalido', trackId_param: req.params.trackId });
+      return res.status(400).json({ message: 'ID inválido.' });
+    }
     if (!radioCover.autoCoverFromModelEnabled()) {
+      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 400', { reason: 'RADIO_COVER_AUTO_MODEL desativado', trackId });
       return res.status(400).json({ message: 'Capa automática por modelo está desativada no servidor.' });
     }
 
     const cur = await pool.query(`SELECT id, cover_url, cover_modelo_id FROM radio_tracks WHERE id = $1`, [trackId]);
-    if (!cur.rows.length) return res.status(404).json({ message: 'Faixa não encontrada.' });
+    if (!cur.rows.length) {
+      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 404', { reason: 'faixa_nao_encontrada', trackId });
+      return res.status(404).json({ message: 'Faixa não encontrada.' });
+    }
     const t = cur.rows[0];
     const excludeId = t.cover_modelo_id != null ? Number(t.cover_modelo_id) : null;
     const gen = await radioCover.generateFemaleModelCoverUrl(
       excludeId != null && Number.isFinite(excludeId) ? { exclude_modelo_id: excludeId } : {},
     );
     if (!gen.ok) {
+      console.log('[CRM][radio][nova-capa-modelo]', 'backend: resposta 400', { reason: gen.reason || 'geracao_falhou', trackId });
       return res.status(400).json({ message: gen.reason || 'Não foi possível gerar capa.' });
     }
 
@@ -609,8 +702,28 @@ router.post('/radio/tracks/:trackId/cover/regenerate-model', async (req, res, ne
         /* */
       }
     }
-    return res.json({ ...rows[0], audio_url: storage.getPublicUrl(rows[0].audio_storage_path) });
+    const out = rows[0];
+    const payload = { ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) };
+    console.log('[CRM][radio][nova-capa-modelo]', 'backend: capa gerada e gravada', { trackId, cover_url: out.cover_url || null });
+    logRadioCoverImage('track_cover_regenerate_model', {
+      track_id: trackId,
+      image_url_received: {
+        type: 'generated_model',
+        exclude_modelo_id: excludeId,
+        generated_public_url: gen.publicUrl,
+      },
+      previous_cover_url: t.cover_url || null,
+      image_url_saved: out.cover_url || null,
+      image_url_returned: payload.cover_url || null,
+    });
+    console.log(
+      '[CRM][radio][nova-capa-modelo]',
+      'backend: resposta 200 JSON',
+      JSON.stringify({ ts: new Date().toISOString(), trackId, cover_url: out.cover_url || null }),
+    );
+    return res.json(payload);
   } catch (e) {
+    console.error('[CRM][radio][nova-capa-modelo]', 'backend: exceção na rota', e?.message || e);
     return next(e);
   }
 });
@@ -646,7 +759,22 @@ router.post('/radio/tracks/:trackId/cover', coverUpload.single('cover'), async (
         /* */
       }
     }
-    return res.json({ ...rows[0], audio_url: storage.getPublicUrl(rows[0].audio_storage_path) });
+    const out = rows[0];
+    const payload = { ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) };
+    logRadioCoverImage('track_cover_upload', {
+      track_id: trackId,
+      image_url_received: {
+        type: 'multipart_file',
+        field: 'cover',
+        originalname: f.originalname || null,
+        size: f.buffer?.length ?? null,
+        mimetype: f.mimetype || null,
+      },
+      previous_cover_url: cur.rows[0].cover_url || null,
+      image_url_saved: out.cover_url || null,
+      image_url_returned: payload.cover_url || null,
+    });
+    return res.json(payload);
   } catch (e) {
     return next(e);
   }

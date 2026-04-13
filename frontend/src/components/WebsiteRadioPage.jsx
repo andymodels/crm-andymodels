@@ -386,21 +386,46 @@ export default function WebsiteRadioPage() {
   };
 
   const regenerateTrackCoverFromModel = async (trackId) => {
+    const endpoint = `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover/regenerate-model`;
+    const logPrefix = '[CRM][radio][nova-capa-modelo]';
     setSaving(true);
     setError('');
     setOkMsg('');
     try {
-      const r = await fetchWithAuth(
-        `${API_BASE}/radio/tracks/${encodeURIComponent(String(trackId))}/cover/regenerate-model`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
-      );
+      console.log(logPrefix, 'frontend: clique → antes do fetch', {
+        trackId,
+        method: 'POST',
+        endpoint,
+        body: '{}',
+      });
+      const r = await fetchWithAuth(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      console.log(logPrefix, 'frontend: resposta HTTP recebida', {
+        trackId,
+        endpoint,
+        status: r.status,
+        ok: r.ok,
+        statusText: r.statusText,
+      });
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
       if (!r.ok) throw new Error(parseErr(raw, r));
+      console.log(logPrefix, 'frontend: corpo OK (primeiros 240 chars)', {
+        trackId,
+        preview: String(raw).slice(0, 240),
+      });
       setOkMsg('Capa da faixa regenerada (nova modelo).');
       await loadTracks(selectedId);
       await loadPlaylists();
     } catch (e) {
+      console.error(logPrefix, 'frontend: erro após fetch', {
+        trackId,
+        endpoint,
+        message: e?.message ? String(e.message) : e,
+      });
       setError(e?.message ? String(e.message) : 'Erro.');
     } finally {
       setSaving(false);

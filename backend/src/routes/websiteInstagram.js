@@ -271,6 +271,22 @@ router.post(
       const base = `${getWebsiteOrigin()}/api/instagram/${encodeURIComponent(id)}/image`;
       if (req.file && req.file.buffer) {
         req.files = [req.file];
+        console.log(
+          '[website/instagram/image]',
+          JSON.stringify({
+            scope: 'instagram_image_proxy',
+            event: 'multipart_forward',
+            ts: new Date().toISOString(),
+            instagram_id: id,
+            image_url_received: {
+              type: 'multipart_file',
+              field: 'image',
+              originalname: req.file.originalname || null,
+              size: req.file.buffer?.length ?? null,
+            },
+            note: 'CRM não grava; encaminha ficheiro ao site.',
+          }),
+        );
         const result = await forwardMultipartToSite('POST', base, req);
         return sendWebsiteAdminProxyResponse(res, result.statusCode, result.raw, base);
       }
@@ -278,7 +294,33 @@ router.post(
       if (!imageUrl) {
         return res.status(400).json({ message: 'Envie image (ficheiro) ou image_url no JSON.' });
       }
+      console.log(
+        '[website/instagram/image]',
+        JSON.stringify({
+          scope: 'instagram_image_proxy',
+          event: 'json_image_url_forward',
+          ts: new Date().toISOString(),
+          instagram_id: id,
+          image_url_received: imageUrl,
+          note: 'CRM não grava; reencaminha ao site. image_url_saved/returned ficam no website.',
+        }),
+      );
       const { statusCode, raw } = await websiteJsonRequest('POST', base, { image_url: imageUrl });
+      try {
+        const preview = String(raw || '').slice(0, 500);
+        console.log(
+          '[website/instagram/image]',
+          JSON.stringify({
+            scope: 'instagram_image_proxy',
+            event: 'site_response_preview',
+            instagram_id: id,
+            statusCode,
+            response_preview: preview,
+          }),
+        );
+      } catch (_e) {
+        /* */
+      }
       return sendWebsiteAdminProxyResponse(res, statusCode, raw, base);
     } catch (e) {
       return next(e);
