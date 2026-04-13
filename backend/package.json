@@ -20,7 +20,8 @@
     "reset:limpo": "node scripts/reset-limpo.js",
     "apagar:orcamentos-teste": "node scripts/apagar-orcamentos-teste.js",
     "apagar:radio-teste": "node scripts/apagar-radio-playlists-teste.js",
-    "apagar:radio-tudo": "node scripts/apagar-toda-radio.js"
+    "apagar:radio-tudo": "node scripts/apagar-toda-radio.js",
+    "migrate:radio-b2": "node scripts/migrate-radio-local-to-b2.js"
   },
   "keywords": [],
   "author": "",

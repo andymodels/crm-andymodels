@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const sharp = require('sharp');
 const { pool } = require('../config/db');
 const storage = require('./storage');
+const { radioStorageKey } = require('./radioStoragePaths');
 
 const COVER_W = 600;
 const COVER_H = 800;
@@ -148,7 +149,7 @@ async function renderCoverJpeg(imageBuffer, nomeDestaque) {
  * Grava ficheiro em radio/covers e devolve URL pública.
  */
 async function saveCoverJpeg(buffer) {
-  const rel = `radio/covers/andy-${crypto.randomUUID()}.jpg`;
+  const rel = radioStorageKey('.jpg');
   await storage.saveFile({
     buffer,
     relativePath: rel,

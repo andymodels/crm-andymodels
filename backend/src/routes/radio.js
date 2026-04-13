@@ -11,6 +11,7 @@ const mm = require('music-metadata');
 const sharp = require('sharp');
 const { pool } = require('../config/db');
 const storage = require('../services/storage');
+const { radioStorageKey } = require('../services/radioStoragePaths');
 const radioCover = require('../services/radioCoverFromModelo');
 
 const router = express.Router();
@@ -98,7 +99,7 @@ async function saveEmbeddedCoverFromBuffer(imageBuffer) {
     .resize(1200, 1600, { fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 90, mozjpeg: true })
     .toBuffer();
-  const rel = `radio/covers/id3-${crypto.randomUUID()}.jpg`;
+  const rel = radioStorageKey('.jpg');
   await storage.saveFile({
     buffer: processed,
     relativePath: rel,
@@ -167,7 +168,7 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
     }
   }
 
-  const audioRel = `radio/audio/${playlistId}/${crypto.randomUUID()}${safeExt}`;
+  const audioRel = radioStorageKey(safeExt);
   await storage.saveFile({
     buffer,
     relativePath: audioRel,
@@ -552,7 +553,7 @@ router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (re
 
     const ext = path.extname(f.originalname || '').toLowerCase() || '.jpg';
     const safe = ext === '.png' ? '.png' : '.jpg';
-    const rel = `radio/covers/pl-${id}-${crypto.randomUUID()}${safe}`;
+    const rel = radioStorageKey(safe);
     await storage.saveFile({
       buffer: f.buffer,
       relativePath: rel,
@@ -589,7 +590,7 @@ router.post('/radio/tracks/:trackId/cover', coverUpload.single('cover'), async (
 
     const ext = path.extname(f.originalname || '').toLowerCase() || '.jpg';
     const safe = ext === '.png' ? '.png' : '.jpg';
-    const rel = `radio/covers/tr-${trackId}-${crypto.randomUUID()}${safe}`;
+    const rel = radioStorageKey(safe);
     await storage.saveFile({
       buffer: f.buffer,
       relativePath: rel,
