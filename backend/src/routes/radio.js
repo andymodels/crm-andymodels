@@ -1,6 +1,6 @@
 /**
  * Gestão da Andy Radio no CRM: playlists, faixas, uploads (incl. múltiplos MP3).
- * Capas de faixas só automáticas: ID3 → iTunes/Deezer → modelo aleatório (B2/storage, URL única). Sem upload manual de capa.
+ * Capas de faixas só automáticas (ID3 → iTunes/Deezer → modelo). Capa da playlist: upload manual opcional (POST .../playlists/:id/cover).
  */
 
 const crypto = require('crypto');
@@ -32,11 +32,16 @@ function logRadioCoverImage(event, payload) {
 }
 
 const MAX_TRACKS_PER_PLAYLIST = 50;
-const MAX_BULK = 25;
+const MAX_BULK = 50;
 
 const audioUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 120 * 1024 * 1024, files: MAX_BULK },
+});
+
+const coverUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
 });
 
 function slugify(name) {
@@ -573,6 +578,58 @@ router.delete('/radio/tracks/:trackId', async (req, res, next) => {
       }
     }
     return res.json({ ok: true });
+  } catch (e) {
+    return next(e);
+  }
+});
+
+/** Capa da playlist (imagem enviada pelo CRM) — independente das capas automáticas das faixas. */
+router.post('/radio/playlists/:id/cover', coverUpload.single('cover'), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'ID inválido.' });
+    const f = req.file;
+    if (!f?.buffer) return res.status(400).json({ message: 'Envie cover (imagem).' });
+
+    const cur = await pool.query(`SELECT id, cover_url FROM radio_playlists WHERE id = $1`, [id]);
+    if (!cur.rows.length) return res.status(404).json({ message: 'Playlist não encontrada.' });
+    const oldCover = cur.rows[0].cover_url ? storage.relativePathFromPublicUrl(cur.rows[0].cover_url) : null;
+
+    const ext = path.extname(f.originalname || '').toLowerCase() || '.jpg';
+    const safe = ext === '.png' ? '.png' : '.jpg';
+    const rel = radioStorageKey(safe);
+    await storage.saveFile({
+      buffer: f.buffer,
+      relativePath: rel,
+      contentType: safe === '.png' ? 'image/png' : 'image/jpeg',
+    });
+    const cover_url = storage.getPublicUrl(rel);
+    const { rows } = await pool.query(`UPDATE radio_playlists SET cover_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *`, [
+      cover_url,
+      id,
+    ]);
+    if (oldCover) {
+      try {
+        await storage.removeFile(oldCover);
+      } catch (_e) {
+        /* */
+      }
+    }
+    const out = rows[0];
+    logRadioCoverImage('playlist_cover_upload', {
+      playlist_id: id,
+      image_url_received: {
+        type: 'multipart_file',
+        field: 'cover',
+        originalname: f.originalname || null,
+        size: f.buffer?.length ?? null,
+        mimetype: f.mimetype || null,
+      },
+      previous_cover_url: cur.rows[0].cover_url || null,
+      image_url_saved: out.cover_url || null,
+      image_url_returned: out.cover_url || null,
+    });
+    return res.json(out);
   } catch (e) {
     return next(e);
   }

@@ -79,6 +79,8 @@ export default function WebsiteRadioPage() {
   const [editForm, setEditForm] = useState(null);
   /** Evita repor o rascunho ao dar refresh às playlists (perdia edição não guardada). */
   const editFormSyncedForPlaylistId = useRef(null);
+  const playlistCoverFileInputRef = useRef(null);
+  const playlistCoverUploadTargetIdRef = useRef(null);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -87,9 +89,9 @@ export default function WebsiteRadioPage() {
       throwIfHtmlOrCannotPost(raw, r.status);
       const data = raw ? JSON.parse(raw) : {};
       if (r.ok) setRadioMeta(data);
-      else setRadioMeta({ max_tracks_per_playlist: 50, max_bulk_audio_files: 25 });
+      else setRadioMeta({ max_tracks_per_playlist: 50, max_bulk_audio_files: 50 });
     } catch {
-      setRadioMeta({ max_tracks_per_playlist: 50, max_bulk_audio_files: 25 });
+      setRadioMeta({ max_tracks_per_playlist: 50, max_bulk_audio_files: 50 });
     }
   }, []);
 
@@ -297,7 +299,7 @@ export default function WebsiteRadioPage() {
   const bulkUpload = async (fileList) => {
     if (!selectedId || !fileList?.length) return;
     const max = radioMeta?.max_tracks_per_playlist ?? 50;
-    const bulkMax = radioMeta?.max_bulk_audio_files ?? 25;
+    const bulkMax = radioMeta?.max_bulk_audio_files ?? 50;
     if (fileList.length > bulkMax) {
       setError(
         `Limite de ${bulkMax} ficheiros por envio. Selecionou ${fileList.length}. Divida em vários envios (ex.: ${bulkMax} + ${fileList.length - bulkMax}).`,
@@ -400,6 +402,38 @@ export default function WebsiteRadioPage() {
     }
   };
 
+  const uploadPlaylistCover = async (playlistId, file) => {
+    if (!file?.size || playlistId == null) return;
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('cover', file);
+      const r = await fetchWithAuth(
+        `${API_BASE}/radio/playlists/${encodeURIComponent(String(playlistId))}/cover`,
+        { method: 'POST', body: fd, timeoutMs: API_REQUEST_MS_BULK },
+      );
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      if (!r.ok) throw new Error(parseErr(raw, r));
+      const updated = raw ? JSON.parse(raw) : {};
+      setPlaylists((prev) => prev.map((pl) => (pl.id === playlistId ? { ...pl, ...updated } : pl)));
+      setOkMsg('Capa da playlist atualizada.');
+      editFormSyncedForPlaylistId.current = null;
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openPlaylistCoverPicker = (playlistId, e) => {
+    e?.stopPropagation?.();
+    playlistCoverUploadTargetIdRef.current = playlistId;
+    queueMicrotask(() => playlistCoverFileInputRef.current?.click());
+  };
+
   const onPickAudioFiles = (fileList) => {
     if (!fileList?.length) return;
     setPendingAudioFiles(Array.from(fileList));
@@ -425,7 +459,7 @@ export default function WebsiteRadioPage() {
         </p>
         {radioMeta ? (
           <p className="mt-3 text-xs text-slate-500">
-            Até <span className="font-medium text-slate-700">{radioMeta.max_bulk_audio_files ?? 25}</span> ficheiros por
+            Até <span className="font-medium text-slate-700">{radioMeta.max_bulk_audio_files ?? 50}</span> ficheiros por
             envio · máximo{' '}
             <span className="font-medium text-slate-700">{radioMeta.max_tracks_per_playlist ?? 50}</span> faixas por
             playlist
@@ -465,8 +499,26 @@ export default function WebsiteRadioPage() {
         <aside className="space-y-4">
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Playlists</h4>
-            <p className="mt-0.5 text-xs text-slate-500">Arraste para ordenar · clique no nome para abrir</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Arraste para ordenar · clique no nome para abrir · miniatura à direita para enviar capa da playlist
+            </p>
           </div>
+          <input
+            ref={playlistCoverFileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            aria-hidden
+            tabIndex={-1}
+            disabled={saving}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              const pid = playlistCoverUploadTargetIdRef.current;
+              playlistCoverUploadTargetIdRef.current = null;
+              e.target.value = '';
+              if (f && pid != null) uploadPlaylistCover(pid, f);
+            }}
+          />
           <div className="flex gap-2">
             <input
               type="text"
@@ -530,12 +582,17 @@ export default function WebsiteRadioPage() {
                     </div>
                   </div>
                   <div className="shrink-0 self-start pt-0.5">
-                    <div
-                      className="relative h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm"
-                      aria-hidden
+                    <button
+                      type="button"
+                      title="Enviar capa da playlist (JPEG/PNG/WebP)"
+                      disabled={saving}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => openPlaylistCoverPicker(p.id, e)}
+                      className="relative h-14 w-14 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm transition hover:border-slate-300 hover:ring-2 hover:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {coverSrc ? (
                         <img
+                          key={`pl-${p.id}-${coverSrc}-${String(p.updated_at ?? '')}`}
                           src={coverSrc}
                           alt=""
                           className="h-full w-full object-cover"
@@ -544,7 +601,7 @@ export default function WebsiteRadioPage() {
                       ) : (
                         <AndyPlaylistCoverPlaceholder />
                       )}
-                    </div>
+                    </button>
                   </div>
                 </li>
               );
@@ -564,7 +621,8 @@ export default function WebsiteRadioPage() {
                   <div className="border-b border-slate-100 pb-4">
                     <h4 className="text-sm font-semibold text-slate-900">Detalhes da playlist</h4>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      Nome, estado e opções. As capas das faixas são sempre automáticas (ID3 → lojas públicas → modelo).
+                      Nome, estado e opções. Capa da playlist: clique na miniatura à esquerda. Capas das faixas são
+                      automáticas (ID3 → lojas públicas → modelo).
                     </p>
                   </div>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
