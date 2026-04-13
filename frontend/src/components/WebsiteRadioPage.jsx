@@ -28,6 +28,15 @@ function AndyPlaylistCoverPlaceholder() {
   );
 }
 
+/** `src` da capa da faixa: força novo pedido HTTP quando `cover_url` ou `updated_at` mudam (evita bitmap em cache). */
+function trackCoverImgSrc(t) {
+  const u = t?.cover_url;
+  if (!u || typeof u !== 'string') return '';
+  const bust = [t.id, t.cover_url, t.updated_at != null ? String(t.updated_at) : ''].join('|');
+  const sep = u.includes('?') ? '&' : '?';
+  return `${u}${sep}cb=${encodeURIComponent(bust)}`;
+}
+
 function formMatchesPlaylist(form, p) {
   if (!form || !p) return true;
   return (
@@ -392,6 +401,8 @@ export default function WebsiteRadioPage() {
     setError('');
     setOkMsg('');
     try {
+      const trackAntes = tracks.find((t) => Number(t.id) === Number(trackId));
+      const coverUrlAntes = trackAntes?.cover_url ?? null;
       console.log(logPrefix, 'frontend: clique → antes do fetch', {
         trackId,
         method: 'POST',
@@ -417,8 +428,37 @@ export default function WebsiteRadioPage() {
         trackId,
         preview: String(raw).slice(0, 240),
       });
+      let updatedFromApi = null;
+      try {
+        updatedFromApi = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* merge opcional */
+      }
       setOkMsg('Capa da faixa regenerada (nova modelo).');
       await loadTracks(selectedId);
+      if (updatedFromApi && Number(updatedFromApi.id) === Number(trackId)) {
+        const coverUrlApi = updatedFromApi.cover_url ?? null;
+
+        setTracks((prev) => {
+          const next = prev.map((tr) =>
+            Number(tr.id) === Number(trackId)
+              ? { ...tr, ...updatedFromApi }
+              : tr
+          );
+
+          const row = next.find((t) => Number(t.id) === Number(trackId));
+
+          console.log('[CRM][radio][nova-capa-modelo]', {
+            trackId: trackId,
+            antes: coverUrlAntes,
+            resposta_api: coverUrlApi,
+            depois: row?.cover_url ?? null,
+            mudou: coverUrlAntes !== coverUrlApi,
+          });
+
+          return next;
+        });
+      }
       await loadPlaylists();
     } catch (e) {
       console.error(logPrefix, 'frontend: erro após fetch', {
@@ -826,7 +866,8 @@ export default function WebsiteRadioPage() {
                         </span>
                         {t.cover_url ? (
                           <img
-                            src={t.cover_url}
+                            key={`track-${t.id}-cover-${t.cover_url}-${t.updated_at ?? ''}`}
+                            src={trackCoverImgSrc(t)}
                             alt=""
                             className="h-14 w-14 shrink-0 rounded-lg object-cover"
                             loading="lazy"
