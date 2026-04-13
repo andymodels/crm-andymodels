@@ -28,13 +28,22 @@ function AndyPlaylistCoverPlaceholder() {
   );
 }
 
-/** `src` da capa da faixa: força novo pedido HTTP quando `cover_url` ou `updated_at` mudam (evita bitmap em cache). */
+/**
+ * `src` da capa da faixa: anexa `t=` (timestamp) para o browser não reutilizar bitmap antigo.
+ * Prioridade: `updated_at` da API; senão fingerprint da própria `cover_url` (muda a cada ficheiro novo).
+ */
 function trackCoverImgSrc(t) {
   const u = t?.cover_url;
   if (!u || typeof u !== 'string') return '';
-  const bust = [t.id, t.cover_url, t.updated_at != null ? String(t.updated_at) : ''].join('|');
+  let ts;
+  if (t.updated_at != null) {
+    const ms = new Date(t.updated_at).getTime();
+    ts = Number.isFinite(ms) ? ms : String(t.updated_at);
+  } else {
+    ts = u;
+  }
   const sep = u.includes('?') ? '&' : '?';
-  return `${u}${sep}cb=${encodeURIComponent(bust)}`;
+  return `${u}${sep}t=${encodeURIComponent(String(ts))}`;
 }
 
 function formMatchesPlaylist(form, p) {
@@ -866,11 +875,12 @@ export default function WebsiteRadioPage() {
                         </span>
                         {t.cover_url ? (
                           <img
-                            key={`track-${t.id}-cover-${t.cover_url}-${t.updated_at ?? ''}`}
+                            key={`track-cover-${t.id}-${t.cover_url}-${String(t.updated_at ?? '')}`}
                             src={trackCoverImgSrc(t)}
                             alt=""
                             className="h-14 w-14 shrink-0 rounded-lg object-cover"
-                            loading="lazy"
+                            loading="eager"
+                            decoding="async"
                           />
                         ) : (
                           <div className="h-14 w-14 shrink-0 rounded-lg bg-slate-100" />
