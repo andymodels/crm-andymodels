@@ -320,7 +320,7 @@ router.get('/radio/playlists', async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT p.*, (SELECT COUNT(*)::int FROM radio_tracks t WHERE t.playlist_id = p.id) AS track_count
        FROM radio_playlists p
-       ORDER BY p.id DESC`,
+       ORDER BY p.sort_order ASC, p.id ASC`,
     );
     return res.json(rows.map(playlistRowOut));
   } catch (e) {
@@ -334,7 +334,13 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
     if (!name) return res.status(400).json({ message: 'Nome da playlist é obrigatório.' });
     const description = String(req.body?.description ?? '').trim();
     const slug = await uniqueSlug(req.body?.slug || name);
-    const sortOrder = Number(req.body?.sort_order);
+    let sortOrderVal = Number(req.body?.sort_order);
+    if (!Number.isFinite(sortOrderVal)) {
+      const { rows: mx } = await pool.query(
+        `SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM radio_playlists`,
+      );
+      sortOrderVal = mx[0]?.n != null ? Number(mx[0].n) : 0;
+    }
     const active = req.body?.active === false ? false : true;
     const status = req.body?.status === 'draft' ? 'draft' : 'published';
     const cover_url = null;
@@ -351,7 +357,7 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
         slug,
         description,
         cover_url,
-        Number.isFinite(sortOrder) ? sortOrder : 0,
+        sortOrderVal,
         active,
         status,
         auto_next_playlist,

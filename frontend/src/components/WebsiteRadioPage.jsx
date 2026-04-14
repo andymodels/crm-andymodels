@@ -236,6 +236,7 @@ export default function WebsiteRadioPage() {
   const [okMsg, setOkMsg] = useState('');
 
   const [newPlName, setNewPlName] = useState('');
+  const [plDragFrom, setPlDragFrom] = useState(null);
   const [trDragFrom, setTrDragFrom] = useState(null);
   const [radioMeta, setRadioMeta] = useState(null);
   /** Upload em lote de MP3 (feedback visual — o pedido pode demorar). */
@@ -523,6 +524,34 @@ export default function WebsiteRadioPage() {
     }
   };
 
+  const reorderPlaylists = async (from, to) => {
+    if (from == null || to == null || from === to) return;
+    const next = [...playlists];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    setPlaylists(next);
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const r = await fetchWithAuth(`${API_BASE}/radio/playlists/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: next.map((x) => x.id) }),
+      });
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      if (!r.ok) throw new Error(parseErr(raw, r));
+      setOkMsg('Ordem das playlists atualizada.');
+      await loadPlaylists();
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro.');
+      await loadPlaylists();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const reorderTracks = async (from, to) => {
     if (selectedId == null || from == null || to == null || from === to) return;
     const next = [...tracks];
@@ -694,7 +723,7 @@ export default function WebsiteRadioPage() {
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Playlists</h4>
             <p className="mt-0.5 text-xs text-slate-500">
-              Mais recentes primeiro · clique no nome para abrir · miniatura à direita para enviar capa da playlist
+              Ordem igual ao site (arrastar para reordenar) · clique no nome para abrir · miniatura à direita para capa
             </p>
           </div>
           <input
@@ -731,13 +760,24 @@ export default function WebsiteRadioPage() {
             </button>
           </div>
           <ul className="space-y-2">
-            {playlists.map((p) => {
+            {playlists.map((p, plIndex) => {
               const coverSrc = playlistCoverUrl(p);
               return (
                 <li
                   key={p.id}
+                  draggable={!saving}
+                  onDragStart={() => setPlDragFrom(plIndex)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => {
+                    if (plDragFrom == null) return;
+                    reorderPlaylists(plDragFrom, plIndex);
+                    setPlDragFrom(null);
+                  }}
+                  onDragEnd={() => setPlDragFrom(null)}
                   className={`flex gap-3 rounded-xl border bg-white px-3 py-2.5 shadow-sm ${
                     selectedId === p.id ? 'border-amber-400 ring-1 ring-amber-300' : 'border-slate-200'
+                  } ${plDragFrom === plIndex ? 'ring-2 ring-amber-400' : ''} ${
+                    !saving ? 'cursor-grab active:cursor-grabbing' : ''
                   }`}
                 >
                   <div className="min-w-0 flex-1">
