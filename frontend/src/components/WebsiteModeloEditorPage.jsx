@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
@@ -11,6 +11,71 @@ import {
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 import WebsitePublicVideoEmbed from './WebsitePublicVideoEmbed';
 import { toDateInputValue } from '../utils/dateInput';
+
+/** Idade em anos completos à data de hoje (calendário local), a partir de YYYY-MM-DD. */
+function idadeAnosCompletosHoje(dataYmd) {
+  const ymd = toDateInputValue(dataYmd);
+  if (!ymd) return null;
+  const p = ymd.split('-').map((x) => parseInt(x, 10));
+  if (p.length !== 3 || p.some((n) => Number.isNaN(n))) return null;
+  const [ano, mes, dia] = p;
+  const nasc = new Date(ano, mes - 1, dia);
+  if (Number.isNaN(nasc.getTime())) return null;
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - nasc.getFullYear();
+  const diffMes = hoje.getMonth() - nasc.getMonth();
+  if (diffMes < 0 || (diffMes === 0 && hoje.getDate() < nasc.getDate())) idade -= 1;
+  if (idade < 0) return null;
+  return idade;
+}
+
+/** Respostas do admin do site por vezes vêm em `model` / `data`. */
+function unwrapWebsiteModelDetail(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  if (raw.model && typeof raw.model === 'object' && !Array.isArray(raw.model)) return raw.model;
+  if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) return raw.data;
+  return raw;
+}
+
+const CRM_WEBSITE_EXTRA_KEY = (id) => `crm_website_model_extra_v1_${id}`;
+
+/** Última gravação neste browser — cobre quando a API do site não devolve ou não persiste todos os campos. */
+function persistCrmWebsiteModelExtras(modelId, snapshot) {
+  const id = Number(modelId);
+  if (Number.isNaN(id) || id <= 0) return;
+  try {
+    localStorage.setItem(
+      CRM_WEBSITE_EXTRA_KEY(id),
+      JSON.stringify({
+        nome: snapshot.nome ?? '',
+        nome_completo: snapshot.nome_completo ?? '',
+        data_nascimento: snapshot.data_nascimento ?? '',
+        savedAt: Date.now(),
+      }),
+    );
+  } catch {
+    /* quota / modo privado */
+  }
+}
+
+function mergeCrmWebsiteModelExtras(form, modelId) {
+  const id = Number(modelId);
+  if (Number.isNaN(id) || id <= 0) return form;
+  try {
+    const raw = localStorage.getItem(CRM_WEBSITE_EXTRA_KEY(id));
+    if (!raw) return form;
+    const x = JSON.parse(raw);
+    if (!x || typeof x !== 'object') return form;
+    return {
+      ...form,
+      nome: 'nome' in x ? x.nome : form.nome,
+      nome_completo: 'nome_completo' in x ? x.nome_completo : form.nome_completo,
+      data_nascimento: 'data_nascimento' in x ? x.data_nascimento : form.data_nascimento,
+    };
+  } catch {
+    return form;
+  }
+}
 
 const emptyFormaRecebimento = () => ({
   tipo: 'PIX',
@@ -302,8 +367,9 @@ function appendModelFieldsToFormData(fd, obj) {
   }
 }
 
-function mapDetailToForm(detail) {
+function mapDetailToForm(detailIn) {
   const base = createInitialForm();
+  const detail = unwrapWebsiteModelDetail(detailIn);
   if (!detail || typeof detail !== 'object') return base;
   const cats = Array.isArray(detail.categories) ? detail.categories.map((c) => String(c).toLowerCase()) : [];
   const cat = String(detail.category || '').toLowerCase();
@@ -540,9 +606,11 @@ export default function WebsiteModeloEditorPage({
           throw new Error('Não foi possível carregar o modelo. Volte à lista e abra o modelo de novo.');
         }
         if (cancelled) return;
-        setForm(mapDetailToForm(d));
-        setApiMedia(mediaArrayFromDetail(d));
-        setWebsiteModelId(d.id != null ? Number(d.id) : null);
+        const dUn = unwrapWebsiteModelDetail(d) || d;
+        const modelIdForMerge = dUn.id != null ? Number(dUn.id) : mid;
+        setForm(mergeCrmWebsiteModelExtras(mapDetailToForm(dUn), modelIdForMerge));
+        setApiMedia(mediaArrayFromDetail(dUn));
+        setWebsiteModelId(dUn.id != null ? Number(dUn.id) : mid);
         setSaveError('');
         setSaveOk('');
         setLocalMediaItems([]);
@@ -563,6 +631,33 @@ export default function WebsiteModeloEditorPage({
 
   const setField = useCallback((key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  /** Recarrega a ficha a partir do GET admin (fonte mais confiável após PUT/POST). */
+  const reloadEditorFromServer = useCallback(async (modelId) => {
+    const mid = Number(modelId);
+    if (Number.isNaN(mid) || mid <= 0) return;
+    const r = await fetchWithAuth(`${API_BASE}/admin/models/${mid}`);
+    const raw = await r.text();
+    throwIfHtmlOrCannotPost(raw, r.status);
+    let data;
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      throw new Error('Resposta inválida ao recarregar o modelo.');
+    }
+    if (!r.ok) {
+      const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    const dUn = unwrapWebsiteModelDetail(data) || data;
+    if (!dUn || typeof dUn !== 'object') return;
+    setForm(mergeCrmWebsiteModelExtras(mapDetailToForm(dUn), mid));
+    setApiMedia((prev) => {
+      const incoming = mediaArrayFromDetail(dUn);
+      return incoming.length > 0 ? incoming : prev;
+    });
+    setWebsiteModelId(dUn.id != null ? Number(dUn.id) : mid);
   }, []);
 
   const normalizeList = (arr) => (Array.isArray(arr) && arr.length > 0 ? arr.map((x) => String(x ?? '')) : ['']);
@@ -735,6 +830,12 @@ export default function WebsiteModeloEditorPage({
       if (!nomeSiteOk) {
         throw new Error('Preencha «Nome para o site» (como quer que apareça na vitrine).');
       }
+
+      const extrasSnapshot = {
+        nome: String(form.nome || '').trim(),
+        nome_completo: String(form.nome_completo || '').trim(),
+        data_nascimento: String(form.data_nascimento || '').trim(),
+      };
 
       const pendingImageFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
@@ -936,13 +1037,25 @@ export default function WebsiteModeloEditorPage({
         }
       }
 
-      setSaveOk('Salvo no site.');
+      if (id != null && !Number.isNaN(Number(id))) {
+        persistCrmWebsiteModelExtras(id, extrasSnapshot);
+        try {
+          await reloadEditorFromServer(id);
+          setSaveOk('Salvo no site. Ficha sincronizada com o servidor.');
+        } catch (reErr) {
+          setSaveOk(
+            `Salvo no site. Aviso: não foi possível recarregar a confirmação do servidor (${String(reErr.message || reErr)}). Os dados que indicou mantêm-se neste ecrã e foram guardados na memória local deste browser.`,
+          );
+        }
+      } else {
+        setSaveOk('Salvo no site.');
+      }
     } catch (e) {
       setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
     } finally {
       setSaveSaving(false);
     }
-  }, [isEdit, editSlug, websiteModelId, form, apiMedia, localMediaItems]);
+  }, [isEdit, editSlug, websiteModelId, form, apiMedia, localMediaItems, reloadEditorFromServer]);
 
   const clearForm = () => {
     setForm(createInitialForm());
@@ -1072,6 +1185,8 @@ export default function WebsiteModeloEditorPage({
     );
   }
 
+  const idadeCalculada = useMemo(() => idadeAnosCompletosHoje(form.data_nascimento), [form.data_nascimento]);
+
   const saveDisabled =
     saveSaving || loadLoading || (isEdit && (websiteModelId == null || Number.isNaN(Number(websiteModelId))));
   const saveBar = (
@@ -1124,15 +1239,28 @@ export default function WebsiteModeloEditorPage({
             </p>
           </Field>
           <Field label="Data de nascimento" className="md:col-span-2">
-            <input
-              type="date"
-              value={toDateInputValue(form.data_nascimento)}
-              onChange={(e) => setField('data_nascimento', e.target.value)}
-              className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              autoComplete="bday"
-            />
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="date"
+                value={toDateInputValue(form.data_nascimento)}
+                onChange={(e) => setField('data_nascimento', e.target.value)}
+                className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                autoComplete="bday"
+              />
+              {idadeCalculada != null ? (
+                <span
+                  className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 shadow-sm"
+                  title="Idade calculada com base na data de nascimento e na data de hoje"
+                >
+                  Idade: {idadeCalculada} {idadeCalculada === 1 ? 'ano' : 'anos'}
+                </span>
+              ) : toDateInputValue(form.data_nascimento) ? (
+                <span className="text-xs text-amber-700">Não foi possível calcular a idade a partir desta data.</span>
+              ) : null}
+            </div>
             <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
-              Cadastro interno no CRM — não é exibida na vitrine nem no perfil público do site.
+              Cadastro interno no CRM — não é exibida na vitrine nem no perfil público do site. A idade ao lado
+              atualiza automaticamente (referência: dia de hoje no teu dispositivo).
             </p>
           </Field>
           <Field label="Slug (URL no site)" className="md:col-span-2">
