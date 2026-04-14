@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { API_BASE, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { absolutizeWebsiteAssetUrl } from '../utils/websiteMediaDisplay';
 import { buildMediaItems } from './WebsiteMediaImage';
 
 const ORDER_FIELD_CANDIDATES = [
@@ -16,23 +17,42 @@ function extractWebsiteModelsArray(data) {
   if (data && typeof data === 'object') {
     if (Array.isArray(data.models)) return data.models;
     if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.results)) return data.results;
+    if (Array.isArray(data.records)) return data.records;
+    if (Array.isArray(data.rows)) return data.rows;
   }
   return [];
 }
 
-/** Mesma regra que o job automático no backend: modelos na categoria «home». */
-function isHomeCategoryModel(m) {
-  if (!m || typeof m !== 'object') return false;
-  const c = String(m.category || '').trim().toLowerCase();
-  if (c === 'home') return true;
-  const arr = Array.isArray(m.categories) ? m.categories : [];
-  return arr.some((x) => String(x || '').trim().toLowerCase() === 'home');
+function strLower(v) {
+  return String(v ?? '').trim().toLowerCase();
 }
 
-/** Escolhe o campo numérico de ordem que a API já devolve; senão usa home_order (o site deve aceitar no PUT). */
+/**
+ * Modelos em destaque na home do site (equivalente a categoria = home / ordem home).
+ * Aceita category ou categoria, listas categories/categorias, home_order, featured.
+ */
+function isHomeCategoryModel(m) {
+  if (!m || typeof m !== 'object') return false;
+  if (strLower(m.category) === 'home' || strLower(m.categoria) === 'home') return true;
+  const lists = [m.categories, m.categorias].filter(Array.isArray);
+  for (const arr of lists) {
+    if (arr.some((x) => strLower(x) === 'home')) return true;
+  }
+  const ho = Number(m.home_order);
+  if (Number.isFinite(ho) && ho >= 1) return true;
+  if (m.featured === true || m.featured === 1 || m.featured === '1') return true;
+  if (m.destaque_home === true || m.destaque_home === 1 || m.destaque_home === '1') return true;
+  return false;
+}
+
+/** Prioriza home_order quando existir no objeto (mesmo 0), para alinhar ao site. */
 function detectOrderField(sample) {
   if (!sample || typeof sample !== 'object') return 'home_order';
+  if (Object.prototype.hasOwnProperty.call(sample, 'home_order')) return 'home_order';
   for (const k of ORDER_FIELD_CANDIDATES) {
+    if (k === 'home_order') continue;
     if (Object.prototype.hasOwnProperty.call(sample, k) && sample[k] != null && String(sample[k]).trim() !== '') {
       return k;
     }
@@ -65,9 +85,13 @@ function categoryLabel(m) {
 function firstThumbUrl(m) {
   const items = buildMediaItems(m);
   const img = items.find((it) => it.type !== 'video') || items[0];
-  if (!img) return '';
-  const u = img.thumb || img.url;
-  return u ? String(u) : '';
+  if (img) {
+    const u = img.thumb || img.url;
+    if (u) return String(u);
+  }
+  const direct = m.cover_image || m.cover || m.photo || m.foto || m.thumbnail;
+  if (direct) return absolutizeWebsiteAssetUrl(String(direct).trim());
+  return '';
 }
 
 /**
@@ -211,7 +235,7 @@ export default function WebsiteHomeOrderPage() {
       {!loading && ordered.length > 0 ? (
         <ul className="mt-6 grid list-none grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
           {ordered.map((m, index) => {
-            const name = m?.name != null ? String(m.name) : '—';
+            const name = m?.name != null ? String(m.name) : m?.nome != null ? String(m.nome) : '—';
             const thumb = firstThumbUrl(m);
             const key = m?.id != null ? `home-${m.id}` : `home-idx-${index}`;
             return (

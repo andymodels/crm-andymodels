@@ -359,7 +359,8 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw, attemptedUrl) {
 
 /**
  * Lista admin no site (inclui modelos inativos). GET …/api/admin/models
- * Usada pelo CRM em «Modelos no site» para não esconder quem está só fora da vitrine.
+ * Usada pelo CRM em «Modelos no site» e «Website → Home» (ordem: filtro no cliente: category/categoria home, featured, home_order).
+ * O CRM não tem tabela modelos local; o proxy repassa query params ao site.
  */
 router.get('/admin/models', async (req, res, next) => {
   try {

@@ -130,16 +130,31 @@ function extractWebsiteModelsArray(data) {
   if (data && typeof data === 'object') {
     if (Array.isArray(data.models)) return data.models;
     if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.results)) return data.results;
+    if (Array.isArray(data.records)) return data.records;
+    if (Array.isArray(data.rows)) return data.rows;
   }
   return [];
 }
 
+function strLower(v) {
+  return String(v ?? '').trim().toLowerCase();
+}
+
+/** Alinhado ao CRM WebsiteHomeOrderPage: category/categoria home, categories, home_order≥1, featured. */
 function isHomeCategoryModel(m) {
   if (!m || typeof m !== 'object') return false;
-  const c = String(m.category || '').trim().toLowerCase();
-  if (c === 'home') return true;
-  const arr = Array.isArray(m.categories) ? m.categories : [];
-  return arr.some((x) => String(x || '').trim().toLowerCase() === 'home');
+  if (strLower(m.category) === 'home' || strLower(m.categoria) === 'home') return true;
+  const lists = [m.categories, m.categorias].filter(Array.isArray);
+  for (const arr of lists) {
+    if (arr.some((x) => strLower(x) === 'home')) return true;
+  }
+  const ho = Number(m.home_order);
+  if (Number.isFinite(ho) && ho >= 1) return true;
+  if (m.featured === true || m.featured === 1 || m.featured === '1') return true;
+  if (m.destaque_home === true || m.destaque_home === 1 || m.destaque_home === '1') return true;
+  return false;
 }
 
 /** Modelos da grelha «home»: categoria `home` (ou `categories` contém «home»). */
@@ -149,7 +164,9 @@ function isHomeGridModel(m) {
 
 function detectOrderField(sample) {
   if (!sample || typeof sample !== 'object') return 'home_order';
+  if (Object.prototype.hasOwnProperty.call(sample, 'home_order')) return 'home_order';
   for (const k of ORDER_FIELD_CANDIDATES) {
+    if (k === 'home_order') continue;
     if (Object.prototype.hasOwnProperty.call(sample, k) && sample[k] != null && String(sample[k]).trim() !== '') {
       return k;
     }
