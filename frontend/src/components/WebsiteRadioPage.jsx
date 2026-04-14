@@ -602,6 +602,28 @@ export default function WebsiteRadioPage() {
     }
   };
 
+  const regenerateTrackCover = async (t) => {
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const r = await fetchWithAuth(
+        `${API_BASE}/radio/tracks/${encodeURIComponent(String(t.id))}/cover/regenerate-model`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      if (!r.ok) throw new Error(parseErr(raw, r));
+      setOkMsg('Nova capa gerada.');
+      await loadTracks(selectedId);
+      await loadPlaylists();
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const uploadPlaylistCover = async (playlistId, file) => {
     if (!file?.size || playlistId == null) return;
     setSaving(true);
@@ -1070,6 +1092,14 @@ export default function WebsiteRadioPage() {
                             {t.artist || '—'} · {fmtDur(t.duration_sec)}
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <button
+                              type="button"
+                              className="text-xs font-medium text-slate-700 hover:underline"
+                              disabled={saving}
+                              onClick={() => regenerateTrackCover(t)}
+                            >
+                              Nova capa
+                            </button>
                             <button
                               type="button"
                               className="text-xs text-red-600 hover:underline"
