@@ -12,7 +12,7 @@ const sharp = require('sharp');
 const { pool } = require('../config/db');
 const storage = require('../services/storage');
 const { radioStorageKey } = require('../services/radioStoragePaths');
-const radioCover = require('../services/radioCoverFromModelo');
+const radioCoverPool = require('../services/radioCoverFromPool');
 const radioExternalCover = require('../services/radioTrackCoverExternal');
 
 const router = express.Router();
@@ -180,8 +180,8 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
   );
 
   /**
-   * Capas 100% automáticas (sem upload manual): ID3 → iTunes/Deezer → modelo aleatório (elenco completo).
-   * Sem cache de APIs — cada passo executa pedidos novos.
+   * Capas automáticas (sem upload manual): ID3 → iTunes/Deezer → imagesPool.json (sorteio; sem modelos).
+   * O pool aplica-se após INSERT para poder memorizar a última URL por faixa.
    */
   let coverUrl = null;
   let coverModeloId = null;
@@ -210,17 +210,6 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
     }
   }
 
-  if (coverUrl == null && !overrides.skip_auto_model_cover && radioCover.autoCoverFromModelEnabled()) {
-    const gen = await radioCover.generateRandomModelCoverUrl({});
-    if (gen.ok) {
-      coverUrl = gen.publicUrl;
-      coverModeloId = gen.modelo_id != null ? gen.modelo_id : null;
-      coverSource = 'model_auto';
-    } else {
-      console.warn('[radio] capa automática (modelo aleatório):', gen.reason);
-    }
-  }
-
   const audioRel = radioStorageKey(safeExt);
   await storage.saveFile({
     buffer,
@@ -245,11 +234,30 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       sortOrder,
     ],
   );
-  const row = rows[0];
+  let row = rows[0];
+  /** Metadados do sorteio do pool (para logs). */
+  let poolApplyResult = null;
+
+  if (
+    coverUrl == null &&
+    !overrides.skip_auto_model_cover &&
+    radioCoverPool.poolCoverEnabled()
+  ) {
+    poolApplyResult = await radioCoverPool.applyCoverForTrack(row.id);
+    if (poolApplyResult.ok && poolApplyResult.row) {
+      row = poolApplyResult.row;
+      coverUrl = row.cover_url || null;
+      coverModeloId = null;
+      coverSource = 'image_pool';
+    } else if (poolApplyResult && !poolApplyResult.ok) {
+      console.warn('[radio] capa automática (imagesPool):', poolApplyResult.reason);
+    }
+  }
+
   let imageReceived = null;
   if (coverSource === 'id3_embedded') imageReceived = '(apic_buffer_in_mp3)';
   else if (coverSource === 'external_store') imageReceived = '(itunes_or_deezer_artwork)';
-  else if (coverSource === 'model_auto') imageReceived = '(generated_model_cover)';
+  else if (coverSource === 'image_pool') imageReceived = poolApplyResult?.pool_url || '(image_pool_url)';
   else imageReceived = coverUrl || null;
   logRadioCoverImage('track_insert_cover', {
     playlist_id: playlistId,
@@ -275,11 +283,11 @@ router.get('/radio/meta', (_req, res) => {
   return res.json({
     max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
     max_bulk_audio_files: MAX_BULK,
-    /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → modelo aleatório (RADIO_COVER_AUTO_MODEL). Sem upload manual. */
-    cover_pipeline: ['id3_embedded', 'external_store', 'model_auto'],
+    /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → imagesPool.json (RADIO_COVER_IMAGE_POOL). Sem upload manual. */
+    cover_pipeline: ['id3_embedded', 'external_store', 'image_pool'],
     cover_embedded_first: true,
     cover_external_api: radioExternalCover.externalCoverEnabled(),
-    cover_fallback_random_model: radioCover.autoCoverFromModelEnabled(),
+    cover_fallback_image_pool: radioCoverPool.poolCoverEnabled(),
   });
 });
 

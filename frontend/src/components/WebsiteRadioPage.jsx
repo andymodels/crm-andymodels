@@ -822,7 +822,7 @@ export default function WebsiteRadioPage() {
                     <h4 className="text-sm font-semibold text-slate-900">Detalhes da playlist</h4>
                     <p className="mt-0.5 text-xs text-slate-500">
                       Nome, estado e opções. Capa da playlist: clique na miniatura à esquerda. Capas das faixas são
-                      automáticas (ID3 → lojas públicas → modelo).
+                      automáticas (ID3 → lojas públicas → pool de imagens).
                     </p>
                   </div>
                   {editForm.status !== 'published' || editForm.active === false ? (
@@ -930,7 +930,8 @@ export default function WebsiteRadioPage() {
                     </p>
                     <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
                       Capa por faixa (automática): primeiro ID3 no ficheiro; senão capa oficial (iTunes/Deezer); senão
-                      modelo aleatório do elenco. Sem upload manual.
+                      URL aleatória de <code className="text-[11px]">imagesPool.json</code> (sem repetir a última para a
+                      mesma faixa). Sem upload manual.
                     </p>
                   </div>
 
