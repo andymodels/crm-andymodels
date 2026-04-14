@@ -584,6 +584,34 @@ router.patch('/radio/tracks/:trackId', express.json(), async (req, res, next) =>
   }
 });
 
+/**
+ * Nova capa só a partir de imagesPool.json (sorteio; não repete a última URL do pool por faixa).
+ * POST /api/radio/tracks/:trackId/cover/regenerate-model
+ */
+router.post('/radio/tracks/:trackId/cover/regenerate-model', express.json(), async (req, res, next) => {
+  try {
+    const trackId = Number(req.params.trackId);
+    if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
+    if (!radioCoverPool.poolCoverEnabled()) {
+      return res.status(503).json({ message: 'Pool de capas desligado (RADIO_COVER_IMAGE_POOL).' });
+    }
+    const result = await radioCoverPool.applyCoverForTrack(trackId);
+    if (!result.ok) {
+      if (result.reason === 'faixa_nao_encontrada') {
+        return res.status(404).json({ message: 'Faixa não encontrada.' });
+      }
+      if (result.reason === 'pool_vazio') {
+        return res.status(400).json({ message: 'imagesPool.json vazio ou sem URLs https.' });
+      }
+      return res.status(500).json({ message: result.reason || 'Falha ao gerar capa.' });
+    }
+    const cover_url = result.row.cover_url != null ? String(result.row.cover_url) : '';
+    return res.json({ trackId, cover_url });
+  } catch (e) {
+    return next(e);
+  }
+});
+
 router.patch('/radio/playlists/:playlistId/tracks/reorder', express.json(), async (req, res, next) => {
   try {
     const playlistId = Number(req.params.playlistId);
