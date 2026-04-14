@@ -1161,6 +1161,9 @@ export default function WebsiteModeloEditorPage({
     });
   }, []);
 
+  /** Obrigatório antes de qualquer return — senão o nº de hooks muda entre «a carregar» e o formulário (crash React). */
+  const idadeCalculada = useMemo(() => idadeAnosCompletosHoje(form.data_nascimento), [form.data_nascimento]);
+
   const formas = form.formas_pagamento?.length ? form.formas_pagamento : [emptyFormaRecebimento()];
 
   const setGenderWomen = () => setForm((p) => ({ ...p, catFeminino: true, catMasculino: false }));
@@ -1200,8 +1203,6 @@ export default function WebsiteModeloEditorPage({
       </div>
     );
   }
-
-  const idadeCalculada = useMemo(() => idadeAnosCompletosHoje(form.data_nascimento), [form.data_nascimento]);
 
   const saveDisabled =
     saveSaving || loadLoading || (isEdit && (websiteModelId == null || Number.isNaN(Number(websiteModelId))));
