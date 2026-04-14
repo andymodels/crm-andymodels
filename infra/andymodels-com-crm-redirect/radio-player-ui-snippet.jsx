@@ -9,21 +9,14 @@
 
 const ORANGE = '#F27121';
 
-/** Texto «Curadoria by …» com link opcional. */
-/** Textos por omissão vêm do site (não fixar marca no CRM). */
-export function RadioCuratorLine({ curatorName, curatorInstagram, defaultLabel = '', defaultHref }) {
+/**
+ * Curadoria só a partir da API (playlist.curator_name / playlist.curator_instagram).
+ * Sem texto de marca fixa. Se curator_name vazio → não renderiza nada.
+ */
+export function RadioCuratorLine({ curatorName, curatorInstagram }) {
   const name = curatorName != null ? String(curatorName).trim() : '';
   const ig = curatorInstagram != null ? String(curatorInstagram).trim() : '';
-  if (!name) {
-    if (!defaultLabel) return null;
-    return defaultHref ? (
-      <a href={defaultHref} className="text-sm text-slate-600 underline hover:text-slate-900">
-        {defaultLabel}
-      </a>
-    ) : (
-      <span className="text-sm text-slate-600">{defaultLabel}</span>
-    );
-  }
+  if (!name) return null;
   const inner = <>Curadoria by {name}</>;
   if (ig) {
     return (
@@ -33,6 +26,17 @@ export function RadioCuratorLine({ curatorName, curatorInstagram, defaultLabel =
     );
   }
   return <span className="text-sm text-slate-700">{inner}</span>;
+}
+
+/** Atalho: lê curator_name e curator_instagram do objeto playlist (JSON público ou CRM). */
+export function RadioCuratorFromPlaylist({ playlist }) {
+  if (!playlist || typeof playlist !== 'object') return null;
+  return (
+    <RadioCuratorLine
+      curatorName={playlist.curator_name}
+      curatorInstagram={playlist.curator_instagram}
+    />
+  );
 }
 
 /**

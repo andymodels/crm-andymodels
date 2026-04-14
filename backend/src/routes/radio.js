@@ -1,6 +1,6 @@
 /**
  * Gestão da Andy Radio no CRM: playlists, faixas, uploads (incl. múltiplos MP3).
- * Capas de faixas só automáticas (ID3 → iTunes/Deezer → modelo). Capa da playlist: upload manual opcional (POST .../playlists/:id/cover).
+ * Capas de faixas só automáticas (ID3 → iTunes/Deezer → pool B2). Capa da playlist: upload manual opcional (POST .../playlists/:id/cover).
  */
 
 const crypto = require('crypto');
@@ -198,8 +198,8 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
   await assertNoDuplicateTrackInPlaylist(playlistId, finalTitle, finalArtist);
 
   /**
-   * Capas automáticas (sem upload manual): ID3 → iTunes/Deezer → imagesPool.json (sorteio; sem modelos).
-   * O pool aplica-se após INSERT para poder memorizar a última URL por faixa.
+   * Capas automáticas (sem upload manual): ID3 → iTunes/Deezer → pool de imagens no B2 (ListObjects + sorteio).
+   * O pool aplica-se após INSERT; a última chave B2 usada fica só em memória por faixa.
    */
   let coverUrl = null;
   let coverModeloId = null;
@@ -268,14 +268,17 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
       coverModeloId = null;
       coverSource = 'image_pool';
     } else if (poolApplyResult && !poolApplyResult.ok) {
-      console.warn('[radio] capa automática (imagesPool):', poolApplyResult.reason);
+      const r = poolApplyResult.reason;
+      if (r !== 'storage_nao_b2') {
+        console.warn('[radio] capa automática (pool B2):', r);
+      }
     }
   }
 
   let imageReceived = null;
   if (coverSource === 'id3_embedded') imageReceived = '(apic_buffer_in_mp3)';
   else if (coverSource === 'external_store') imageReceived = '(itunes_or_deezer_artwork)';
-  else if (coverSource === 'image_pool') imageReceived = poolApplyResult?.pool_url || '(image_pool_url)';
+  else if (coverSource === 'image_pool') imageReceived = poolApplyResult?.pool_key || '(b2_pool_key)';
   else imageReceived = coverUrl || null;
   logRadioCoverImage('track_insert_cover', {
     playlist_id: playlistId,
@@ -301,7 +304,7 @@ router.get('/radio/meta', (_req, res) => {
   return res.json({
     max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
     max_bulk_audio_files: MAX_BULK,
-    /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → imagesPool.json (RADIO_COVER_IMAGE_POOL). Sem upload manual. */
+    /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → imagens no B2 (RADIO_COVER_IMAGE_POOL + prefixo opcional). Sem upload manual. */
     cover_pipeline: ['id3_embedded', 'external_store', 'image_pool'],
     cover_embedded_first: true,
     cover_external_api: radioExternalCover.externalCoverEnabled(),
@@ -311,6 +314,7 @@ router.get('/radio/meta', (_req, res) => {
 
 // ——— Playlists ———
 
+/** CRM: todas as colunas de `radio_playlists` (incl. curator_name, curator_instagram) + track_count. */
 router.get('/radio/playlists', async (req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -606,7 +610,7 @@ router.patch('/radio/tracks/:trackId', express.json(), async (req, res, next) =>
 });
 
 /**
- * Nova capa só a partir de imagesPool.json (sorteio; não repete a última URL do pool por faixa).
+ * Nova capa a partir do pool de imagens no B2 (sorteio; não repete a última chave por faixa em memória).
  * POST /api/radio/tracks/:trackId/cover/regenerate-model
  */
 router.post('/radio/tracks/:trackId/cover/regenerate-model', express.json(), async (req, res, next) => {
@@ -621,8 +625,16 @@ router.post('/radio/tracks/:trackId/cover/regenerate-model', express.json(), asy
       if (result.reason === 'faixa_nao_encontrada') {
         return res.status(404).json({ message: 'Faixa não encontrada.' });
       }
+      if (result.reason === 'storage_nao_b2') {
+        return res.status(503).json({
+          message: 'Pool de capas no bucket requer STORAGE_DRIVER=b2 e credenciais B2.',
+        });
+      }
       if (result.reason === 'pool_vazio') {
-        return res.status(400).json({ message: 'imagesPool.json vazio ou sem URLs https.' });
+        return res.status(400).json({
+          message:
+            'Nenhuma imagem (.jpg/.jpeg/.png/.webp) no bucket com o prefixo configurado (RADIO_B2_COVER_POOL_PREFIX).',
+        });
       }
       return res.status(500).json({ message: result.reason || 'Falha ao gerar capa.' });
     }

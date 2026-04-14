@@ -1,78 +1,59 @@
 /**
- * Capa automática Andy Radio a partir de imagesPool.json: sorteio simples de URL.
- * Sem tabela modelos, sem outras tabelas — só ficheiros JSON + estado da última URL por faixa.
+ * Capa automática Andy Radio: imagens no bucket B2 (ListObjectsV2 + sorteio).
+ * Sem ficheiro JSON, sem estado em disco — memória: cache da lista (TTL) e última chave por faixa.
  */
 
 const crypto = require('crypto');
-const fs = require('fs').promises;
 const path = require('path');
 const sharp = require('sharp');
 const { pool } = require('../config/db');
 const storage = require('./storage');
 const { radioStorageKey } = require('./radioStoragePaths');
 
-const POOL_PATH = process.env.RADIO_IMAGE_POOL_PATH
-  ? path.resolve(process.env.RADIO_IMAGE_POOL_PATH)
-  : path.join(__dirname, '../data/imagesPool.json');
-const STATE_PATH = path.join(__dirname, '../data/radioCoverPoolLast.json');
+const DEFAULT_CACHE_MS = 5 * 60 * 1000;
+
+/** Última chave B2 usada por faixa (evitar repetir no sorteio seguinte). */
+const lastPoolKeyByTrackId = new Map();
+
+let _keysCache = null;
+let _keysCacheAt = 0;
 
 function poolCoverEnabled() {
   const v = String(process.env.RADIO_COVER_IMAGE_POOL || '1').trim().toLowerCase();
   return v !== '0' && v !== 'false' && v !== 'no';
 }
 
-function normalizePoolUrls(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u));
-}
-
-async function loadImagePool() {
-  try {
-    const text = await fs.readFile(POOL_PATH, 'utf8');
-    const data = JSON.parse(text);
-    return normalizePoolUrls(data);
-  } catch (e) {
-    console.warn('[radio/pool] imagesPool.json:', e?.message || e);
-    return [];
+function poolListCacheTtlMs() {
+  const raw = String(process.env.RADIO_B2_COVER_POOL_CACHE_MS || '').trim();
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
   }
+  return DEFAULT_CACHE_MS;
 }
 
-async function readState() {
-  try {
-    const text = await fs.readFile(STATE_PATH, 'utf8');
-    const o = JSON.parse(text);
-    if (o && typeof o.byTrackId === 'object' && o.byTrackId !== null) return o;
-    return { byTrackId: {} };
-  } catch {
-    return { byTrackId: {} };
+async function getCachedPoolKeys() {
+  const ttl = poolListCacheTtlMs();
+  const now = Date.now();
+  if (ttl > 0 && _keysCache && now - _keysCacheAt < ttl) {
+    return _keysCache;
   }
-}
-
-async function writeState(state) {
-  await fs.mkdir(path.dirname(STATE_PATH), { recursive: true });
-  await fs.writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  const keys = await storage.listB2RadioCoverPoolKeys();
+  _keysCache = keys;
+  _keysCacheAt = now;
+  return keys;
 }
 
 /**
- * Escolhe URL aleatória; se `excludeUrl` existir no pool com mais de um item, evita repetir.
+ * Escolhe chave aleatória; se `excludeKey` existir e houver mais do que um candidato, evita repetir.
  */
-function pickRandomUrl(urls, excludeUrl) {
-  if (!urls.length) return null;
-  const ex = excludeUrl != null ? String(excludeUrl).trim() : '';
-  let candidates = ex ? urls.filter((u) => String(u).trim() !== ex) : urls.slice();
-  if (candidates.length === 0) candidates = urls.slice();
+function pickRandomKey(keys, excludeKey) {
+  if (!keys.length) return null;
+  const ex = excludeKey != null ? String(excludeKey).trim() : '';
+  let candidates = ex ? keys.filter((k) => String(k).trim() !== ex) : keys.slice();
+  if (candidates.length === 0) candidates = keys.slice();
   const i = crypto.randomInt(0, candidates.length);
   return candidates[i];
-}
-
-async function fetchImageBuffer(url) {
-  const u = String(url || '').trim();
-  if (!/^https?:\/\//i.test(u)) throw new Error('URL inválida.');
-  if (typeof fetch !== 'function') throw new Error('fetch não disponível (Node 18+).');
-  const r = await fetch(u, { redirect: 'follow', headers: { 'User-Agent': 'AndyModels-CRM-Radio/1.0' } });
-  if (!r.ok) throw new Error(`Imagem HTTP ${r.status}`);
-  const ab = await r.arrayBuffer();
-  return Buffer.from(ab);
 }
 
 function escapeXml(s) {
@@ -83,19 +64,9 @@ function escapeXml(s) {
     .replace(/"/g, '&quot;');
 }
 
-/**
- * Do path do ficheiro na URL: "ana_silva_123.jpg" → primeiro token antes de _/- → "ANA".
- */
-function firstNameFromPoolUrl(url) {
-  const raw = String(url || '').trim();
-  if (!raw) return '';
-  let pathname = raw;
-  try {
-    pathname = new URL(raw).pathname;
-  } catch {
-    pathname = raw.split('?')[0];
-  }
-  const base = path.basename(pathname);
+/** Do nome do ficheiro na chave: "ana_silva_123.jpg" → primeiro token → "ANA". */
+function firstNameFromPoolKey(key) {
+  const base = path.basename(String(key || '').replace(/\\/g, '/'));
   const noExt = base.replace(/\.[^.]+$/i, '');
   if (!noExt) return '';
   const token = noExt.split(/[_\s-]+/)[0] || noExt;
@@ -127,7 +98,7 @@ function buildFooterNameSvg(width, height, displayName) {
 }
 
 /** Capa quadrada 1:1 (1000×1000), preenchida com crop central; opcional nome no rodapé. */
-async function saveCoverFromImageBuffer(imageBuffer, poolImageUrl) {
+async function saveCoverFromImageBuffer(imageBuffer, poolSourceKey) {
   const basePipeline = sharp(imageBuffer)
     .rotate()
     .resize(COVER_PIXEL, COVER_PIXEL, { fit: 'cover', position: 'centre' });
@@ -135,7 +106,7 @@ async function saveCoverFromImageBuffer(imageBuffer, poolImageUrl) {
   const w = info.width || COVER_PIXEL;
   const h = info.height || COVER_PIXEL;
 
-  const label = poolImageUrl != null ? firstNameFromPoolUrl(poolImageUrl) : '';
+  const label = poolSourceKey != null ? firstNameFromPoolKey(poolSourceKey) : '';
   let jpegBuf;
   if (label) {
     const overlaySvg = buildFooterNameSvg(w, h, label);
@@ -158,34 +129,43 @@ async function saveCoverFromImageBuffer(imageBuffer, poolImageUrl) {
 }
 
 /**
- * Descarrega uma imagem do pool, grava em storage, atualiza a faixa e o estado «última URL».
+ * Descarrega uma imagem do bucket (chave B2), grava capa processada, atualiza a faixa e a memória «última chave».
  */
 async function applyCoverForTrack(trackId) {
   const id = Number(trackId);
   if (!Number.isFinite(id) || id <= 0) return { ok: false, reason: 'track_id_invalido' };
 
-  const urls = await loadImagePool();
-  if (!urls.length) return { ok: false, reason: 'pool_vazio' };
+  if (storage.driver() !== 'b2') {
+    return { ok: false, reason: 'storage_nao_b2' };
+  }
 
-  const state = await readState();
+  let keys;
+  try {
+    keys = await getCachedPoolKeys();
+  } catch (e) {
+    console.warn('[radio/pool] ListObjects B2:', e?.message || e);
+    return { ok: false, reason: String(e?.message || e) };
+  }
+
+  if (!keys.length) return { ok: false, reason: 'pool_vazio' };
+
   const tid = String(id);
-  const lastUrl = state.byTrackId[tid] != null ? String(state.byTrackId[tid]).trim() : '';
-  const chosen = pickRandomUrl(urls, lastUrl || null);
+  const lastKey = lastPoolKeyByTrackId.get(tid) != null ? String(lastPoolKeyByTrackId.get(tid)).trim() : '';
+  const chosen = pickRandomKey(keys, lastKey || null);
   if (!chosen) return { ok: false, reason: 'sorteio_invalido' };
 
   try {
-    const buf = await fetchImageBuffer(chosen);
+    const buf = await storage.readFileBuffer(chosen);
     const publicUrl = await saveCoverFromImageBuffer(buf, chosen);
 
-    state.byTrackId[tid] = chosen;
-    await writeState(state);
+    lastPoolKeyByTrackId.set(tid, chosen);
 
     const { rows } = await pool.query(
       `UPDATE radio_tracks SET cover_url = $1, cover_modelo_id = NULL, updated_at = NOW() WHERE id = $2 RETURNING *`,
       [publicUrl, id],
     );
     if (!rows.length) return { ok: false, reason: 'faixa_nao_encontrada' };
-    return { ok: true, row: rows[0], pool_url: chosen };
+    return { ok: true, row: rows[0], pool_key: chosen };
   } catch (e) {
     return { ok: false, reason: String(e?.message || e) };
   }
@@ -193,7 +173,5 @@ async function applyCoverForTrack(trackId) {
 
 module.exports = {
   poolCoverEnabled,
-  loadImagePool,
   applyCoverForTrack,
-  POOL_PATH,
 };

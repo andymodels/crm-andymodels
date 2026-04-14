@@ -915,8 +915,8 @@ export default function WebsiteRadioPage() {
                     </p>
                     <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
                       Capa por faixa (automática): primeiro ID3 no ficheiro; senão capa oficial (iTunes/Deezer); senão
-                      URL aleatória de <code className="text-[11px]">imagesPool.json</code> (sem repetir a última para a
-                      mesma faixa). Sem upload manual.
+                      imagem aleatória listada no bucket B2 (prefixo configurável no servidor; sem repetir a última
+                      escolha para a mesma faixa nesta instância). Sem upload manual.
                     </p>
                   </div>
 

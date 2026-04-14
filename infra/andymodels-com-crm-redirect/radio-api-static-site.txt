@@ -8,10 +8,13 @@ Endpoints (mesmo JSON):
 
 Substitua SEU-CRM por PUBLIC_APP_URL do CRM (sem barra final).
 
-Por playlist, usar no player:
+Por playlist, usar no player (dados reais do CRM, sem texto fixo tipo marca):
   playlist_cover_url  (ou cover_url — duplicado) → imagem da capa da playlist
-  curator_name        → texto de curadoria (se vazio, o site define o fallback)
-  curator_instagram   → URL do link (se vazio, não linkar ou usar fallback)
+  curator_name        → texto (se vazio, não mostrar linha de curadoria)
+  curator_instagram   → URL do link (opcional; se vazio, mostrar só o nome sem link)
+
+API pública (site estático): GET …/api/public/radio ou …/api/public/radio/v2
+API CRM (autenticada): GET …/api/radio/playlists — mesmo objeto playlist com curator_name / curator_instagram
 
 Fetch no site (evitar cache antigo no browser):
   fetch(url, { cache: 'no-store', credentials: 'omit' })

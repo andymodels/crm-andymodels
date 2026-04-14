@@ -15,7 +15,7 @@ export function playlistCoverArtUrl(playlist) {
   return String(u).trim();
 }
 
-/** Texto e link do curador (strings; vazio → o site decide o que mostrar). */
+/** Nomes como gravados no CRM (`GET …/api/public/radio` ou playlist no CRM). */
 export function curatorDisplay(playlist) {
   if (!playlist || typeof playlist !== 'object') {
     return { name: '', instagramUrl: '' };
@@ -24,4 +24,9 @@ export function curatorDisplay(playlist) {
     name: String(playlist.curator_name ?? '').trim(),
     instagramUrl: String(playlist.curator_instagram ?? '').trim(),
   };
+}
+
+/** Há curador para mostrar (evitar bloco vazio no layout). */
+export function hasCuratorInPlaylist(playlist) {
+  return curatorDisplay(playlist).name.length > 0;
 }

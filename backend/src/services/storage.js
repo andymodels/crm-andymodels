@@ -211,6 +211,39 @@ async function fileExistsB2(rel) {
   }
 }
 
+/** Extensões aceites para o pool de capas Andy Radio (ListObjects + filtro). */
+const RADIO_POOL_IMAGE_KEY_EXT = /\.(jpe?g|png|webp)$/i;
+
+/**
+ * Lista chaves no bucket B2 (S3 ListObjectsV2) com extensões jpg/jpeg/png/webp.
+ * Só com STORAGE_DRIVER=b2; caso contrário devolve [].
+ * Prefix opcional: RADIO_B2_COVER_POOL_PREFIX (ex.: pasta no bucket).
+ */
+async function listB2RadioCoverPoolKeys() {
+  if (driver() !== 'b2') return [];
+  const { ListObjectsV2Command } = getS3();
+  const { bucket } = b2Config();
+  const client = s3Client();
+  const prefix = normalizeRel(String(process.env.RADIO_B2_COVER_POOL_PREFIX || '').trim());
+  const keys = [];
+  let ContinuationToken;
+  for (;;) {
+    const input = { Bucket: bucket, MaxKeys: 1000 };
+    if (prefix) input.Prefix = prefix;
+    if (ContinuationToken) input.ContinuationToken = ContinuationToken;
+    const out = await client.send(new ListObjectsV2Command(input));
+    for (const obj of out.Contents || []) {
+      const k = obj.Key;
+      if (!k || k.endsWith('/')) continue;
+      if (RADIO_POOL_IMAGE_KEY_EXT.test(k)) keys.push(k);
+    }
+    if (!out.IsTruncated) break;
+    ContinuationToken = out.NextContinuationToken;
+    if (!ContinuationToken) break;
+  }
+  return keys;
+}
+
 function getPublicUrlB2(rel) {
   const base = resolveB2PublicBase();
   const r = normalizeRel(rel);
@@ -322,4 +355,5 @@ module.exports = {
   resolveB2PublicBase,
   normalizeRel,
   driver,
+  listB2RadioCoverPoolKeys,
 };
