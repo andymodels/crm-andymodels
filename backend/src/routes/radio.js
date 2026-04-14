@@ -165,6 +165,20 @@ async function nextSortOrder(playlistId) {
   return rows[0]?.n ?? 0;
 }
 
+/** Bloqueia segunda faixa com o mesmo título e artista na mesma playlist (schema sem track_id externo). */
+async function assertNoDuplicateTrackInPlaylist(playlistId, finalTitle, finalArtist) {
+  const { rows } = await pool.query(
+    `SELECT id FROM radio_tracks WHERE playlist_id = $1 AND title = $2 AND artist = $3 LIMIT 1`,
+    [playlistId, finalTitle, finalArtist],
+  );
+  if (rows.length) {
+    const e = new Error('Já existe uma faixa com o mesmo título e artista nesta playlist.');
+    e.code = 'RADIO_DUPLICATE_TRACK';
+    e.statusCode = 409;
+    throw e;
+  }
+}
+
 /**
  * Grava uma faixa a partir de buffer de áudio; opcionalmente sobrescreve título/artista.
  */
@@ -178,6 +192,10 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
     mimetype,
     fallbackTitle,
   );
+
+  const finalTitle = String(overrides.title || title).slice(0, 500);
+  const finalArtist = String(overrides.artist != null ? overrides.artist : artist).slice(0, 500);
+  await assertNoDuplicateTrackInPlaylist(playlistId, finalTitle, finalArtist);
 
   /**
    * Capas automáticas (sem upload manual): ID3 → iTunes/Deezer → imagesPool.json (sorteio; sem modelos).
@@ -225,8 +243,8 @@ async function createTrackFromAudioBuffer(playlistId, buffer, originalname, mime
      RETURNING *`,
     [
       playlistId,
-      String(overrides.title || title).slice(0, 500),
-      String(overrides.artist != null ? overrides.artist : artist).slice(0, 500),
+      finalTitle,
+      finalArtist,
       audioRel,
       coverUrl,
       coverModeloId,
@@ -298,7 +316,7 @@ router.get('/radio/playlists', async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT p.*, (SELECT COUNT(*)::int FROM radio_tracks t WHERE t.playlist_id = p.id) AS track_count
        FROM radio_playlists p
-       ORDER BY p.sort_order ASC, p.id ASC`,
+       ORDER BY p.id DESC`,
     );
     return res.json(rows.map(playlistRowOut));
   } catch (e) {
@@ -513,6 +531,9 @@ router.post('/radio/playlists/:id/tracks', audioUpload.single('audio'), async (r
       audio_url: storage.getPublicUrl(row.audio_storage_path),
     });
   } catch (e) {
+    if (e && e.statusCode === 409 && e.code === 'RADIO_DUPLICATE_TRACK') {
+      return res.status(409).json({ message: e.message, code: e.code });
+    }
     return next(e);
   }
 });

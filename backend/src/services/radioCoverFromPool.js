@@ -104,6 +104,8 @@ function firstNameFromPoolUrl(url) {
   return t.toUpperCase().slice(0, 32);
 }
 
+const COVER_PIXEL = 1000;
+
 function buildFooterNameSvg(width, height, displayName) {
   const name = escapeXml(displayName);
   const fs = Math.min(56, Math.max(28, Math.floor(width / 9)));
@@ -124,12 +126,14 @@ function buildFooterNameSvg(width, height, displayName) {
   );
 }
 
-/** Redimensiona como capa ID3; opcionalmente nome no rodapé a partir do ficheiro na URL do pool. */
+/** Capa quadrada 1:1 (1000×1000), preenchida com crop central; opcional nome no rodapé. */
 async function saveCoverFromImageBuffer(imageBuffer, poolImageUrl) {
-  const basePipeline = sharp(imageBuffer).rotate().resize(1200, 1600, { fit: 'inside', withoutEnlargement: true });
+  const basePipeline = sharp(imageBuffer)
+    .rotate()
+    .resize(COVER_PIXEL, COVER_PIXEL, { fit: 'cover', position: 'centre' });
   const { data: resizedBuf, info } = await basePipeline.toBuffer({ resolveWithObject: true });
-  const w = info.width || 1200;
-  const h = info.height || 1600;
+  const w = info.width || COVER_PIXEL;
+  const h = info.height || COVER_PIXEL;
 
   const label = poolImageUrl != null ? firstNameFromPoolUrl(poolImageUrl) : '';
   let jpegBuf;
