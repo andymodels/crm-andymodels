@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE, API_REQUEST_MS_BULK, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
+import {
+  API_BASE,
+  API_REQUEST_MS_BULK,
+  RADIO_MAX_AUDIO_FILE_BYTES,
+  fetchWithAuth,
+  throwIfHtmlOrCannotPost,
+  xhrPostWithAuth,
+} from '../apiConfig';
 
 function fmtDur(sec) {
   if (sec == null || !Number.isFinite(Number(sec))) return '—';
@@ -7,6 +14,14 @@ function fmtDur(sec) {
   const m = Math.floor(n / 60);
   const s = n % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatRadioFileSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** URL da capa da playlist (API: `cover_url`; alias opcional `playlist_cover_url`). */
@@ -485,18 +500,54 @@ export default function WebsiteRadioPage() {
       );
       return;
     }
+    const maxBytes = radioMeta?.max_audio_file_bytes ?? RADIO_MAX_AUDIO_FILE_BYTES;
+    for (let i = 0; i < fileList.length; i += 1) {
+      const f = fileList[i];
+      if (f.size > maxBytes) {
+        setError(
+          `Ficheiro demasiado grande: «${f.name}» (${formatRadioFileSize(f.size)}). Máximo: ${formatRadioFileSize(maxBytes)} por ficheiro.`,
+        );
+        return;
+      }
+    }
     const fd = new FormData();
     for (let i = 0; i < fileList.length; i += 1) {
       fd.append('audio', fileList[i], fileList[i].name);
     }
+    const totalBytes = fileList.reduce((acc, f) => acc + (f.size || 0), 0);
+    const label = fileList.length === 1 ? fileList[0].name : `${fileList.length} ficheiros`;
     setSaving(true);
-    setBulkUploadStatus({ files: fileList.length });
+    setBulkUploadStatus({
+      files: fileList.length,
+      totalBytes,
+      label,
+      phase: 'uploading',
+      loaded: 0,
+      total: totalBytes,
+      percent: 0,
+    });
     setError('');
     setOkMsg('');
     try {
-      const r = await fetchWithAuth(
+      const r = await xhrPostWithAuth(
         `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/tracks/bulk`,
-        { method: 'POST', body: fd, timeoutMs: API_REQUEST_MS_BULK },
+        fd,
+        {
+          timeoutMs: API_REQUEST_MS_BULK,
+          onUploadProgress: ({ loaded, total, percent }) => {
+            setBulkUploadStatus((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    loaded,
+                    total,
+                    percent,
+                    phase: percent >= 100 ? 'processing' : 'uploading',
+                  }
+                : prev,
+            );
+          },
+        },
       );
       const raw = await r.text();
       throwIfHtmlOrCannotPost(raw, r.status);
@@ -659,7 +710,16 @@ export default function WebsiteRadioPage() {
 
   const onPickAudioFiles = (fileList) => {
     if (!fileList?.length) return;
-    setPendingAudioFiles(Array.from(fileList));
+    const maxBytes = radioMeta?.max_audio_file_bytes ?? RADIO_MAX_AUDIO_FILE_BYTES;
+    const arr = Array.from(fileList);
+    const tooBig = arr.find((f) => f.size > maxBytes);
+    if (tooBig) {
+      setError(
+        `Ficheiro demasiado grande: «${tooBig.name}» (${formatRadioFileSize(tooBig.size)}). Máximo: ${formatRadioFileSize(maxBytes)} por ficheiro.`,
+      );
+      return;
+    }
+    setPendingAudioFiles(arr);
     setError('');
   };
 
@@ -683,9 +743,10 @@ export default function WebsiteRadioPage() {
         {radioMeta ? (
           <p className="mt-3 text-xs text-slate-500">
             Até <span className="font-medium text-slate-700">{radioMeta.max_bulk_audio_files ?? 50}</span> ficheiros por
-            envio · máximo{' '}
-            <span className="font-medium text-slate-700">{radioMeta.max_tracks_per_playlist ?? 50}</span> faixas por
-            playlist
+            envio · até{' '}
+            <span className="font-medium text-slate-700">{radioMeta.max_audio_file_mb ?? 250}</span> MB por ficheiro ·
+            máximo <span className="font-medium text-slate-700">{radioMeta.max_tracks_per_playlist ?? 50}</span> faixas
+            por playlist
           </p>
         ) : null}
       </header>
@@ -708,11 +769,29 @@ export default function WebsiteRadioPage() {
               className="mt-0.5 inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-sky-700 border-t-transparent"
               aria-hidden
             />
-            <div>
-              <p className="font-medium">A enviar músicas…</p>
-              <p className="mt-0.5 text-sky-900/90">
-                {bulkUploadStatus.files} ficheiro(s). Pode demorar um minuto — não feche esta página.
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">
+                {bulkUploadStatus.phase === 'processing'
+                  ? 'A processar no servidor…'
+                  : 'A enviar músicas…'}
               </p>
+              <p className="mt-0.5 truncate text-sky-900/90" title={bulkUploadStatus.label}>
+                {bulkUploadStatus.label}
+                {bulkUploadStatus.totalBytes != null ? (
+                  <>
+                    {' '}
+                    · {formatRadioFileSize(bulkUploadStatus.totalBytes)} no total
+                  </>
+                ) : null}
+              </p>
+              {bulkUploadStatus.percent != null ? (
+                <p className="mt-1 font-mono text-xs tabular-nums text-sky-950">
+                  {bulkUploadStatus.phase === 'uploading'
+                    ? `${bulkUploadStatus.percent}% · ${formatRadioFileSize(bulkUploadStatus.loaded ?? 0)} / ${formatRadioFileSize(bulkUploadStatus.total ?? bulkUploadStatus.totalBytes ?? 0)}`
+                    : 'Upload concluído — a aguardar resposta…'}
+                </p>
+              ) : null}
+              <p className="mt-1 text-xs text-sky-800/90">Não feche esta página durante o envio.</p>
             </div>
           </div>
         ) : null}

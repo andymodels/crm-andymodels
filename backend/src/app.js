@@ -50,7 +50,8 @@ app.use((req, res, next) => {
 });
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '300mb' }));
+app.use(express.urlencoded({ limit: '300mb', extended: true }));
 /** Ficheiros gravados em uploads/ (driver local); mantido em paralelo a storage externa (B2). */
 try {
   fs.mkdirSync(UPLOAD_ROOT, { recursive: true });

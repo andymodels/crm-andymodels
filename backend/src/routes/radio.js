@@ -34,9 +34,12 @@ function logRadioCoverImage(event, payload) {
 const MAX_TRACKS_PER_PLAYLIST = 50;
 const MAX_BULK = 50;
 
+/** Tamanho máximo por ficheiro de áudio (DJ sets); alinhar com validação no frontend. */
+const RADIO_MAX_AUDIO_BYTES = 250 * 1024 * 1024;
+
 const audioUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 120 * 1024 * 1024, files: MAX_BULK },
+  limits: { fileSize: RADIO_MAX_AUDIO_BYTES, files: MAX_BULK },
 });
 
 const coverUpload = multer({
@@ -304,6 +307,8 @@ router.get('/radio/meta', (_req, res) => {
   return res.json({
     max_tracks_per_playlist: MAX_TRACKS_PER_PLAYLIST,
     max_bulk_audio_files: MAX_BULK,
+    max_audio_file_bytes: RADIO_MAX_AUDIO_BYTES,
+    max_audio_file_mb: Math.floor(RADIO_MAX_AUDIO_BYTES / (1024 * 1024)),
     /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → imagens no B2 (RADIO_COVER_IMAGE_POOL + prefixo opcional). Sem upload manual. */
     cover_pipeline: ['id3_embedded', 'external_store', 'image_pool'],
     cover_embedded_first: true,

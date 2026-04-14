@@ -28,8 +28,9 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target,
           changeOrigin: true,
-          timeout: 20_000,
-          proxyTimeout: 20_000,
+          /** Uploads grandes (ex.: DJ sets até 250MB) — alinhar com API_REQUEST_MS_BULK no frontend */
+          timeout: 12 * 60_000,
+          proxyTimeout: 12 * 60_000,
         },
         '/health': {
           target,

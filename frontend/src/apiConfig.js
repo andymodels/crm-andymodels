@@ -25,6 +25,9 @@ export const API_REQUEST_MS = 25_000;
 /** Upload em lote (ex.: vários MP3 na Rádio) — o servidor pode demorar minutos; 25s cortava o pedido com «Fetch is aborted». */
 export const API_REQUEST_MS_BULK = 10 * 60 * 1000;
 
+/** Alinhar com backend `GET /radio/meta` → max_audio_file_bytes (fallback se meta ainda não carregou). */
+export const RADIO_MAX_AUDIO_FILE_BYTES = 250 * 1024 * 1024;
+
 export function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUEST_MS) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -59,6 +62,71 @@ export function fetchWithAuth(url, options = {}) {
     },
     ms,
   );
+}
+
+/**
+ * POST multipart com progresso de upload (fetch não expõe `onUploadProgress`).
+ * Devolve objeto compatível com fetch: `{ ok, status, text }`.
+ */
+export function xhrPostWithAuth(url, body, options = {}) {
+  const { timeoutMs = API_REQUEST_MS_BULK, onUploadProgress } = options;
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let timer;
+    const ms = timeoutMs != null ? Number(timeoutMs) : API_REQUEST_MS_BULK;
+    if (ms > 0) {
+      timer = setTimeout(() => xhr.abort(), ms);
+    }
+    const done = () => {
+      if (timer) clearTimeout(timer);
+    };
+
+    xhr.open('POST', url);
+    xhr.withCredentials = true;
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const t = sessionStorage.getItem('crm_api_token');
+        if (t) xhr.setRequestHeader('Authorization', `Bearer ${String(t).trim()}`);
+      }
+    } catch {
+      /* */
+    }
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && typeof onUploadProgress === 'function') {
+        onUploadProgress({
+          loaded: e.loaded,
+          total: e.total,
+          percent: Math.min(100, Math.round((100 * e.loaded) / Math.max(1, e.total))),
+        });
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      done();
+      const status = xhr.status;
+      const ok = status >= 200 && status < 300;
+      resolve({
+        ok,
+        status,
+        text: () => Promise.resolve(xhr.responseText || ''),
+      });
+    });
+
+    xhr.addEventListener('error', () => {
+      done();
+      reject(new Error('Erro de rede ao enviar ficheiros.'));
+    });
+
+    xhr.addEventListener('abort', () => {
+      done();
+      const err = new Error('Pedido cancelado ou tempo esgotado.');
+      err.name = 'AbortError';
+      reject(err);
+    });
+
+    xhr.send(body);
+  });
 }
 
 export function throwIfHtmlOrCannotPost(raw, httpStatus) {
