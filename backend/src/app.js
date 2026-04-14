@@ -123,9 +123,19 @@ app.use('/api', (req, res) => {
 
 const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(path.join(publicDir, 'index.html'))) {
-  app.use(express.static(publicDir));
+  /** Evita que o browser fique com index.html antigo após deploy (menu/UI “não atualiza”). */
+  app.use(
+    express.static(publicDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(`${path.sep}index.html`) || path.basename(filePath) === 'index.html') {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        }
+      },
+    }),
+  );
   app.use((req, res, next) => {
     if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.sendFile(path.join(publicDir, 'index.html'), (err) => (err ? next(err) : undefined));
   });
 } else {
