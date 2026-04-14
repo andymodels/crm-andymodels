@@ -58,7 +58,7 @@ function pickRandomKey(keys, excludeKey) {
 
 const COVER_PIXEL = 1000;
 
-/** Capa quadrada 1:1 (1000×1000), crop alinhado ao topo (rosto). */
+/** Processamento de ficheiro guardado (quadrado 1000×1000); o enquadramento 4:5 é só no frontend. */
 async function saveCoverFromImageBuffer(imageBuffer) {
   const jpegBuf = await sharp(imageBuffer)
     .rotate()

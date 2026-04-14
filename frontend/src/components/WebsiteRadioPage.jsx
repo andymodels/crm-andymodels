@@ -161,9 +161,9 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
         Mesmos ficheiros que o site; a barra e o botão «seguinte» devem corresponder ao player público.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+        <div className="radio-cover-frame relative w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14">
           {art ? (
-            <img src={art} alt="" className="h-full w-full object-cover" />
+            <img src={art} alt="" />
           ) : (
             <AndyPlaylistCoverPlaceholder />
           )}
@@ -813,14 +813,13 @@ export default function WebsiteRadioPage() {
                       disabled={saving}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => openPlaylistCoverPicker(p.id, e)}
-                      className="relative h-14 w-14 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm transition hover:border-slate-300 hover:ring-2 hover:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="radio-cover-frame relative w-12 cursor-pointer rounded-lg border border-slate-200 bg-slate-100 shadow-sm transition hover:border-slate-300 hover:ring-2 hover:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50 sm:w-14"
                     >
                       {coverSrc ? (
                         <img
                           key={`pl-${p.id}-${coverSrc}-${String(p.updated_at ?? '')}`}
                           src={coverSrc}
                           alt=""
-                          className="h-full w-full object-cover"
                           loading="lazy"
                         />
                       ) : (
@@ -1070,24 +1069,25 @@ export default function WebsiteRadioPage() {
                           setTrDragFrom(null);
                         }}
                         onDragEnd={() => setTrDragFrom(null)}
-                        className={`flex gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm ${
+                        className={`flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm ${
                           trDragFrom === index ? 'ring-2 ring-amber-400' : ''
                         } ${!saving ? 'cursor-grab active:cursor-grabbing' : ''}`}
                       >
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
+                        <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
                           {index + 1}
                         </span>
                         {t.cover_url ? (
-                          <img
-                            key={`track-cover-${t.id}-${t.cover_url}-${String(t.updated_at ?? '')}`}
-                            src={trackCoverImgSrc(t)}
-                            alt=""
-                            className="h-14 w-14 shrink-0 rounded-lg object-cover"
-                            loading="eager"
-                            decoding="async"
-                          />
+                          <div className="radio-cover-frame relative w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14">
+                            <img
+                              key={`track-cover-${t.id}-${t.cover_url}-${String(t.updated_at ?? '')}`}
+                              src={trackCoverImgSrc(t)}
+                              alt=""
+                              loading="eager"
+                              decoding="async"
+                            />
+                          </div>
                         ) : (
-                          <div className="h-14 w-14 shrink-0 rounded-lg bg-slate-100" />
+                          <div className="radio-cover-frame w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14" />
                         )}
                         <div className="min-w-0 flex-1">
                           <p className="truncate font-medium text-slate-900">{t.title}</p>
