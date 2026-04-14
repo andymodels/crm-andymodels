@@ -10,6 +10,7 @@ import {
 } from '../utils/websiteMediaDisplay';
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 import WebsitePublicVideoEmbed from './WebsitePublicVideoEmbed';
+import { toDateInputValue } from '../utils/dateInput';
 
 const emptyFormaRecebimento = () => ({
   tipo: 'PIX',
@@ -27,6 +28,8 @@ function createInitialForm() {
     nome_completo: '',
     /** Nome exibido na vitrine e no perfil público (API: name). */
     nome: '',
+    /** Cadastro interno — não é exibida na vitrine (API: birth_date / data_nascimento). */
+    data_nascimento: '',
     bio: '',
     featured: false,
     ativo: true,
@@ -264,6 +267,13 @@ function formToWebsiteModelPut(form) {
   /** Nome completo para cadastro; o site deve persistir `full_name` (reencaminhado pelo proxy). */
   if (nomeCompleto) out.full_name = nomeCompleto;
 
+  const dn = trim(form.data_nascimento);
+  /** Data de nascimento só para arquivo interno; o CRM não usa isto no perfil público. */
+  if (dn) {
+    out.birth_date = dn;
+    out.data_nascimento = dn;
+  }
+
   if (baseCat === 'women') {
     out.height = trim(form.medida_altura) || null;
     out.bust = trim(form.medida_busto) || null;
@@ -331,10 +341,22 @@ function mapDetailToForm(detail) {
     return nomeSite.trim();
   })();
 
+  const dataNascFromApi =
+    detail.birth_date != null
+      ? String(detail.birth_date)
+      : detail.data_nascimento != null
+        ? String(detail.data_nascimento)
+        : detail.date_of_birth != null
+          ? String(detail.date_of_birth)
+          : detail.birthdate != null
+            ? String(detail.birthdate)
+            : '';
+
   return {
     ...base,
     nome_completo: nomeCompletoFromApi,
     nome: nomeSite,
+    data_nascimento: toDateInputValue(dataNascFromApi),
     bio:
       detail.bio != null
         ? String(detail.bio)
@@ -1099,6 +1121,18 @@ export default function WebsiteModeloEditorPage({
             />
             <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
               É o nome exibido na vitrine, nos cartões e no perfil público. Pode ser mais curto que o nome completo.
+            </p>
+          </Field>
+          <Field label="Data de nascimento" className="md:col-span-2">
+            <input
+              type="date"
+              value={toDateInputValue(form.data_nascimento)}
+              onChange={(e) => setField('data_nascimento', e.target.value)}
+              className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              autoComplete="bday"
+            />
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+              Cadastro interno no CRM — não é exibida na vitrine nem no perfil público do site.
             </p>
           </Field>
           <Field label="Slug (URL no site)" className="md:col-span-2">
