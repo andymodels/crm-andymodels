@@ -23,6 +23,9 @@ const emptyFormaRecebimento = () => ({
 
 function createInitialForm() {
   return {
+    /** Nome civil / cadastro completo (API: full_name, se o site suportar). */
+    nome_completo: '',
+    /** Nome exibido na vitrine e no perfil público (API: name). */
     nome: '',
     bio: '',
     featured: false,
@@ -231,9 +234,11 @@ function formToWebsiteModelPut(form) {
   }
 
   const pi = trim(form.public_info);
+  const nomeSite = trim(form.nome);
+  const nomeCompleto = trim(form.nome_completo);
 
   const out = {
-    name: trim(form.nome),
+    name: nomeSite,
     bio: bioText,
     featured: form.featured ? '1' : '0',
     active: form.ativo ? '1' : '0',
@@ -255,6 +260,9 @@ function formToWebsiteModelPut(form) {
   };
 
   if (pi) out.model_status = pi;
+
+  /** Nome completo para cadastro; o site deve persistir `full_name` (reencaminhado pelo proxy). */
+  if (nomeCompleto) out.full_name = nomeCompleto;
 
   if (baseCat === 'women') {
     out.height = trim(form.medida_altura) || null;
@@ -309,9 +317,24 @@ function mapDetailToForm(detail) {
 
   const igStored = detail.instagram != null ? String(detail.instagram) : '';
 
+  const nomeSite = detail.name != null ? String(detail.name) : '';
+  const nomeCompletoFromApi = (() => {
+    const raw =
+      detail.full_name != null
+        ? String(detail.full_name)
+        : detail.legal_name != null
+          ? String(detail.legal_name)
+          : '';
+    const t = raw.trim();
+    if (t) return t;
+    /** Modelos antigos: um único «name» servia para tudo — repete no completo até editar. */
+    return nomeSite.trim();
+  })();
+
   return {
     ...base,
-    nome: detail.name != null ? String(detail.name) : '',
+    nome_completo: nomeCompletoFromApi,
+    nome: nomeSite,
     bio:
       detail.bio != null
         ? String(detail.bio)
@@ -682,6 +705,15 @@ export default function WebsiteModeloEditorPage({
         }
       }
 
+      const nomeCompletoOk = String(form.nome_completo || '').trim();
+      const nomeSiteOk = String(form.nome || '').trim();
+      if (!nomeCompletoOk) {
+        throw new Error('Preencha «Nome completo» (cadastro com o nome inteiro da pessoa).');
+      }
+      if (!nomeSiteOk) {
+        throw new Error('Preencha «Nome para o site» (como quer que apareça na vitrine).');
+      }
+
       const pendingImageFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
       );
@@ -1045,14 +1077,29 @@ export default function WebsiteModeloEditorPage({
     <div className="space-y-5">
       <form onSubmit={onSubmit} className="space-y-5">
         <Section title="Identificação e site">
-          <Field label="Nome" className="md:col-span-2">
+          <Field label="Nome completo" className="md:col-span-2">
+            <input
+              value={form.nome_completo}
+              onChange={(e) => setField('nome_completo', e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Nome civil completo (cadastro interno)"
+              autoComplete="name"
+            />
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+              Nome civil completo para o vosso cadastro interno. O visitante vê apenas o «Nome para o site» em baixo.
+            </p>
+          </Field>
+          <Field label="Nome para o site" className="md:col-span-2">
             <input
               value={form.nome}
               onChange={(e) => setField('nome', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="Nome completo ou artístico"
+              placeholder="Ex.: primeiro nome ou nome artístico — como aparece online"
               autoComplete="off"
             />
+            <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+              É o nome exibido na vitrine, nos cartões e no perfil público. Pode ser mais curto que o nome completo.
+            </p>
           </Field>
           <Field label="Slug (URL no site)" className="md:col-span-2">
             <input

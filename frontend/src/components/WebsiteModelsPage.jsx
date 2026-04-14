@@ -224,6 +224,12 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
             <ul className={`mt-6 ${LIST_THUMB_GRID_CLASS}`}>
               {filteredRows.map((m, idx) => {
                 const name = m?.name != null ? String(m.name) : '—';
+                const nomeCompletoList =
+                  m?.full_name != null && String(m.full_name).trim()
+                    ? String(m.full_name).trim()
+                    : m?.legal_name != null && String(m.legal_name).trim()
+                      ? String(m.legal_name).trim()
+                      : '';
                 const slug = m?.slug != null ? String(m.slug).trim() : '';
                 const mediaItems = buildMediaItems(m);
                 const firstImage =
@@ -291,18 +297,23 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                             </div>
                           )}
                         </div>
-                        <p
-                          className="border-t border-slate-200 bg-white px-1.5 py-1 text-xs font-medium leading-tight text-slate-900 truncate"
-                          title={name}
+                        <div
+                          className="border-t border-slate-200 bg-white px-1.5 py-1 text-xs leading-tight"
+                          title={nomeCompletoList ? `${name} — ${nomeCompletoList}` : name}
                         >
-                          {name}
-                          {inactive ? (
-                            <span className="ml-2 text-xs font-normal text-slate-500">(fora do ar)</span>
+                          <p className="truncate font-medium text-slate-900">{name}</p>
+                          {nomeCompletoList && nomeCompletoList !== name ? (
+                            <p className="truncate text-[10px] font-normal text-slate-500">{nomeCompletoList}</p>
                           ) : null}
-                          {!canOpen ? (
-                            <span className="ml-2 text-xs font-normal text-amber-700">(sem slug)</span>
-                          ) : null}
-                        </p>
+                          <span className="inline">
+                            {inactive ? (
+                              <span className="ml-1 text-[10px] font-normal text-slate-500">(fora do ar)</span>
+                            ) : null}
+                            {!canOpen ? (
+                              <span className="ml-1 text-[10px] font-normal text-amber-700">(sem slug)</span>
+                            ) : null}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </li>
