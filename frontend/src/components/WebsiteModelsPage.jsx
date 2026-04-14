@@ -120,7 +120,8 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
   const openEdit = useCallback(
     (slug, modelId) => {
       const s = String(slug || '').trim();
-      if (!s || typeof onOpenEdit !== 'function') return;
+      const hasId = modelId != null && modelId !== '' && !Number.isNaN(Number(modelId));
+      if ((!s && !hasId) || typeof onOpenEdit !== 'function') return;
       onOpenEdit(s, modelId);
     },
     [onOpenEdit],
@@ -237,7 +238,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                   mediaItems.find((item) => item.type === 'image')?.url ||
                   '';
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
-                const canOpen = Boolean(slug);
+                const canOpen = Boolean(slug) || (modelId != null && String(modelId).trim() !== '');
                 const inactive = modelIsInactive(m);
                 const modelId = m?.id != null ? m.id : null;
                 const canDelete = modelId != null && String(modelId).trim() !== '';

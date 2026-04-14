@@ -2551,6 +2551,7 @@ function App({ authUser, onLogout = () => {} }) {
                         setModule('website');
                         setWebsiteSubView(id);
                         setWebsiteEditSlug(null);
+                        setWebsiteEditModelId(null);
                       }}
                       className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(
                         (websiteSubView === id && module === 'website') ||
@@ -3902,7 +3903,8 @@ function App({ authUser, onLogout = () => {} }) {
           {module === 'website' && websiteSubView === 'modelos' && (
             <WebsiteModelsPage
               onOpenEdit={(slug, modelId) => {
-                setWebsiteEditSlug(slug);
+                const s = String(slug || '').trim();
+                setWebsiteEditSlug(s || null);
                 setWebsiteEditModelId(() => {
                   if (modelId == null || modelId === '') return null;
                   const n = Number(modelId);
@@ -3922,18 +3924,21 @@ function App({ authUser, onLogout = () => {} }) {
               }}
             />
           )}
-          {module === 'website' && websiteSubView === 'editar_modelo' && websiteEditSlug && (
-            <WebsiteModeloEditorPage
-              mode="edit"
-              editSlug={websiteEditSlug}
-              editModelId={websiteEditModelId}
-              onBackToList={() => {
-                setWebsiteSubView('modelos');
-                setWebsiteEditSlug(null);
-                setWebsiteEditModelId(null);
-              }}
-            />
-          )}
+          {module === 'website' &&
+            websiteSubView === 'editar_modelo' &&
+            ((websiteEditSlug != null && String(websiteEditSlug).trim() !== '') ||
+              (websiteEditModelId != null && !Number.isNaN(Number(websiteEditModelId)))) && (
+              <WebsiteModeloEditorPage
+                mode="edit"
+                editSlug={websiteEditSlug || ''}
+                editModelId={websiteEditModelId}
+                onBackToList={() => {
+                  setWebsiteSubView('modelos');
+                  setWebsiteEditSlug(null);
+                  setWebsiteEditModelId(null);
+                }}
+              />
+            )}
           {module === 'website' && websiteSubView === 'inscricoes' && <WebsiteInscricoesPage />}
           {module === 'website' && websiteSubView === 'home' && <WebsiteHomeOrderPage />}
           {module === 'website' && websiteSubView === 'instagram' && <WebsiteInstagramPage />}
