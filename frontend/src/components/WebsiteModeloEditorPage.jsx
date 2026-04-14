@@ -37,6 +37,15 @@ function unwrapWebsiteModelDetail(raw) {
   return raw;
 }
 
+/** Evita tratar `{ ok: true }` ou objeto vazio como modelo carregado. */
+function hasUsableModelPayload(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  if (obj.id != null && obj.id !== '') return true;
+  if (obj.name != null && String(obj.name).trim() !== '') return true;
+  if (obj.slug != null && String(obj.slug).trim() !== '') return true;
+  return false;
+}
+
 const CRM_WEBSITE_EXTRA_KEY = (id) => `crm_website_model_extra_v1_${id}`;
 
 /** Última gravação neste browser — cobre quando a API do site não devolve ou não persiste todos os campos. */
@@ -515,7 +524,11 @@ export default function WebsiteModeloEditorPage({
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState('');
   const [fileQueueNotice, setFileQueueNotice] = useState('');
-  const [editBoot, setEditBoot] = useState(() => isEdit && String(editSlug || '').trim() !== '');
+  const [editBoot, setEditBoot] = useState(() => {
+    if (!isEdit) return false;
+    if (String(editSlug || '').trim() !== '') return true;
+    return editModelId != null && !Number.isNaN(Number(editModelId));
+  });
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
   const cepLookupRef = useRef(null);
@@ -583,7 +596,10 @@ export default function WebsiteModeloEditorPage({
             adm = null;
           }
           if (rAdm.ok && adm && typeof adm === 'object') {
-            d = adm;
+            const cand = unwrapWebsiteModelDetail(adm) || adm;
+            if (hasUsableModelPayload(cand)) {
+              d = cand;
+            }
           }
         }
         if (!d && slug) {
@@ -1162,7 +1178,7 @@ export default function WebsiteModeloEditorPage({
     setApiMedia((prev) => [...prev, { type: 'video', url: urlForItem, thumb }]);
   };
 
-  if (isEdit && editBoot) {
+  if (isEdit && (editBoot || loadLoading)) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
         A carregar modelo…

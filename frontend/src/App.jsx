@@ -3929,6 +3929,7 @@ function App({ authUser, onLogout = () => {} }) {
             ((websiteEditSlug != null && String(websiteEditSlug).trim() !== '') ||
               (websiteEditModelId != null && !Number.isNaN(Number(websiteEditModelId)))) && (
               <WebsiteModeloEditorPage
+                key={`we-${websiteEditModelId ?? 'x'}-${String(websiteEditSlug || '').slice(0, 48)}`}
                 mode="edit"
                 editSlug={websiteEditSlug || ''}
                 editModelId={websiteEditModelId}
