@@ -9,6 +9,7 @@ import WebsiteRadioPage from './components/WebsiteRadioPage';
 import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
 import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
 import WebsiteModeloEditorPage from './components/WebsiteModeloEditorPage';
+import AtendimentoPage from './components/AtendimentoPage';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
@@ -2513,6 +2514,13 @@ function App({ authUser, onLogout = () => {} }) {
             >
               Dashboard
             </button>
+            <button
+              type="button"
+              onClick={() => setModule('atendimento')}
+              className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${navMainBtn(module === 'atendimento')}`}
+            >
+              Atendimento
+            </button>
             <div className="rounded-xl">
               <button
                 type="button"
@@ -2704,9 +2712,11 @@ function App({ authUser, onLogout = () => {} }) {
                                 ? 'Financeiro'
                                 : module === 'extrato'
                                   ? 'Extrato modelo'
-                                  : module === 'website'
-                                    ? websiteMainTitle
-                                    : 'Jobs / O.S.'}
+                                  : module === 'atendimento'
+                                    ? 'Atendimento'
+                                    : module === 'website'
+                                      ? websiteMainTitle
+                                      : 'Jobs / O.S.'}
                 </h2>
                 {module !== 'financeiro' && !(module === 'website' && !String(websiteSubtitle || '').trim()) ? (
                 <p className="text-sm text-slate-500">
@@ -2730,9 +2740,11 @@ function App({ authUser, onLogout = () => {} }) {
                               ? 'Altere sua senha de administrador em uma tela dedicada.'
                               : module === 'extrato'
                                 ? 'Líquido por linha de modelo, pagamentos registrados e saldo.'
-                                : module === 'website'
-                                  ? websiteSubtitle
-                                  : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
+                                : module === 'atendimento'
+                                  ? 'Conversas e painel assistente — estrutura visual; dados e envio serão ligados mais tarde.'
+                                  : module === 'website'
+                                    ? websiteSubtitle
+                                    : 'Lista das O.S. geradas ao aprovar orçamento — somente leitura; valores vêm do orçamento.'}
                 </p>
                 ) : null}
               </div>
@@ -2768,9 +2780,11 @@ function App({ authUser, onLogout = () => {} }) {
                                 : '—'
                               : module === 'extrato'
                                 ? `${extratoRows.length} linha(s)`
-                                : module === 'website'
-                                  ? websiteBadgeLabel
-                                  : `${osList.length} O.S.`}
+                                : module === 'atendimento'
+                                  ? 'Demonstração'
+                                  : module === 'website'
+                                    ? websiteBadgeLabel
+                                    : `${osList.length} O.S.`}
               </span>
             </div>
           </section>
@@ -2953,6 +2967,12 @@ function App({ authUser, onLogout = () => {} }) {
           {module === 'agenda' && (
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <AgendaCentral apiBase={API_BASE} />
+            </section>
+          )}
+
+          {module === 'atendimento' && (
+            <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <AtendimentoPage />
             </section>
           )}
 
