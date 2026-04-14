@@ -802,7 +802,7 @@ export default function WebsiteRadioPage() {
           <div>
             <h4 className="text-sm font-semibold text-slate-900">Playlists</h4>
             <p className="mt-0.5 text-xs text-slate-500">
-              Ordem igual ao site (arrastar para reordenar) · clique no nome para abrir · miniatura à direita para capa
+              Mais recentes no topo · arrastar para reordenar (grava posição) · clique no nome · capa à direita
             </p>
           </div>
           <input

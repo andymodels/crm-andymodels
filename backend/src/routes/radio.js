@@ -319,13 +319,13 @@ router.get('/radio/meta', (_req, res) => {
 
 // ——— Playlists ———
 
-/** CRM: todas as colunas de `radio_playlists` (incl. curator_name, curator_instagram) + track_count. */
+/** CRM: mais recentes primeiro: sort_order 0 = topo (novo entra com 0; resto incrementa). Desempate: created_at DESC. */
 router.get('/radio/playlists', async (req, res, next) => {
   try {
     const { rows } = await pool.query(
       `SELECT p.*, (SELECT COUNT(*)::int FROM radio_tracks t WHERE t.playlist_id = p.id) AS track_count
        FROM radio_playlists p
-       ORDER BY p.sort_order ASC, p.id ASC`,
+       ORDER BY p.sort_order ASC, p.created_at DESC, p.id DESC`,
     );
     return res.json(rows.map(playlistRowOut));
   } catch (e) {
@@ -340,11 +340,9 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
     const description = String(req.body?.description ?? '').trim();
     const slug = await uniqueSlug(req.body?.slug || name);
     let sortOrderVal = Number(req.body?.sort_order);
-    if (!Number.isFinite(sortOrderVal)) {
-      const { rows: mx } = await pool.query(
-        `SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM radio_playlists`,
-      );
-      sortOrderVal = mx[0]?.n != null ? Number(mx[0].n) : 0;
+    const hasExplicitSort = Number.isFinite(sortOrderVal);
+    if (!hasExplicitSort) {
+      sortOrderVal = 0;
     }
     const active = req.body?.active === false ? false : true;
     const status = req.body?.status === 'draft' ? 'draft' : 'published';
@@ -353,23 +351,54 @@ router.post('/radio/playlists', express.json(), async (req, res, next) => {
     const curator_name = normalizeCuratorName(req.body?.curator_name);
     const curator_instagram = normalizeCuratorInstagram(req.body?.curator_instagram);
 
-    const { rows } = await pool.query(
-      `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, auto_next_playlist, curator_name, curator_instagram, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
-       RETURNING *`,
-      [
-        name,
-        slug,
-        description,
-        cover_url,
-        sortOrderVal,
-        active,
-        status,
-        auto_next_playlist,
-        curator_name,
-        curator_instagram,
-      ],
-    );
+    let rows;
+    if (!hasExplicitSort) {
+      await pool.query('BEGIN');
+      try {
+        await pool.query(`UPDATE radio_playlists SET sort_order = sort_order + 1, updated_at = NOW()`);
+        const ins = await pool.query(
+          `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, auto_next_playlist, curator_name, curator_instagram, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+           RETURNING *`,
+          [
+            name,
+            slug,
+            description,
+            cover_url,
+            0,
+            active,
+            status,
+            auto_next_playlist,
+            curator_name,
+            curator_instagram,
+          ],
+        );
+        rows = ins.rows;
+        await pool.query('COMMIT');
+      } catch (e) {
+        await pool.query('ROLLBACK');
+        throw e;
+      }
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO radio_playlists (name, slug, description, cover_url, sort_order, active, status, auto_next_playlist, curator_name, curator_instagram, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+         RETURNING *`,
+        [
+          name,
+          slug,
+          description,
+          cover_url,
+          sortOrderVal,
+          active,
+          status,
+          auto_next_playlist,
+          curator_name,
+          curator_instagram,
+        ],
+      );
+      rows = ins.rows;
+    }
     const created = rows[0];
     logRadioCoverImage('playlist_create', {
       playlist_id: created.id,
