@@ -75,16 +75,78 @@ async function fetchImageBuffer(url) {
   return Buffer.from(ab);
 }
 
-/** Mesmo pipeline que capa ID3 em radio.js (JPEG armazenado). */
-async function saveCoverFromImageBuffer(imageBuffer) {
-  const processed = await sharp(imageBuffer)
-    .rotate()
-    .resize(1200, 1600, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 90, mozjpeg: true })
-    .toBuffer();
+function escapeXml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Do path do ficheiro na URL: "ana_silva_123.jpg" → primeiro token antes de _/- → "ANA".
+ */
+function firstNameFromPoolUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  let pathname = raw;
+  try {
+    pathname = new URL(raw).pathname;
+  } catch {
+    pathname = raw.split('?')[0];
+  }
+  const base = path.basename(pathname);
+  const noExt = base.replace(/\.[^.]+$/i, '');
+  if (!noExt) return '';
+  const token = noExt.split(/[_\s-]+/)[0] || noExt;
+  const t = String(token).trim();
+  if (!t) return '';
+  return t.toUpperCase().slice(0, 32);
+}
+
+function buildFooterNameSvg(width, height, displayName) {
+  const name = escapeXml(displayName);
+  const fs = Math.min(56, Math.max(28, Math.floor(width / 9)));
+  const pad = Math.max(28, Math.floor(fs * 0.55));
+  const cx = width / 2;
+  const textY = height - pad;
+  return Buffer.from(
+    `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+  <text x="${cx}" y="${textY}" text-anchor="middle"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="${fs}" font-weight="700"
+    fill="#ffffff"
+    stroke="#0f172a"
+    stroke-width="1.6"
+    paint-order="stroke fill">${name}</text>
+</svg>`,
+    'utf8',
+  );
+}
+
+/** Redimensiona como capa ID3; opcionalmente nome no rodapé a partir do ficheiro na URL do pool. */
+async function saveCoverFromImageBuffer(imageBuffer, poolImageUrl) {
+  const basePipeline = sharp(imageBuffer).rotate().resize(1200, 1600, { fit: 'inside', withoutEnlargement: true });
+  const { data: resizedBuf, info } = await basePipeline.toBuffer({ resolveWithObject: true });
+  const w = info.width || 1200;
+  const h = info.height || 1600;
+
+  const label = poolImageUrl != null ? firstNameFromPoolUrl(poolImageUrl) : '';
+  let jpegBuf;
+  if (label) {
+    const overlaySvg = buildFooterNameSvg(w, h, label);
+    const overlayPng = await sharp(overlaySvg, { density: 144 }).resize(w, h).png().toBuffer();
+    jpegBuf = await sharp(resizedBuf)
+      .composite([{ input: overlayPng, left: 0, top: 0, blend: 'over' }])
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toBuffer();
+  } else {
+    jpegBuf = await sharp(resizedBuf).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+  }
+
   const rel = radioStorageKey('.jpg');
   await storage.saveFile({
-    buffer: processed,
+    buffer: jpegBuf,
     relativePath: rel,
     contentType: 'image/jpeg',
   });
@@ -109,7 +171,7 @@ async function applyCoverForTrack(trackId) {
 
   try {
     const buf = await fetchImageBuffer(chosen);
-    const publicUrl = await saveCoverFromImageBuffer(buf);
+    const publicUrl = await saveCoverFromImageBuffer(buf, chosen);
 
     state.byTrackId[tid] = chosen;
     await writeState(state);
