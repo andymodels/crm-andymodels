@@ -22,8 +22,8 @@ function getWebsiteOrigin() {
 
 function websiteAdminBearerToken() {
   return String(
-    process.env.WEBSITE_ADMIN_API_KEY ||
-      process.env.WEBSITE_ADMIN_TOKEN ||
+    process.env.WEBSITE_ADMIN_TOKEN ||
+      process.env.WEBSITE_ADMIN_API_KEY ||
       process.env.ADMIN_SECRET ||
       '',
   ).trim();
@@ -160,7 +160,7 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw, attemptedUrl) {
     return res.status(401).json({
       message: hasEnvToken
         ? 'Website recusou o Bearer (401). Defina o mesmo ADMIN_SECRET do site no CRM.'
-        : 'Defina ADMIN_SECRET ou WEBSITE_ADMIN_API_KEY no backend do CRM (igual ao site).',
+        : 'Defina WEBSITE_ADMIN_TOKEN ou WEBSITE_ADMIN_API_KEY ou ADMIN_SECRET no backend do CRM (igual ao site).',
     });
   }
   if (statusCode === 204) {

@@ -778,6 +778,7 @@ export default function WebsiteModeloEditorPage({
         }
         if (cancelled) return;
         const dUn = unwrapWebsiteModelDetail(d) || d;
+        console.log('MODEL LOADED NO FORM:', JSON.stringify(dUn, null, 2));
         setForm(mapDetailToForm(dUn));
         setApiMedia(mediaArrayFromDetail(dUn));
         setWebsiteModelId(dUn.id != null ? Number(dUn.id) : mid);
@@ -822,6 +823,7 @@ export default function WebsiteModeloEditorPage({
     }
     const dUn = unwrapWebsiteModelDetail(data) || data;
     if (!dUn || typeof dUn !== 'object') return;
+    console.log('MODEL LOADED NO FORM:', JSON.stringify(dUn, null, 2));
     setForm(mapDetailToForm(dUn));
     setApiMedia((prev) => {
       const incoming = mediaArrayFromDetail(dUn);

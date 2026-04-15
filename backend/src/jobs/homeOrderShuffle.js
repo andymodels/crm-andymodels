@@ -27,7 +27,10 @@ function getWebsiteOrigin() {
 
 function websiteAdminBearerToken() {
   return String(
-    process.env.WEBSITE_ADMIN_API_KEY || process.env.WEBSITE_ADMIN_TOKEN || process.env.ADMIN_SECRET || '',
+    process.env.WEBSITE_ADMIN_TOKEN ||
+      process.env.WEBSITE_ADMIN_API_KEY ||
+      process.env.ADMIN_SECRET ||
+      '',
   ).trim();
 }
 
@@ -203,7 +206,7 @@ function parseFirstDelayMs(fallback) {
 async function runHomeOrderShuffleOnce() {
   const token = websiteAdminBearerToken();
   if (!token) {
-    console.warn('[home-shuffle] ignorado: sem ADMIN_SECRET / WEBSITE_ADMIN_API_KEY.');
+    console.warn('[home-shuffle] ignorado: sem WEBSITE_ADMIN_TOKEN / WEBSITE_ADMIN_API_KEY / ADMIN_SECRET.');
     return;
   }
 

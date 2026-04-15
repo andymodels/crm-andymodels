@@ -21,11 +21,15 @@ function getWebsiteOrigin() {
     .replace(/\/$/, '');
 }
 
-/** Mesmo valor que o site usa em adminAuth: Bearer = ADMIN_SECRET (login devolve { token: config.adminSecret }). */
+/**
+ * Token do admin HTTP do site (não confundir com o JWT do CRM).
+ * O site espera: Authorization: Bearer <token> (mesmo valor que ADMIN_SECRET no servidor do site).
+ * Prioridade explícita: WEBSITE_ADMIN_TOKEN (ex.: Render) → WEBSITE_ADMIN_API_KEY → ADMIN_SECRET.
+ */
 function websiteAdminBearerToken() {
   return String(
-    process.env.WEBSITE_ADMIN_API_KEY ||
-      process.env.WEBSITE_ADMIN_TOKEN ||
+    process.env.WEBSITE_ADMIN_TOKEN ||
+      process.env.WEBSITE_ADMIN_API_KEY ||
       process.env.ADMIN_SECRET ||
       '',
   ).trim();
@@ -319,7 +323,7 @@ function sendWebsiteAdminProxyResponse(res, statusCode, raw, attemptedUrl) {
     return res.status(401).json({
       message: hasEnvToken
         ? 'Website recusou o Bearer (401). O valor no CRM tem de ser o mesmo ADMIN_SECRET do site (o token devolvido por POST /api/admin/auth/login).'
-        : 'O backend do CRM não tem token admin do site. No Render (API): defina ADMIN_SECRET ou WEBSITE_ADMIN_API_KEY com o mesmo valor de ADMIN_SECRET do servidor do site → Save → Manual Deploy. Em local: backend/.env e reinicie.',
+        : 'O backend do CRM não tem token admin do site. No Render (API): defina WEBSITE_ADMIN_TOKEN (recomendado) ou WEBSITE_ADMIN_API_KEY ou ADMIN_SECRET com o mesmo valor de ADMIN_SECRET do servidor do site → Save → Manual Deploy. Em local: backend/.env e reinicie.',
     });
   }
   if (statusCode === 204) {
@@ -391,6 +395,13 @@ router.get('/admin/models/:id', async (req, res, next) => {
     }
     const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(id)}`;
     const { statusCode, raw } = await fetchWebsiteAdminJson(url);
+    let getLog;
+    try {
+      getLog = raw ? JSON.parse(raw) : raw;
+    } catch {
+      getLog = raw;
+    }
+    console.log('GET RESPONSE SITE → CRM:', JSON.stringify(getLog, null, 2));
     return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);
@@ -538,6 +549,7 @@ async function handleWebsiteAdminModelPut(req, res, next) {
     let statusCode;
     let raw;
     if (files.length > 0) {
+      console.log('PUT PAYLOAD CRM → SITE:', JSON.stringify(req.body, null, 2));
       const result = await forwardMultipartModelToWebsite('PUT', url, req);
       statusCode = result.statusCode;
       raw = result.raw;
@@ -545,6 +557,7 @@ async function handleWebsiteAdminModelPut(req, res, next) {
       if (!req.body || typeof req.body !== 'object') {
         return res.status(400).json({ message: 'Body invalido.' });
       }
+      console.log('PUT PAYLOAD CRM → SITE:', JSON.stringify(req.body, null, 2));
       const payload = normalizeWebsiteModelPatchBody(req.body);
       if (isDebugWebsiteProxy()) {
         console.log('PAYLOAD ENVIADO:', payload);
@@ -553,6 +566,13 @@ async function handleWebsiteAdminModelPut(req, res, next) {
       statusCode = r.statusCode;
       raw = r.raw;
     }
+    let putResponseLog;
+    try {
+      putResponseLog = raw ? JSON.parse(raw) : raw;
+    } catch {
+      putResponseLog = raw;
+    }
+    console.log('PUT RESPONSE SITE:', JSON.stringify(putResponseLog, null, 2));
     return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     if (e && e.name === 'AbortError') {
