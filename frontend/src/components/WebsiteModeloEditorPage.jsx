@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import DynamicTextListField from './DynamicTextListField';
 import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
+import { formatCpfDisplay } from '../utils/brMasks';
 import {
   extractYoutubeVideoId,
   getWebsiteModelPublicUrl,
@@ -59,12 +60,109 @@ function persistCrmWebsiteModelExtras(modelId, snapshot) {
         nome: snapshot.nome ?? '',
         nome_completo: snapshot.nome_completo ?? '',
         data_nascimento: snapshot.data_nascimento ?? '',
+        telefones: snapshot.telefones,
+        emails: snapshot.emails,
+        cep: snapshot.cep ?? '',
+        logradouro: snapshot.logradouro ?? '',
+        numero: snapshot.numero ?? '',
+        complemento: snapshot.complemento ?? '',
+        bairro: snapshot.bairro ?? '',
+        cidade: snapshot.cidade ?? '',
+        uf: snapshot.uf ?? '',
+        instagram: snapshot.instagram ?? '',
+        tiktok: snapshot.tiktok ?? '',
         savedAt: Date.now(),
       }),
     );
   } catch {
     /* quota / modo privado */
   }
+}
+
+function hasPhoneDigitsInList(arr) {
+  return Array.isArray(arr) && arr.some((t) => onlyDigits(String(t || '')).length >= 10);
+}
+
+function hasNonEmptyEmailList(arr) {
+  return Array.isArray(arr) && arr.some((e) => String(e || '').trim());
+}
+
+function trimStr(v) {
+  return v != null ? String(v).trim() : '';
+}
+
+/** Telefones e e-mails a partir do GET admin (várias formas possíveis no site). */
+function telefonesFromDetail(detail) {
+  let raw = detail.telefones ?? detail.phones;
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (s.startsWith('[')) {
+      try {
+        raw = JSON.parse(s);
+      } catch {
+        raw = [];
+      }
+    } else if (s) {
+      raw = s.split(/[,;|]/);
+    } else {
+      raw = [];
+    }
+  }
+  if (!Array.isArray(raw)) {
+    const one = detail.telefone ?? detail.phone ?? detail.mobile;
+    return one ? [formatPhoneBRMask(onlyDigits(String(one)))] : [''];
+  }
+  const list = raw
+    .map((x) => formatPhoneBRMask(onlyDigits(String(x || ''))))
+    .filter((x) => onlyDigits(x).length >= 8);
+  return list.length ? list : [''];
+}
+
+function emailsFromDetail(detail) {
+  let raw = detail.emails;
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (s.startsWith('[')) {
+      try {
+        raw = JSON.parse(s);
+      } catch {
+        raw = [];
+      }
+    } else if (s) {
+      raw = s.split(/[,;|]/);
+    } else {
+      raw = [];
+    }
+  }
+  if (!Array.isArray(raw)) {
+    const one = detail.email;
+    return one ? [String(one).trim().toLowerCase()] : [''];
+  }
+  const list = raw.map((x) => String(x || '').trim().toLowerCase()).filter(Boolean);
+  return list.length ? list : [''];
+}
+
+function addressFieldsFromDetail(detail) {
+  const e =
+    detail.endereco && typeof detail.endereco === 'object' && !Array.isArray(detail.endereco)
+      ? detail.endereco
+      : detail;
+  const cepDigits = onlyDigits(String(e.cep ?? detail.cep ?? ''));
+  const cidade =
+    e.cidade != null && String(e.cidade).trim() !== ''
+      ? String(e.cidade).trim()
+      : detail.city != null
+        ? String(detail.city).trim()
+        : '';
+  return {
+    cep: cepDigits.length >= 8 ? formatCEPMask(cepDigits) : '',
+    logradouro: e.logradouro != null ? String(e.logradouro) : '',
+    numero: e.numero != null ? String(e.numero) : '',
+    complemento: e.complemento != null ? String(e.complemento) : '',
+    bairro: e.bairro != null ? String(e.bairro) : '',
+    cidade,
+    uf: e.uf != null ? String(e.uf).toUpperCase().slice(0, 2) : '',
+  };
 }
 
 function mergeCrmWebsiteModelExtras(form, modelId) {
@@ -80,6 +178,30 @@ function mergeCrmWebsiteModelExtras(form, modelId) {
       nome: 'nome' in x ? x.nome : form.nome,
       nome_completo: 'nome_completo' in x ? x.nome_completo : form.nome_completo,
       data_nascimento: 'data_nascimento' in x ? x.data_nascimento : form.data_nascimento,
+      telefones: hasPhoneDigitsInList(form.telefones)
+        ? form.telefones
+        : hasPhoneDigitsInList(x.telefones)
+          ? x.telefones
+          : form.telefones,
+      emails: hasNonEmptyEmailList(form.emails)
+        ? form.emails
+        : hasNonEmptyEmailList(x.emails)
+          ? x.emails
+          : form.emails,
+      cep:
+        onlyDigits(form.cep).length >= 8
+          ? form.cep
+          : trimStr(x.cep)
+            ? x.cep
+            : form.cep,
+      logradouro: trimStr(form.logradouro) ? form.logradouro : trimStr(x.logradouro) ? x.logradouro : form.logradouro,
+      numero: trimStr(form.numero) ? form.numero : trimStr(x.numero) ? x.numero : form.numero,
+      complemento: trimStr(form.complemento) ? form.complemento : trimStr(x.complemento) ? x.complemento : form.complemento,
+      bairro: trimStr(form.bairro) ? form.bairro : trimStr(x.bairro) ? x.bairro : form.bairro,
+      cidade: trimStr(form.cidade) ? form.cidade : trimStr(x.cidade) ? x.cidade : form.cidade,
+      uf: trimStr(form.uf) ? form.uf : trimStr(x.uf) ? x.uf : form.uf,
+      instagram: trimStr(form.instagram) ? form.instagram : trimStr(x.instagram) ? x.instagram : form.instagram,
+      tiktok: trimStr(form.tiktok) ? form.tiktok : trimStr(x.tiktok) ? x.tiktok : form.tiktok,
     };
   } catch {
     return form;
@@ -364,6 +486,43 @@ function formToWebsiteModelPut(form) {
 
   const slug = trim(form.slug_site);
   if (slug) out.slug = slug;
+
+  /** Contacto e endereço (cadastro interno) — antes não eram enviados no PUT e não persistiam no site. */
+  const telefones = (Array.isArray(form.telefones) ? form.telefones : [])
+    .map((x) => onlyDigits(String(x || '')))
+    .filter((d) => d.length >= 8);
+  const emails = (Array.isArray(form.emails) ? form.emails : [])
+    .map((x) => String(x || '').trim().toLowerCase())
+    .filter(Boolean);
+  out.telefones = telefones;
+  out.emails = emails;
+  if (telefones.length) out.telefone = telefones[0];
+  if (emails.length) out.email = emails[0];
+
+  const cepDigits = onlyDigits(form.cep);
+  out.endereco = {
+    cep: cepDigits,
+    logradouro: trim(form.logradouro),
+    numero: trim(form.numero),
+    complemento: trim(form.complemento),
+    bairro: trim(form.bairro),
+    cidade: trim(form.cidade),
+    uf: trim(form.uf).toUpperCase().slice(0, 2),
+  };
+  out.cep = cepDigits || null;
+  out.logradouro = trim(form.logradouro) || null;
+  out.numero = trim(form.numero) || null;
+  out.complemento = trim(form.complemento) || null;
+  out.bairro = trim(form.bairro) || null;
+  out.cidade = trim(form.cidade) || null;
+  out.uf = trim(form.uf).toUpperCase().slice(0, 2) || null;
+
+  const cpfD = onlyDigits(form.cpf);
+  if (cpfD) out.cpf = cpfD;
+  if (trim(form.rg)) out.rg = trim(form.rg);
+  if (trim(form.passaporte)) out.passaporte = trim(form.passaporte);
+  if (trim(form.observacoes)) out.observacoes = trim(form.observacoes);
+
   return out;
 }
 
@@ -429,6 +588,10 @@ function mapDetailToForm(detailIn) {
             ? String(detail.birthdate)
             : '';
 
+  const addr = addressFieldsFromDetail(detail);
+  const telList = telefonesFromDetail(detail);
+  const emList = emailsFromDetail(detail);
+
   return {
     ...base,
     nome_completo: nomeCompletoFromApi,
@@ -466,6 +629,18 @@ function mapDetailToForm(detailIn) {
       return true;
     })(),
     tiktok: detail.tiktok != null ? String(detail.tiktok) : '',
+    telefones: telList,
+    emails: emList,
+    cep: addr.cep,
+    logradouro: addr.logradouro,
+    numero: addr.numero,
+    complemento: addr.complemento,
+    bairro: addr.bairro,
+    cidade: addr.cidade,
+    uf: addr.uf,
+    cpf: detail.cpf != null ? formatCpfDisplay(onlyDigits(String(detail.cpf))) : '',
+    rg: detail.rg != null ? String(detail.rg) : '',
+    passaporte: detail.passaporte != null ? String(detail.passaporte) : '',
     video_url:
       detail.youtube != null
         ? String(detail.youtube)
@@ -853,6 +1028,17 @@ export default function WebsiteModeloEditorPage({
         nome: String(form.nome || '').trim(),
         nome_completo: String(form.nome_completo || '').trim(),
         data_nascimento: String(form.data_nascimento || '').trim(),
+        telefones: [...normalizeList(form.telefones)],
+        emails: [...normalizeList(form.emails)],
+        cep: String(form.cep || ''),
+        logradouro: String(form.logradouro || ''),
+        numero: String(form.numero || ''),
+        complemento: String(form.complemento || ''),
+        bairro: String(form.bairro || ''),
+        cidade: String(form.cidade || ''),
+        uf: String(form.uf || ''),
+        instagram: String(form.instagram || ''),
+        tiktok: String(form.tiktok || ''),
       };
 
       const pendingImageFiles = localMediaItems.filter(
