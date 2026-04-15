@@ -71,6 +71,8 @@ function persistCrmWebsiteModelExtras(modelId, snapshot) {
         uf: snapshot.uf ?? '',
         instagram: snapshot.instagram ?? '',
         tiktok: snapshot.tiktok ?? '',
+        observacoes: snapshot.observacoes ?? '',
+        formas_pagamento: snapshot.formas_pagamento,
         savedAt: Date.now(),
       }),
     );
@@ -89,6 +91,17 @@ function hasNonEmptyEmailList(arr) {
 
 function trimStr(v) {
   return v != null ? String(v).trim() : '';
+}
+
+function formasPagamentoListHasData(list) {
+  if (!Array.isArray(list) || list.length === 0) return false;
+  return list.some((f) => {
+    if (!f || typeof f !== 'object') return false;
+    if (f.tipo === 'Conta bancária') {
+      return trimStr(f.banco) || trimStr(f.agencia) || trimStr(f.conta);
+    }
+    return trimStr(f.chave_pix);
+  });
 }
 
 /** Telefones e e-mails a partir do GET admin (várias formas possíveis no site). */
@@ -165,6 +178,39 @@ function addressFieldsFromDetail(detail) {
   };
 }
 
+function formasPagamentoFromDetail(detail) {
+  let raw = detail.formas_pagamento ?? detail.formas_recebimento ?? detail.payment_methods;
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    if (!s) return [emptyFormaRecebimento()];
+    try {
+      raw = JSON.parse(s);
+    } catch {
+      return [emptyFormaRecebimento()];
+    }
+  }
+  if (!Array.isArray(raw) || raw.length === 0) return [emptyFormaRecebimento()];
+  return raw.map((item) => {
+    const tipo = item?.tipo === 'Conta bancária' ? 'Conta bancária' : 'PIX';
+    if (tipo === 'PIX') {
+      return {
+        ...emptyFormaRecebimento(),
+        tipo: 'PIX',
+        tipo_chave_pix: item?.tipo_chave_pix || 'CPF',
+        chave_pix: String(item?.chave_pix ?? item?.valor ?? ''),
+      };
+    }
+    return {
+      ...emptyFormaRecebimento(),
+      tipo: 'Conta bancária',
+      banco: String(item?.banco || ''),
+      agencia: String(item?.agencia || ''),
+      conta: String(item?.conta ?? item?.valor ?? ''),
+      tipo_conta: item?.tipo_conta === 'poupanca' ? 'poupanca' : 'corrente',
+    };
+  });
+}
+
 function mergeCrmWebsiteModelExtras(form, modelId) {
   const id = Number(modelId);
   if (Number.isNaN(id) || id <= 0) return form;
@@ -202,6 +248,16 @@ function mergeCrmWebsiteModelExtras(form, modelId) {
       uf: trimStr(form.uf) ? form.uf : trimStr(x.uf) ? x.uf : form.uf,
       instagram: trimStr(form.instagram) ? form.instagram : trimStr(x.instagram) ? x.instagram : form.instagram,
       tiktok: trimStr(form.tiktok) ? form.tiktok : trimStr(x.tiktok) ? x.tiktok : form.tiktok,
+      observacoes: trimStr(form.observacoes)
+        ? form.observacoes
+        : trimStr(x.observacoes)
+          ? x.observacoes
+          : form.observacoes,
+      formas_pagamento: formasPagamentoListHasData(form.formas_pagamento)
+        ? form.formas_pagamento
+        : formasPagamentoListHasData(x.formas_pagamento)
+          ? formasPagamentoFromDetail({ formas_pagamento: x.formas_pagamento })
+          : form.formas_pagamento,
     };
   } catch {
     return form;
@@ -460,8 +516,11 @@ function formToWebsiteModelPut(form) {
 
   if (pi) out.model_status = pi;
 
-  /** Nome completo para cadastro; o site deve persistir `full_name` (reencaminhado pelo proxy). */
-  if (nomeCompleto) out.full_name = nomeCompleto;
+  /** Nome completo / civil — vários nomes de campo no admin do site. */
+  if (nomeCompleto) {
+    out.full_name = nomeCompleto;
+    out.nome_civil = nomeCompleto;
+  }
 
   const dn = trim(form.data_nascimento);
   /** Data de nascimento só para arquivo interno; o CRM não usa isto no perfil público. */
@@ -521,7 +580,15 @@ function formToWebsiteModelPut(form) {
   if (cpfD) out.cpf = cpfD;
   if (trim(form.rg)) out.rg = trim(form.rg);
   if (trim(form.passaporte)) out.passaporte = trim(form.passaporte);
-  if (trim(form.observacoes)) out.observacoes = trim(form.observacoes);
+
+  /** Sempre enviar (string); o site pode mapear `notes` em vez de `observacoes`. */
+  const obs = form.observacoes != null ? String(form.observacoes) : '';
+  out.observacoes = obs;
+  out.notes = obs;
+
+  if (Array.isArray(form.formas_pagamento) && form.formas_pagamento.length > 0) {
+    out.formas_pagamento = form.formas_pagamento;
+  }
 
   return out;
 }
@@ -650,7 +717,16 @@ function mapDetailToForm(detailIn) {
             ? String(detail.video)
             : '',
     slug_site: detail.slug != null ? String(detail.slug) : '',
-    observacoes: detail.observacoes != null ? String(detail.observacoes) : '',
+    observacoes: (() => {
+      const v =
+        detail.observacoes ??
+        detail.notes ??
+        detail.internal_notes ??
+        detail.admin_notes ??
+        detail.observations;
+      return v != null ? String(v) : '';
+    })(),
+    formas_pagamento: formasPagamentoFromDetail(detail),
     public_info: legacyPublic,
   };
 }
@@ -1039,6 +1115,8 @@ export default function WebsiteModeloEditorPage({
         uf: String(form.uf || ''),
         instagram: String(form.instagram || ''),
         tiktok: String(form.tiktok || ''),
+        observacoes: String(form.observacoes || ''),
+        formas_pagamento: Array.isArray(form.formas_pagamento) ? [...form.formas_pagamento] : [],
       };
 
       const pendingImageFiles = localMediaItems.filter(
@@ -1060,6 +1138,8 @@ export default function WebsiteModeloEditorPage({
       if (mustPersistGallery) {
         putBody.ordered_images = JSON.stringify(apiMedia);
       }
+
+      console.log('PAYLOAD MODELO:', putBody);
 
       let id = websiteModelId;
       const hasSiteId = id != null && !Number.isNaN(Number(id));
