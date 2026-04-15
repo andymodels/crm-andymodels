@@ -405,11 +405,13 @@ function mapDetailToForm(detailIn) {
   const nomeSite = detail.name != null ? String(detail.name) : '';
   const nomeCompletoFromApi = (() => {
     const raw =
-      detail.full_name != null
-        ? String(detail.full_name)
-        : detail.legal_name != null
-          ? String(detail.legal_name)
-          : '';
+      detail.nome_civil != null && String(detail.nome_civil).trim() !== ''
+        ? String(detail.nome_civil)
+        : detail.full_name != null
+          ? String(detail.full_name)
+          : detail.legal_name != null
+            ? String(detail.legal_name)
+            : '';
     const t = raw.trim();
     if (t) return t;
     /** Modelos antigos: um único «name» servia para tudo — repete no completo até editar. */
@@ -1161,16 +1163,22 @@ export default function WebsiteModeloEditorPage({
     });
   }, []);
 
-  /** Obrigatório antes de qualquer return — senão o nº de hooks muda entre «a carregar» e o formulário (crash React). */
-  const idadeCalculada = useMemo(() => idadeAnosCompletosHoje(form.data_nascimento), [form.data_nascimento]);
+  /** Estado do formulário sempre como objeto; evita «Cannot read properties of undefined» no render. */
+  const formSafe = form && typeof form === 'object' ? form : createInitialForm();
 
-  const formas = form.formas_pagamento?.length ? form.formas_pagamento : [emptyFormaRecebimento()];
+  /** Obrigatório antes de qualquer return — senão o nº de hooks muda entre «a carregar» e o formulário (crash React). */
+  const idadeCalculada = useMemo(
+    () => idadeAnosCompletosHoje(formSafe?.data_nascimento ?? ''),
+    [formSafe?.data_nascimento],
+  );
+
+  const formas = formSafe.formas_pagamento?.length ? formSafe.formas_pagamento : [emptyFormaRecebimento()];
 
   const setGenderWomen = () => setForm((p) => ({ ...p, catFeminino: true, catMasculino: false }));
   const setGenderMen = () => setForm((p) => ({ ...p, catFeminino: false, catMasculino: true }));
 
   const addVideoToGallery = () => {
-    const raw = String(form.video_url || '').trim();
+    const raw = String(formSafe?.video_url || '').trim();
     if (!raw) return;
     const normalized = normalizeHttpUrl(raw);
     const ytId = extractYoutubeVideoId(normalized);
@@ -1233,7 +1241,7 @@ export default function WebsiteModeloEditorPage({
         <Section title="Identificação e site">
           <Field label="Nome completo" className="md:col-span-2">
             <input
-              value={form.nome_completo}
+              value={formSafe.nome_completo ?? ''}
               onChange={(e) => setField('nome_completo', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="Nome civil completo (cadastro interno)"
@@ -1245,7 +1253,7 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="Nome para o site" className="md:col-span-2">
             <input
-              value={form.nome}
+              value={formSafe.nome ?? ''}
               onChange={(e) => setField('nome', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="Ex.: primeiro nome ou nome artístico — como aparece online"
@@ -1259,7 +1267,7 @@ export default function WebsiteModeloEditorPage({
             <div className="flex flex-wrap items-center gap-3">
               <input
                 type="date"
-                value={toDateInputValue(form.data_nascimento)}
+                value={toDateInputValue(formSafe?.data_nascimento ?? '')}
                 onChange={(e) => setField('data_nascimento', e.target.value)}
                 className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 autoComplete="bday"
@@ -1271,7 +1279,7 @@ export default function WebsiteModeloEditorPage({
                 >
                   Idade: {idadeCalculada} {idadeCalculada === 1 ? 'ano' : 'anos'}
                 </span>
-              ) : toDateInputValue(form.data_nascimento) ? (
+              ) : toDateInputValue(formSafe?.data_nascimento ?? '') ? (
                 <span className="text-xs text-amber-700">Não foi possível calcular a idade a partir desta data.</span>
               ) : null}
             </div>
@@ -1282,7 +1290,7 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="Slug (URL no site)" className="md:col-span-2">
             <input
-              value={form.slug_site}
+              value={formSafe.slug_site ?? ''}
               onChange={(e) => setField('slug_site', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="ex.: nome-da-modelo"
@@ -1291,7 +1299,7 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="Bio" className="md:col-span-2">
             <textarea
-              value={form.bio}
+              value={formSafe.bio ?? ''}
               onChange={(e) => setField('bio', e.target.value)}
               rows={4}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1302,7 +1310,7 @@ export default function WebsiteModeloEditorPage({
             <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
-                checked={form.featured}
+                checked={Boolean(formSafe.featured)}
                 onChange={(e) => setField('featured', e.target.checked)}
                 className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
               />
@@ -1311,7 +1319,7 @@ export default function WebsiteModeloEditorPage({
             <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
-                checked={form.ativo}
+                checked={Boolean(formSafe.ativo)}
                 onChange={(e) => setField('ativo', e.target.checked)}
                 className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
               />
@@ -1331,7 +1339,7 @@ export default function WebsiteModeloEditorPage({
                   <input
                     type="radio"
                     name="website-model-gender"
-                    checked={form.catFeminino}
+                    checked={Boolean(formSafe.catFeminino)}
                     onChange={setGenderWomen}
                     className="border-slate-300 text-amber-600 focus:ring-amber-400"
                   />
@@ -1341,7 +1349,7 @@ export default function WebsiteModeloEditorPage({
                   <input
                     type="radio"
                     name="website-model-gender"
-                    checked={form.catMasculino}
+                    checked={Boolean(formSafe.catMasculino)}
                     onChange={setGenderMen}
                     className="border-slate-300 text-amber-600 focus:ring-amber-400"
                   />
@@ -1351,7 +1359,7 @@ export default function WebsiteModeloEditorPage({
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
-                  checked={form.catCreators}
+                  checked={Boolean(formSafe.catCreators)}
                   onChange={(e) => setField('catCreators', e.target.checked)}
                   className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
                 />
@@ -1361,7 +1369,7 @@ export default function WebsiteModeloEditorPage({
           </div>
           <Field label="Informação pública" className="md:col-span-2">
             <input
-              value={form.public_info}
+              value={formSafe.public_info ?? ''}
               onChange={(e) => setField('public_info', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="Opcional — ex.: Aracruz ES, Em temporada na Europa… (vazio não aparece no site)"
@@ -1371,7 +1379,7 @@ export default function WebsiteModeloEditorPage({
         </Section>
 
         <Section title="Medidas principais">
-          {form.catFeminino
+          {formSafe.catFeminino
             ? [
                 ['medida_altura', 'Altura'],
                 ['medida_busto', 'Busto'],
@@ -1383,7 +1391,7 @@ export default function WebsiteModeloEditorPage({
               ].map(([k, lab]) => (
                 <Field key={k} label={lab}>
                   <input
-                    value={form[k]}
+                    value={formSafe[k] ?? ''}
                     onChange={(e) => setField(k, e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                     placeholder="—"
@@ -1400,7 +1408,7 @@ export default function WebsiteModeloEditorPage({
               ].map(([k, lab]) => (
                 <Field key={k} label={lab}>
                   <input
-                    value={form[k]}
+                    value={formSafe[k] ?? ''}
                     onChange={(e) => setField(k, e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                     placeholder="—"
@@ -1413,7 +1421,7 @@ export default function WebsiteModeloEditorPage({
           <div className="md:col-span-2">
             <DynamicTextListField
               label="Telefones"
-              items={normalizeList(form.telefones)}
+              items={normalizeList(formSafe.telefones)}
               placeholder="Ex: (11) 99999-9999"
               onAdd={addTelefone}
               onUpdate={updateTelefone}
@@ -1423,7 +1431,7 @@ export default function WebsiteModeloEditorPage({
           <div className="md:col-span-2">
             <DynamicTextListField
               label="E-mails"
-              items={normalizeList(form.emails)}
+              items={normalizeList(formSafe.emails)}
               placeholder="Ex: contato@email.com"
               onAdd={addEmail}
               onUpdate={updateEmail}
@@ -1432,7 +1440,7 @@ export default function WebsiteModeloEditorPage({
           </div>
           <Field label="Instagram" className="md:col-span-2">
             <input
-              value={form.instagram}
+              value={formSafe.instagram ?? ''}
               onChange={(e) => setField('instagram', e.target.value.replace(/^@/, '').trim())}
               type="text"
               inputMode="url"
@@ -1443,7 +1451,7 @@ export default function WebsiteModeloEditorPage({
             <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
-                checked={form.mostrar_instagram}
+                checked={Boolean(formSafe.mostrar_instagram)}
                 onChange={(e) => setField('mostrar_instagram', e.target.checked)}
                 className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
               />
@@ -1452,7 +1460,7 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="TikTok">
             <input
-              value={form.tiktok}
+              value={formSafe.tiktok ?? ''}
               onChange={(e) => setField('tiktok', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="@usuario ou URL"
@@ -1463,7 +1471,7 @@ export default function WebsiteModeloEditorPage({
         <Section title="Documentos">
           <Field label="CPF">
             <input
-              value={form.cpf}
+              value={formSafe.cpf ?? ''}
               onChange={(e) => setField('cpf', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="000.000.000-00"
@@ -1471,14 +1479,14 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="RG">
             <input
-              value={form.rg}
+              value={formSafe.rg ?? ''}
               onChange={(e) => setField('rg', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
           <Field label="Passaporte" className="md:col-span-2">
             <input
-              value={form.passaporte}
+              value={formSafe.passaporte ?? ''}
               onChange={(e) => setField('passaporte', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
@@ -1488,7 +1496,7 @@ export default function WebsiteModeloEditorPage({
         <Section title="Endereço">
           <Field label="CEP">
             <input
-              value={form.cep}
+              value={formSafe.cep ?? ''}
               onChange={(e) => setField('cep', formatCEPMask(e.target.value))}
               inputMode="numeric"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1497,42 +1505,42 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="Logradouro">
             <input
-              value={form.logradouro}
+              value={formSafe.logradouro ?? ''}
               onChange={(e) => setField('logradouro', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
           <Field label="Número">
             <input
-              value={form.numero}
+              value={formSafe.numero ?? ''}
               onChange={(e) => setField('numero', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
           <Field label="Complemento">
             <input
-              value={form.complemento}
+              value={formSafe.complemento ?? ''}
               onChange={(e) => setField('complemento', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
           <Field label="Bairro">
             <input
-              value={form.bairro}
+              value={formSafe.bairro ?? ''}
               onChange={(e) => setField('bairro', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
           <Field label="Cidade">
             <input
-              value={form.cidade}
+              value={formSafe.cidade ?? ''}
               onChange={(e) => setField('cidade', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
           <Field label="UF">
             <input
-              value={form.uf}
+              value={formSafe.uf ?? ''}
               onChange={(e) => setField('uf', e.target.value.toUpperCase())}
               maxLength={2}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1653,7 +1661,7 @@ export default function WebsiteModeloEditorPage({
         <Section title="Informações internas">
           <Field label="Observações" className="md:col-span-2">
             <textarea
-              value={form.observacoes}
+              value={formSafe.observacoes ?? ''}
               onChange={(e) => setField('observacoes', e.target.value)}
               rows={5}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -1667,7 +1675,7 @@ export default function WebsiteModeloEditorPage({
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mídia</h4>
               {(() => {
-                const slugPublico = String(form.slug_site || editSlug || '').trim();
+                const slugPublico = String(formSafe.slug_site || editSlug || '').trim();
                 const urlPerfil = slugPublico ? getWebsiteModelPublicUrl(slugPublico) : '';
                 return urlPerfil ? (
                   <a
@@ -1732,7 +1740,7 @@ export default function WebsiteModeloEditorPage({
               <label className="block min-w-[200px] flex-1 text-sm text-slate-600">
                 <span className="mb-1 block font-medium text-slate-800">Vídeo (URL)</span>
                 <input
-                  value={form.video_url}
+                  value={formSafe.video_url ?? ''}
                   onChange={(e) => setField('video_url', e.target.value)}
                   type="text"
                   inputMode="url"
