@@ -207,7 +207,8 @@ function createInitialForm() {
     tiktok: '',
     cpf: '',
     rg: '',
-    passaporte: '',
+    /** API do site: campo `passport` (não usar `passaporte` no PUT). */
+    passport: '',
     cep: '',
     logradouro: '',
     numero: '',
@@ -483,7 +484,7 @@ function formToWebsiteModelPut(form) {
   const cpfD = onlyDigits(form.cpf).slice(0, 11);
   out.cpf = cpfD || '';
   out.rg = trim(form.rg) || '';
-  out.passaporte = trim(form.passaporte) || '';
+  out.passport = form.passport != null ? String(form.passport).trim() : '';
 
   /** Sempre enviar (string); o site pode mapear `notes` em vez de `observacoes`. */
   const obs = form.observacoes != null ? String(form.observacoes) : '';
@@ -609,7 +610,7 @@ function mapDetailToForm(detailIn) {
     uf: addr.uf,
     cpf: detail.cpf != null ? formatCpfDisplay(onlyDigits(String(detail.cpf))) : '',
     rg: detail.rg != null ? String(detail.rg) : '',
-    passaporte: detail.passaporte != null ? String(detail.passaporte) : '',
+    passport: String(detail.passport ?? detail.passaporte ?? ''),
     video_url:
       detail.youtube != null
         ? String(detail.youtube)
@@ -1637,8 +1638,9 @@ export default function WebsiteModeloEditorPage({
           </Field>
           <Field label="Passaporte" className="md:col-span-2">
             <input
-              value={formSafe.passaporte ?? ''}
-              onChange={(e) => setField('passaporte', e.target.value)}
+              name="passport"
+              value={formSafe.passport ?? ''}
+              onChange={(e) => setField('passport', e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
           </Field>
