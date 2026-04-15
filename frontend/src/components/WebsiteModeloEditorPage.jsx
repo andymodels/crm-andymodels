@@ -49,59 +49,15 @@ function hasUsableModelPayload(obj) {
 
 const CRM_WEBSITE_EXTRA_KEY = (id) => `crm_website_model_extra_v1_${id}`;
 
-/** Última gravação neste browser — cobre quando a API do site não devolve ou não persiste todos os campos. */
-function persistCrmWebsiteModelExtras(modelId, snapshot) {
+/** Limpa chave legada em localStorage (antes mesclava no form e repunha valores ao apagar). */
+function persistCrmWebsiteModelExtras(modelId) {
   const id = Number(modelId);
   if (Number.isNaN(id) || id <= 0) return;
   try {
-    localStorage.setItem(
-      CRM_WEBSITE_EXTRA_KEY(id),
-      JSON.stringify({
-        nome: snapshot.nome ?? '',
-        nome_completo: snapshot.nome_completo ?? '',
-        data_nascimento: snapshot.data_nascimento ?? '',
-        telefones: snapshot.telefones,
-        emails: snapshot.emails,
-        cep: snapshot.cep ?? '',
-        logradouro: snapshot.logradouro ?? '',
-        numero: snapshot.numero ?? '',
-        complemento: snapshot.complemento ?? '',
-        bairro: snapshot.bairro ?? '',
-        cidade: snapshot.cidade ?? '',
-        uf: snapshot.uf ?? '',
-        instagram: snapshot.instagram ?? '',
-        tiktok: snapshot.tiktok ?? '',
-        observacoes: snapshot.observacoes ?? '',
-        formas_pagamento: snapshot.formas_pagamento,
-        savedAt: Date.now(),
-      }),
-    );
+    localStorage.removeItem(CRM_WEBSITE_EXTRA_KEY(id));
   } catch {
-    /* quota / modo privado */
+    /* */
   }
-}
-
-function hasPhoneDigitsInList(arr) {
-  return Array.isArray(arr) && arr.some((t) => onlyDigits(String(t || '')).length >= 10);
-}
-
-function hasNonEmptyEmailList(arr) {
-  return Array.isArray(arr) && arr.some((e) => String(e || '').trim());
-}
-
-function trimStr(v) {
-  return v != null ? String(v).trim() : '';
-}
-
-function formasPagamentoListHasData(list) {
-  if (!Array.isArray(list) || list.length === 0) return false;
-  return list.some((f) => {
-    if (!f || typeof f !== 'object') return false;
-    if (f.tipo === 'Conta bancária') {
-      return trimStr(f.banco) || trimStr(f.agencia) || trimStr(f.conta);
-    }
-    return trimStr(f.chave_pix);
-  });
 }
 
 /** Telefones e e-mails a partir do GET admin (várias formas possíveis no site). */
@@ -209,59 +165,6 @@ function formasPagamentoFromDetail(detail) {
       tipo_conta: item?.tipo_conta === 'poupanca' ? 'poupanca' : 'corrente',
     };
   });
-}
-
-function mergeCrmWebsiteModelExtras(form, modelId) {
-  const id = Number(modelId);
-  if (Number.isNaN(id) || id <= 0) return form;
-  try {
-    const raw = localStorage.getItem(CRM_WEBSITE_EXTRA_KEY(id));
-    if (!raw) return form;
-    const x = JSON.parse(raw);
-    if (!x || typeof x !== 'object') return form;
-    return {
-      ...form,
-      nome: 'nome' in x ? x.nome : form.nome,
-      nome_completo: 'nome_completo' in x ? x.nome_completo : form.nome_completo,
-      data_nascimento: 'data_nascimento' in x ? x.data_nascimento : form.data_nascimento,
-      telefones: hasPhoneDigitsInList(form.telefones)
-        ? form.telefones
-        : hasPhoneDigitsInList(x.telefones)
-          ? x.telefones
-          : form.telefones,
-      emails: hasNonEmptyEmailList(form.emails)
-        ? form.emails
-        : hasNonEmptyEmailList(x.emails)
-          ? x.emails
-          : form.emails,
-      cep:
-        onlyDigits(form.cep).length >= 8
-          ? form.cep
-          : trimStr(x.cep)
-            ? x.cep
-            : form.cep,
-      logradouro: trimStr(form.logradouro) ? form.logradouro : trimStr(x.logradouro) ? x.logradouro : form.logradouro,
-      numero: trimStr(form.numero) ? form.numero : trimStr(x.numero) ? x.numero : form.numero,
-      complemento: trimStr(form.complemento) ? form.complemento : trimStr(x.complemento) ? x.complemento : form.complemento,
-      bairro: trimStr(form.bairro) ? form.bairro : trimStr(x.bairro) ? x.bairro : form.bairro,
-      cidade: trimStr(form.cidade) ? form.cidade : trimStr(x.cidade) ? x.cidade : form.cidade,
-      uf: trimStr(form.uf) ? form.uf : trimStr(x.uf) ? x.uf : form.uf,
-      instagram: trimStr(form.instagram) ? form.instagram : trimStr(x.instagram) ? x.instagram : form.instagram,
-      tiktok: trimStr(form.tiktok) ? form.tiktok : trimStr(x.tiktok) ? x.tiktok : form.tiktok,
-      observacoes: trimStr(form.observacoes)
-        ? form.observacoes
-        : trimStr(x.observacoes)
-          ? x.observacoes
-          : form.observacoes,
-      formas_pagamento: formasPagamentoListHasData(form.formas_pagamento)
-        ? form.formas_pagamento
-        : formasPagamentoListHasData(x.formas_pagamento)
-          ? formasPagamentoFromDetail({ formas_pagamento: x.formas_pagamento })
-          : form.formas_pagamento,
-    };
-  } catch {
-    return form;
-  }
 }
 
 const emptyFormaRecebimento = () => ({
@@ -451,13 +354,14 @@ function togglePolaroidAt(arr, index) {
   const next = [...arr];
   const el = next[index];
   if (!el || typeof el !== 'object') return arr;
-  next[index] = Object.assign({}, el, { polaroid: !Boolean(el.polaroid) });
+  next[index] = Object.assign({}, el, { polaroid: !el.polaroid });
   return next;
 }
 
 /**
- * Corpo PUT /api/admin/models/:id no site (adminModels.js): strings featured/active '1'/'0',
- * model_status para linha nos cards, categories em JSON, sem public_info/creator/description.
+ * Corpo PUT/POST admin do site: featured/active como '1'/'0', categories em JSON.
+ * O proxy CRM (`normalizeWebsiteModelPatchBody`) remove chaves com valor `null`/`undefined`;
+ * para limpar campos no site, usar string vazia onde aplicável.
  */
 function formToWebsiteModelPut(form) {
   const trim = (s) => (s != null ? String(s).trim() : '');
@@ -502,25 +406,25 @@ function formToWebsiteModelPut(form) {
     hair: trim(form.medida_cabelo) || null,
     eyes: trim(form.medida_olhos) || null,
     waist: trim(form.medida_cintura) || null,
-    instagram: ig || null,
+    instagram: ig,
     show_instagram: form.mostrar_instagram ? '1' : '0',
-    tiktok: trim(form.tiktok) || null,
+    tiktok: trim(form.tiktok) || '',
     ...(() => {
       const v = trim(form.video_url);
-      if (!v) return { youtube: null, video_url: null };
+      if (!v) return { youtube: '', video_url: '' };
       const n = normalizeHttpUrl(v);
       /** Alguns endpoints do site leem `youtube`, outros `video_url` — enviamos os dois. */
       return { youtube: n, video_url: n };
     })(),
   };
 
-  if (pi) out.model_status = pi;
+  /** Sempre enviar — se omitir com vazio, o site não limpa o valor antigo. */
+  out.model_status = pi;
+  out.public_info = pi;
 
-  /** Nome completo / civil — vários nomes de campo no admin do site. */
-  if (nomeCompleto) {
-    out.full_name = nomeCompleto;
-    out.nome_civil = nomeCompleto;
-  }
+  /** Nome completo / civil — enviar sempre (string) para permitir corrigir apagar texto. */
+  out.full_name = nomeCompleto;
+  out.nome_civil = nomeCompleto;
 
   const dn = trim(form.data_nascimento);
   /** Data de nascimento só para arquivo interno; o CRM não usa isto no perfil público. */
@@ -555,8 +459,8 @@ function formToWebsiteModelPut(form) {
     .filter(Boolean);
   out.telefones = telefones;
   out.emails = emails;
-  if (telefones.length) out.telefone = telefones[0];
-  if (emails.length) out.email = emails[0];
+  out.telefone = telefones[0] || '';
+  out.email = emails[0] || '';
 
   const cepDigits = onlyDigits(form.cep);
   out.endereco = {
@@ -576,19 +480,17 @@ function formToWebsiteModelPut(form) {
   out.cidade = trim(form.cidade) || null;
   out.uf = trim(form.uf).toUpperCase().slice(0, 2) || null;
 
-  const cpfD = onlyDigits(form.cpf);
-  if (cpfD) out.cpf = cpfD;
-  if (trim(form.rg)) out.rg = trim(form.rg);
-  if (trim(form.passaporte)) out.passaporte = trim(form.passaporte);
+  const cpfD = onlyDigits(form.cpf).slice(0, 11);
+  out.cpf = cpfD || '';
+  out.rg = trim(form.rg) || '';
+  out.passaporte = trim(form.passaporte) || '';
 
   /** Sempre enviar (string); o site pode mapear `notes` em vez de `observacoes`. */
   const obs = form.observacoes != null ? String(form.observacoes) : '';
   out.observacoes = obs;
   out.notes = obs;
 
-  if (Array.isArray(form.formas_pagamento) && form.formas_pagamento.length > 0) {
-    out.formas_pagamento = form.formas_pagamento;
-  }
+  out.formas_pagamento = Array.isArray(form.formas_pagamento) ? form.formas_pagamento : [];
 
   return out;
 }
@@ -876,8 +778,7 @@ export default function WebsiteModeloEditorPage({
         }
         if (cancelled) return;
         const dUn = unwrapWebsiteModelDetail(d) || d;
-        const modelIdForMerge = dUn.id != null ? Number(dUn.id) : mid;
-        setForm(mergeCrmWebsiteModelExtras(mapDetailToForm(dUn), modelIdForMerge));
+        setForm(mapDetailToForm(dUn));
         setApiMedia(mediaArrayFromDetail(dUn));
         setWebsiteModelId(dUn.id != null ? Number(dUn.id) : mid);
         setSaveError('');
@@ -921,7 +822,7 @@ export default function WebsiteModeloEditorPage({
     }
     const dUn = unwrapWebsiteModelDetail(data) || data;
     if (!dUn || typeof dUn !== 'object') return;
-    setForm(mergeCrmWebsiteModelExtras(mapDetailToForm(dUn), mid));
+    setForm(mapDetailToForm(dUn));
     setApiMedia((prev) => {
       const incoming = mediaArrayFromDetail(dUn);
       return incoming.length > 0 ? incoming : prev;
@@ -1042,7 +943,7 @@ export default function WebsiteModeloEditorPage({
       if (index < 0 || index >= prev.length) return prev;
       const next = [...prev];
       const el = next[index];
-      next[index] = { ...el, polaroid: !Boolean(el.polaroid) };
+      next[index] = { ...el, polaroid: !el.polaroid };
       return next;
     });
   }, []);
@@ -1100,25 +1001,6 @@ export default function WebsiteModeloEditorPage({
         throw new Error('Preencha «Nome para o site» (como quer que apareça na vitrine).');
       }
 
-      const extrasSnapshot = {
-        nome: String(form.nome || '').trim(),
-        nome_completo: String(form.nome_completo || '').trim(),
-        data_nascimento: String(form.data_nascimento || '').trim(),
-        telefones: [...normalizeList(form.telefones)],
-        emails: [...normalizeList(form.emails)],
-        cep: String(form.cep || ''),
-        logradouro: String(form.logradouro || ''),
-        numero: String(form.numero || ''),
-        complemento: String(form.complemento || ''),
-        bairro: String(form.bairro || ''),
-        cidade: String(form.cidade || ''),
-        uf: String(form.uf || ''),
-        instagram: String(form.instagram || ''),
-        tiktok: String(form.tiktok || ''),
-        observacoes: String(form.observacoes || ''),
-        formas_pagamento: Array.isArray(form.formas_pagamento) ? [...form.formas_pagamento] : [],
-      };
-
       const pendingImageFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
       );
@@ -1138,8 +1020,6 @@ export default function WebsiteModeloEditorPage({
       if (mustPersistGallery) {
         putBody.ordered_images = JSON.stringify(apiMedia);
       }
-
-      console.log('PAYLOAD MODELO:', putBody);
 
       let id = websiteModelId;
       const hasSiteId = id != null && !Number.isNaN(Number(id));
@@ -1322,13 +1202,13 @@ export default function WebsiteModeloEditorPage({
       }
 
       if (id != null && !Number.isNaN(Number(id))) {
-        persistCrmWebsiteModelExtras(id, extrasSnapshot);
+        persistCrmWebsiteModelExtras(id);
         try {
           await reloadEditorFromServer(id);
           setSaveOk('Salvo no site. Ficha sincronizada com o servidor.');
         } catch (reErr) {
           setSaveOk(
-            `Salvo no site. Aviso: não foi possível recarregar a confirmação do servidor (${String(reErr.message || reErr)}). Os dados que indicou mantêm-se neste ecrã e foram guardados na memória local deste browser.`,
+            `Salvo no site. Aviso: não foi possível recarregar a confirmação do servidor (${String(reErr.message || reErr)}). Os dados que indicou mantêm-se neste ecrã.`,
           );
         }
       } else {
@@ -1738,7 +1618,10 @@ export default function WebsiteModeloEditorPage({
           <Field label="CPF">
             <input
               value={formSafe.cpf ?? ''}
-              onChange={(e) => setField('cpf', e.target.value)}
+              onChange={(e) => setField('cpf', formatCpfDisplay(onlyDigits(e.target.value)))}
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={14}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               placeholder="000.000.000-00"
             />
