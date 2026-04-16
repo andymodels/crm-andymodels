@@ -241,6 +241,19 @@ const initDb = async () => {
   `);
 
   await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS ativo_site BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS website_model_id INTEGER;
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS perfil_site JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS cadastro_links (
       id SERIAL PRIMARY KEY,
       token TEXT NOT NULL UNIQUE,

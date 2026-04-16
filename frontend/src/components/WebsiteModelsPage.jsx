@@ -34,6 +34,14 @@ function modelIsInactive(m) {
   return a === false || a === '0' || a === 0 || Number(a) === 0;
 }
 
+/** Lista Website → Modelos: só entram modelos explicitamente ativos na vitrine. */
+function modelIsActiveOnSite(m) {
+  if (!m || typeof m !== 'object') return false;
+  const a = m.active;
+  if (a === true || a === 1 || a === '1') return true;
+  return false;
+}
+
 function hasCreatorsTag(m) {
   if (!m || typeof m !== 'object') return false;
   const arr = Array.isArray(m.categories) ? m.categories : [];
@@ -66,6 +74,7 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
 
   const filteredRows = useMemo(() => {
     const filtered = rows.filter((m) => {
+      if (!modelIsActiveOnSite(m)) return false;
       if (websiteModelGender(m) !== siteGender) return false;
       if (creatorsOnly && !hasCreatorsTag(m)) return false;
       return true;
@@ -238,9 +247,9 @@ export default function WebsiteModelsPage({ onOpenEdit }) {
                   mediaItems.find((item) => item.type === 'image')?.url ||
                   '';
                 const key = m?.id != null ? `wm-${m.id}` : `wm-${idx}`;
+                const modelId = m?.id != null ? m.id : null;
                 const canOpen = Boolean(slug) || (modelId != null && String(modelId).trim() !== '');
                 const inactive = modelIsInactive(m);
-                const modelId = m?.id != null ? m.id : null;
                 const canDelete = modelId != null && String(modelId).trim() !== '';
                 const deletingThis = deletingId != null && String(deletingId) === String(modelId);
                 return (

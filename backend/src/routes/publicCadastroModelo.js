@@ -160,6 +160,7 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
 
     const body = {
       nome: raw.nome,
+      ativo_site: false,
       cpf: raw.cpf,
       data_nascimento: raw.data_nascimento,
       telefones: raw.telefones,

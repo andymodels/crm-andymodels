@@ -12,6 +12,12 @@ import {
 import { WebsiteMediaImg, mediaItemThumbOrUrl } from './WebsiteMediaImage';
 import WebsitePublicVideoEmbed from './WebsitePublicVideoEmbed';
 import { toDateInputValue } from '../utils/dateInput';
+import {
+  buildCrmModeloApiBody,
+  createCrmExtraInitial,
+  crmRowToCrmExtra,
+  mergeCrmRowIntoWebsiteForm,
+} from '../utils/modeloCrmFormMap';
 
 /** Idade em anos completos à data de hoje (calendário local), a partir de YYYY-MM-DD. */
 function idadeAnosCompletosHoje(dataYmd) {
@@ -664,9 +670,17 @@ export default function WebsiteModeloEditorPage({
   editSlug = '',
   editModelId = null,
   onBackToList,
+  /** `website` = API do site (predefinido); `crm` = grava na tabela `modelos` do CRM. */
+  persistenceMode = 'website',
+  /** Com `persistenceMode=crm`: id do registo em `modelos` ou null para novo. */
+  crmModeloId = null,
+  onCrmSaved,
+  /** Publicação na vitrine (`ativo_site` / `active`); predef.: todos os utilizadores CRM autenticados. */
+  canEditSiteActive = true,
 }) {
   const fileInputId = `${useId()}-files`;
-  const isEdit = mode === 'edit';
+  const isCrm = persistenceMode === 'crm';
+  const isEdit = isCrm ? Boolean(crmModeloId) : mode === 'edit';
   const [form, setForm] = useState(createInitialForm);
   /** Em edição: cópia de `model.media` apenas — URLs tal como no backend. */
   const [apiMedia, setApiMedia] = useState([]);
@@ -687,6 +701,9 @@ export default function WebsiteModeloEditorPage({
   });
   /** Edição: índices de fotos selecionadas para mover bloco (sequência contígua). */
   const [apiMediaSelected, setApiMediaSelected] = useState(() => new Set());
+  /** Cadastro unificado (CRM): campos orçamento / internos. */
+  const [crmExtra, setCrmExtra] = useState(createCrmExtraInitial);
+  const [crmLoadedRow, setCrmLoadedRow] = useState(null);
   const cepLookupRef = useRef(null);
   const localMediaRef = useRef([]);
   useEffect(() => {
@@ -718,7 +735,59 @@ export default function WebsiteModeloEditorPage({
     };
   }, [form.cep]);
 
+  /** Carregar ficha a partir da tabela `modelos` (cadastro unificado). */
   useEffect(() => {
+    if (!isCrm) return undefined;
+    let cancelled = false;
+    (async () => {
+      const cid = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
+      if (cid == null) {
+        setForm({ ...createInitialForm(), ativo: false });
+        setCrmExtra(createCrmExtraInitial());
+        setCrmLoadedRow(null);
+        setApiMedia([]);
+        setWebsiteModelId(null);
+        setLoadError('');
+        setLoadLoading(false);
+        return;
+      }
+      setLoadLoading(true);
+      setLoadError('');
+      try {
+        const r = await fetchWithAuth(`${API_BASE}/modelos/${cid}`);
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        let row;
+        try {
+          row = raw ? JSON.parse(raw) : null;
+        } catch {
+          throw new Error('Resposta inválida do servidor.');
+        }
+        if (!r.ok) {
+          const msg = row && typeof row.message === 'string' ? row.message : `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        if (cancelled || !row || typeof row !== 'object') return;
+        setCrmLoadedRow(row);
+        setForm(mergeCrmRowIntoWebsiteForm(createInitialForm(), row));
+        setCrmExtra(crmRowToCrmExtra(row));
+        const perfil = row.perfil_site && typeof row.perfil_site === 'object' ? row.perfil_site : {};
+        setApiMedia(Array.isArray(perfil.apiMedia) ? perfil.apiMedia : []);
+        setWebsiteModelId(row.website_model_id != null ? Number(row.website_model_id) : null);
+        setLoadError('');
+      } catch (e) {
+        if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
+      } finally {
+        if (!cancelled) setLoadLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCrm, crmModeloId]);
+
+  useEffect(() => {
+    if (isCrm) return undefined;
     const slug = String(editSlug || '').trim();
     const mid = editModelId != null && !Number.isNaN(Number(editModelId)) ? Number(editModelId) : null;
     if (!isEdit || (!slug && mid == null)) {
@@ -1004,6 +1073,44 @@ export default function WebsiteModeloEditorPage({
         throw new Error('Preencha «Nome para o site» (como quer que apareça na vitrine).');
       }
 
+      if (isCrm) {
+        const idade = idadeAnosCompletosHoje(form.data_nascimento);
+        const minor = idade !== null && idade < 18;
+        if (
+          minor &&
+          (!String(crmExtra.responsavel_nome || '').trim() ||
+            !String(crmExtra.responsavel_cpf || '').trim() ||
+            !String(crmExtra.responsavel_telefone || '').trim())
+        ) {
+          throw new Error('Modelo menor de idade: preencha nome, CPF e telefone do responsável (bloco Cadastro interno).');
+        }
+        const body = buildCrmModeloApiBody(form, crmExtra, apiMedia, crmLoadedRow);
+        const cid = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
+        const url = cid != null ? `${API_BASE}/modelos/${cid}` : `${API_BASE}/modelos`;
+        const method = cid != null ? 'PUT' : 'POST';
+        const r = await fetchWithAuth(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        let data;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          throw new Error('Resposta inválida do servidor.');
+        }
+        if (!r.ok) {
+          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        setCrmLoadedRow(data);
+        if (typeof onCrmSaved === 'function') onCrmSaved(data);
+        setSaveOk('Cadastro do modelo guardado na base do CRM.');
+        return;
+      }
+
       const pendingImageFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isImageFileForGalleryUpload(x.file),
       );
@@ -1222,7 +1329,21 @@ export default function WebsiteModeloEditorPage({
     } finally {
       setSaveSaving(false);
     }
-  }, [isEdit, editSlug, websiteModelId, form, apiMedia, localMediaItems, reloadEditorFromServer]);
+  }, [
+    isCrm,
+    crmModeloId,
+    crmExtra,
+    crmLoadedRow,
+    onCrmSaved,
+    isEdit,
+    editSlug,
+    editModelId,
+    websiteModelId,
+    form,
+    apiMedia,
+    localMediaItems,
+    reloadEditorFromServer,
+  ]);
 
   const clearForm = () => {
     setForm(createInitialForm());
@@ -1362,7 +1483,9 @@ export default function WebsiteModeloEditorPage({
   }
 
   const saveDisabled =
-    saveSaving || loadLoading || (isEdit && (websiteModelId == null || Number.isNaN(Number(websiteModelId))));
+    saveSaving ||
+    loadLoading ||
+    (!isCrm && isEdit && (websiteModelId == null || Number.isNaN(Number(websiteModelId))));
   const saveBar = (
     <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 shadow-sm">
       <div className="flex flex-wrap justify-end gap-2">
@@ -1372,7 +1495,7 @@ export default function WebsiteModeloEditorPage({
           disabled={saveDisabled}
           className="rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {saveSaving ? 'A salvar…' : 'Salvar'}
+          {saveSaving ? 'A salvar…' : isCrm ? 'Guardar cadastro' : 'Salvar'}
         </button>
       </div>
       {saveError ? (
@@ -1465,12 +1588,15 @@ export default function WebsiteModeloEditorPage({
               />
               Destaque na Home
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <label
+              className={`flex items-center gap-2 text-sm text-slate-700 ${canEditSiteActive ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'}`}
+            >
               <input
                 type="checkbox"
                 checked={Boolean(formSafe.ativo)}
+                disabled={!canEditSiteActive}
                 onChange={(e) => setField('ativo', e.target.checked)}
-                className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+                className="rounded border-slate-300 text-amber-600 focus:ring-amber-400 disabled:cursor-not-allowed"
               />
               Ativo no site
             </label>
@@ -1526,6 +1652,83 @@ export default function WebsiteModeloEditorPage({
             />
           </Field>
         </Section>
+
+        {isCrm ? (
+          <Section title="Cadastro interno (CRM)">
+            <p className="text-xs leading-relaxed text-slate-600 md:col-span-2">
+              «Ativo no site» (secção anterior) controla a vitrine pública. Aqui: participação em orçamentos e dados
+              obrigatórios para o CRM. Novos cadastros começam com vitrine desligada até um administrador publicar.
+            </p>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={Boolean(crmExtra.ativo_crm)}
+                onChange={(e) => setCrmExtra((p) => ({ ...p, ativo_crm: e.target.checked }))}
+                className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+              />
+              Ativo para orçamentos e O.S.
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={Boolean(crmExtra.emite_nf_propria)}
+                onChange={(e) => setCrmExtra((p) => ({ ...p, emite_nf_propria: e.target.checked }))}
+                className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+              />
+              Emite NF própria
+            </label>
+            <Field label="Origem do cadastro">
+              <input
+                value={crmExtra.origem_cadastro ?? ''}
+                readOnly
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+              />
+            </Field>
+            <Field label="Status do cadastro">
+              <select
+                value={crmExtra.status_cadastro ?? 'aprovado'}
+                onChange={(e) => setCrmExtra((p) => ({ ...p, status_cadastro: e.target.value }))}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="pendente">Pendente</option>
+                <option value="aprovado">Aprovado</option>
+              </select>
+            </Field>
+            {idadeCalculada !== null && idadeCalculada < 18 ? (
+              <>
+                <Field label="Responsável (nome)" className="md:col-span-2">
+                  <input
+                    value={crmExtra.responsavel_nome ?? ''}
+                    onChange={(e) => setCrmExtra((p) => ({ ...p, responsavel_nome: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </Field>
+                <Field label="Responsável (CPF)">
+                  <input
+                    value={crmExtra.responsavel_cpf ?? ''}
+                    onChange={(e) =>
+                      setCrmExtra((p) => ({ ...p, responsavel_cpf: formatCpfDisplay(onlyDigits(e.target.value)) }))
+                    }
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                    maxLength={14}
+                  />
+                </Field>
+                <Field label="Responsável (telefone)">
+                  <input
+                    value={crmExtra.responsavel_telefone ?? ''}
+                    onChange={(e) =>
+                      setCrmExtra((p) => ({
+                        ...p,
+                        responsavel_telefone: formatPhoneBRMask(onlyDigits(e.target.value)),
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  />
+                </Field>
+              </>
+            ) : null}
+          </Section>
+        ) : null}
 
         <Section title="Medidas principais">
           {formSafe.catFeminino

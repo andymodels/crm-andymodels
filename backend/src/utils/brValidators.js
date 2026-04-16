@@ -287,6 +287,19 @@ function sanitizeAndValidateModelo(body, partial = false) {
     if (b.ativo !== undefined) b.ativo = Boolean(b.ativo);
   }
 
+  if (b.ativo_site !== undefined) b.ativo_site = Boolean(b.ativo_site);
+  if (b.website_model_id !== undefined) {
+    const w = b.website_model_id;
+    if (w === null || w === '') b.website_model_id = null;
+    else {
+      const n = Number(w);
+      b.website_model_id = Number.isNaN(n) ? null : n;
+    }
+  }
+  if (b.perfil_site !== undefined && b.perfil_site !== null && typeof b.perfil_site === 'object') {
+    /* mantém objeto; stringifyJsonbColumns serializa no INSERT/UPDATE */
+  }
+
   return { ok: true, body: b };
 }
 

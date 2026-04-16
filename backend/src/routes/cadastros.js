@@ -418,6 +418,42 @@ const makeCrudRoutes = ({
   });
 };
 
+/** Antes de GET /modelos (lista): detalhe e ligação ao ID do modelo no site. */
+router.get('/modelos/by-website/:wid', async (req, res, next) => {
+  try {
+    const wid = Number(req.params.wid);
+    if (Number.isNaN(wid) || wid <= 0) {
+      return res.status(400).json({ message: 'ID invalido.' });
+    }
+    const result = await pool.query(
+      'SELECT * FROM modelos WHERE website_model_id = $1 ORDER BY id DESC LIMIT 1',
+      [wid],
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Nao encontrado.' });
+    }
+    return res.json(mapModeloRowFotoForApi(result.rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/modelos/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id) || id <= 0) {
+      return res.status(400).json({ message: 'ID invalido.' });
+    }
+    const result = await pool.query('SELECT * FROM modelos WHERE id = $1', [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Nao encontrado.' });
+    }
+    return res.json(mapModeloRowFotoForApi(result.rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
 makeCrudRoutes({
   path: 'clientes',
   table: 'clientes',
@@ -559,6 +595,9 @@ makeCrudRoutes({
     'medida_sapato',
     'medida_cabelo',
     'medida_olhos',
+    'ativo_site',
+    'website_model_id',
+    'perfil_site',
   ],
 });
 

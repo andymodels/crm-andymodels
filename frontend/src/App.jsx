@@ -9,6 +9,7 @@ import WebsiteRadioPage from './components/WebsiteRadioPage';
 import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
 import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
 import WebsiteModeloEditorPage from './components/WebsiteModeloEditorPage';
+import { fetchWithAuth } from './apiConfig';
 import AtendimentoPage from './components/AtendimentoPage';
 import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
@@ -341,7 +342,6 @@ const fieldLabels = {
   tipo_servico: 'Tipo de serviço',
   contato: 'Contato',
   website: 'Website',
-  instagram: 'Instagram',
 };
 
 const labelForField = (field) => fieldLabels[field] || field;
@@ -2456,7 +2456,6 @@ function App({ authUser, onLogout = () => {} }) {
     if (module !== 'website') return '';
     const labels = {
       modelos: 'Modelos',
-      novo_modelo: 'Novo Modelo',
       editar_modelo: 'Editar modelo',
       inscricoes: 'Inscrições',
       home: 'Home',
@@ -2470,7 +2469,6 @@ function App({ authUser, onLogout = () => {} }) {
     if (module !== 'website') return '';
     const lines = {
       modelos: 'Catálogo do site institucional (somente leitura).',
-      novo_modelo: '',
       editar_modelo: '',
       inscricoes: 'Candidaturas recebidas pelo site — lista simples e detalhe ao clicar.',
       home: 'Ordem dos modelos em destaque na home do site.',
@@ -2537,16 +2535,30 @@ function App({ authUser, onLogout = () => {} }) {
                 <nav className="mt-2 space-y-1.5 pl-2" aria-label="Secções do website">
                   {[
                     { id: 'modelos', label: 'Modelos' },
-                    { id: 'novo_modelo', label: 'Novo Modelo' },
+                    {
+                      id: 'novo_modelo_cadastros',
+                      label: 'Novo modelo',
+                      cadastros: true,
+                    },
                     { id: 'inscricoes', label: 'Inscrições' },
                     { id: 'home', label: 'Home' },
                     { id: 'instagram', label: 'Instagram' },
                     { id: 'radio', label: 'Rádio' },
-                  ].map(({ id, label }) => (
+                  ].map(({ id, label, cadastros }) => (
                     <button
                       key={id}
                       type="button"
                       onClick={() => {
+                        if (cadastros) {
+                          setCadastrosMenuOpen(true);
+                          setModule('cadastros');
+                          setTab('modelos');
+                          setEditingId(null);
+                          setForm(cadastroConfig.modelos.form);
+                          setError('');
+                          setCadastrosSubView('formulario');
+                          return;
+                        }
                         setWebsiteMenuOpen(true);
                         setModule('website');
                         setWebsiteSubView(id);
@@ -2554,8 +2566,10 @@ function App({ authUser, onLogout = () => {} }) {
                         setWebsiteEditModelId(null);
                       }}
                       className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(
-                        (websiteSubView === id && module === 'website') ||
-                          (id === 'modelos' && module === 'website' && websiteSubView === 'editar_modelo'),
+                        cadastros
+                          ? module === 'cadastros' && tab === 'modelos'
+                          : (websiteSubView === id && module === 'website') ||
+                            (id === 'modelos' && module === 'website' && websiteSubView === 'editar_modelo'),
                       )}`}
                     >
                       {label}
@@ -3902,7 +3916,36 @@ function App({ authUser, onLogout = () => {} }) {
 
           {module === 'website' && websiteSubView === 'modelos' && (
             <WebsiteModelsPage
-              onOpenEdit={(slug, modelId) => {
+              onOpenEdit={async (slug, modelId) => {
+                const mid =
+                  modelId != null && modelId !== ''
+                    ? Number(modelId)
+                    : NaN;
+                if (!Number.isNaN(mid) && mid > 0) {
+                  try {
+                    const r = await fetchWithAuth(`${API_BASE}/modelos/by-website/${mid}`);
+                    const raw = await r.text();
+                    throwIfHtmlOrCannotPost(raw, r.status);
+                    let row;
+                    try {
+                      row = raw ? JSON.parse(raw) : null;
+                    } catch {
+                      row = null;
+                    }
+                    if (r.ok && row && row.id != null) {
+                      setCadastrosMenuOpen(true);
+                      setModule('cadastros');
+                      setTab('modelos');
+                      setEditingId(Number(row.id));
+                      setForm(cadastroConfig.modelos.form);
+                      setError('');
+                      setCadastrosSubView('formulario');
+                      return;
+                    }
+                  } catch {
+                    /* fallback: editor só site */
+                  }
+                }
                 const s = String(slug || '').trim();
                 setWebsiteEditSlug(s || null);
                 setWebsiteEditModelId(() => {
@@ -3915,15 +3958,6 @@ function App({ authUser, onLogout = () => {} }) {
               }}
             />
           )}
-          {/* Mesmo formulário mestre: criar e editar partilham WebsiteModeloEditorPage — corrigir bugs sempre neste componente. */}
-          {module === 'website' && websiteSubView === 'novo_modelo' && (
-            <WebsiteModeloEditorPage
-              mode="create"
-              onBackToList={() => {
-                setWebsiteSubView('modelos');
-              }}
-            />
-          )}
           {module === 'website' &&
             websiteSubView === 'editar_modelo' &&
             ((websiteEditSlug != null && String(websiteEditSlug).trim() !== '') ||
@@ -3933,6 +3967,7 @@ function App({ authUser, onLogout = () => {} }) {
                 mode="edit"
                 editSlug={websiteEditSlug || ''}
                 editModelId={websiteEditModelId}
+                canEditSiteActive={authUser?.tipo === 'admin'}
                 onBackToList={() => {
                   setWebsiteSubView('modelos');
                   setWebsiteEditSlug(null);
@@ -4263,6 +4298,49 @@ function App({ authUser, onLogout = () => {} }) {
                   ← Voltar ao painel
                 </button>
               </div>
+            {tab === 'modelos' ? (
+              <WebsiteModeloEditorPage
+                persistenceMode="crm"
+                crmModeloId={editingId}
+                mode="create"
+                editSlug=""
+                editModelId={null}
+                canEditSiteActive={authUser?.tipo === 'admin'}
+                onBackToList={() => {
+                  setCadastrosSubView('entrada');
+                  setEditingId(null);
+                  setForm(current.form);
+                  setError('');
+                  (async () => {
+                    try {
+                      const listRes = await fetchWithTimeout(`${API_BASE}/modelos`);
+                      const listRaw = await listRes.text();
+                      throwIfHtmlOrCannotPost(listRaw, listRes.status);
+                      if (listRes.ok) {
+                        const listData = listRaw ? JSON.parse(listRaw) : [];
+                        if (Array.isArray(listData)) setItems(listData);
+                      }
+                    } catch {
+                      /* */
+                    }
+                  })();
+                }}
+                onCrmSaved={async (row) => {
+                  if (row?.id != null) setEditingId(Number(row.id));
+                  try {
+                    const listRes = await fetchWithTimeout(`${API_BASE}/modelos`);
+                    const listRaw = await listRes.text();
+                    throwIfHtmlOrCannotPost(listRaw, listRes.status);
+                    if (listRes.ok) {
+                      const listData = listRaw ? JSON.parse(listRaw) : [];
+                      if (Array.isArray(listData)) setItems(listData);
+                    }
+                  } catch {
+                    /* */
+                  }
+                }}
+              />
+            ) : (
             <form
               className="grid grid-cols-1 gap-3 md:grid-cols-2"
               onSubmit={onSubmit}
@@ -4706,6 +4784,7 @@ function App({ authUser, onLogout = () => {} }) {
                 )}
               </div>
             </form>
+            )}
             </section>
           )}
 
