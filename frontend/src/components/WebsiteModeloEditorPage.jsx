@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
-import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, API_REQUEST_MS_BULK, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
 import { formatCpfDisplay } from '../utils/brMasks';
 import {
@@ -40,13 +40,15 @@ function apiMediaFromModeloRow(row) {
   return Array.isArray(perfil.apiMedia) ? perfil.apiMedia : [];
 }
 
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result || ''));
-    fr.onerror = () => reject(new Error('Não foi possível ler o ficheiro.'));
-    fr.readAsDataURL(file);
-  });
+/** Envio em lotes evita um único multipart gigante (proxy → site / multer). */
+const WEBSITE_MEDIA_UPLOAD_BATCH = 8;
+const CRM_GALLERY_UPLOAD_BATCH = 20;
+
+function chunkArray(arr, size) {
+  if (!Array.isArray(arr) || size <= 0) return [];
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 /** Idade em anos completos à data de hoje (calendário local), a partir de YYYY-MM-DD. */
@@ -721,6 +723,7 @@ export default function WebsiteModeloEditorPage({
   /** ID numérico do modelo no site (GET /api/models/:slug → id). */
   const [websiteModelId, setWebsiteModelId] = useState(null);
   const [saveSaving, setSaveSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState('');
   const [fileQueueNotice, setFileQueueNotice] = useState('');
@@ -1085,6 +1088,7 @@ export default function WebsiteModeloEditorPage({
     setSaveError('');
     setSaveOk('');
     setFileQueueNotice('');
+    setUploadProgress('');
     try {
       const emails = normalizeList(form.emails).map((x) => String(x || '').trim().toLowerCase());
       for (let i = 0; i < emails.length; i += 1) {
@@ -1120,37 +1124,84 @@ export default function WebsiteModeloEditorPage({
           );
         }
         const pendingImageLocals = localMediaItems.filter((x) => x.file instanceof File && !x.isVideo);
-        let mergedApiMedia = [...apiMedia];
-        for (const item of pendingImageLocals) {
-          const dataUrl = await readFileAsDataUrl(item.file);
-          mergedApiMedia.push({
-            type: 'image',
-            url: dataUrl,
-            thumb: dataUrl,
-            polaroid: Boolean(item.polaroid),
-          });
+        const parseCrmJson = (raw, r) => {
+          throwIfHtmlOrCannotPost(raw, r.status);
+          let data;
+          try {
+            data = raw ? JSON.parse(raw) : null;
+          } catch {
+            throw new Error('Resposta inválida do servidor.');
+          }
+          if (!r.ok) {
+            const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+            throw new Error(msg);
+          }
+          return data;
+        };
+
+        let latestRow = crmLoadedRow;
+        let workingId = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
+
+        if (pendingImageLocals.length > 0) {
+          const batches = chunkArray(pendingImageLocals, CRM_GALLERY_UPLOAD_BATCH);
+          const total = pendingImageLocals.length;
+          let done = 0;
+
+          if (workingId == null) {
+            const createBody = buildCrmModeloApiBody(form, crmExtra, [...apiMedia], crmLoadedRow);
+            if (createBody.perfil_site && typeof createBody.perfil_site === 'object') {
+              delete createBody.perfil_site.apiMedia;
+            }
+            const rCreate = await fetchWithAuth(`${API_BASE}/modelos`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(createBody),
+              timeoutMs: API_REQUEST_MS_BULK,
+            });
+            const rawCreate = await rCreate.text();
+            latestRow = parseCrmJson(rawCreate, rCreate);
+            workingId = Number(latestRow?.id);
+            if (workingId == null || Number.isNaN(workingId)) {
+              throw new Error('O servidor não devolveu o ID do novo modelo.');
+            }
+          }
+
+          for (const batch of batches) {
+            setUploadProgress(`${done} de ${total} imagens enviadas`);
+            const fd = new FormData();
+            fd.append('polaroids', JSON.stringify(batch.map((item) => Boolean(item.polaroid))));
+            batch.forEach((item) => {
+              fd.append('photos', item.file, item.file.name || 'photo.jpg');
+            });
+            const rUp = await fetchWithAuth(`${API_BASE}/modelos/${workingId}/galeria-append`, {
+              method: 'POST',
+              body: fd,
+              timeoutMs: API_REQUEST_MS_BULK,
+            });
+            const rawUp = await rUp.text();
+            latestRow = parseCrmJson(rawUp, rUp);
+            done += batch.length;
+            setUploadProgress(`${done} de ${total} imagens enviadas`);
+          }
+          setUploadProgress('');
         }
-        const body = buildCrmModeloApiBody(form, crmExtra, mergedApiMedia, crmLoadedRow);
-        const cid = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
-        const url = cid != null ? `${API_BASE}/modelos/${cid}` : `${API_BASE}/modelos`;
-        const method = cid != null ? 'PUT' : 'POST';
+
+        const mergedApiMedia =
+          pendingImageLocals.length > 0 ? apiMediaFromModeloRow(latestRow) : [...apiMedia];
+        const body = buildCrmModeloApiBody(form, crmExtra, mergedApiMedia, latestRow || crmLoadedRow);
+        if (pendingImageLocals.length > 0 && body.perfil_site && typeof body.perfil_site === 'object') {
+          delete body.perfil_site.apiMedia;
+        }
+        const url = workingId != null ? `${API_BASE}/modelos/${workingId}` : `${API_BASE}/modelos`;
+        const method = workingId != null ? 'PUT' : 'POST';
         const r = await fetchWithAuth(url, {
           method,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          timeoutMs: API_REQUEST_MS_BULK,
         });
         const raw = await r.text();
-        throwIfHtmlOrCannotPost(raw, r.status);
-        let data;
-        try {
-          data = raw ? JSON.parse(raw) : null;
-        } catch {
-          throw new Error('Resposta inválida do servidor.');
-        }
-        if (!r.ok) {
-          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
-          throw new Error(msg);
-        }
+        const data = parseCrmJson(raw, r);
         setCrmLoadedRow(data);
         setApiMedia(apiMediaFromModeloRow(data));
         setLocalMediaItems((prev) => {
@@ -1186,6 +1237,14 @@ export default function WebsiteModeloEditorPage({
       const pendingVideoFiles = localMediaItems.filter(
         (x) => x.file instanceof File && isVideoFileUpload(x.file),
       );
+      const pendingWebsiteUploads = localMediaItems.filter(
+        (x) => x.file instanceof File && (isImageFileForGalleryUpload(x.file) || isVideoFileUpload(x.file)),
+      );
+      const onlyWebsiteImages =
+        pendingWebsiteUploads.length > 0 &&
+        pendingWebsiteUploads.every((x) => !isVideoFileUpload(x.file));
+      const websiteUploadProgressLabel = (done, total) =>
+        onlyWebsiteImages ? `${done} de ${total} imagens enviadas` : `${done} de ${total} ficheiros enviados`;
 
       const putBase = formToWebsiteModelPut(form);
       /**
@@ -1222,26 +1281,90 @@ export default function WebsiteModeloEditorPage({
         return false;
       };
 
+      const takeWebsiteMediaFromPayload = (data) => {
+        const root = data && typeof data === 'object' ? data : null;
+        const media = root?.media ?? root?.model?.media;
+        return Array.isArray(media) ? media : null;
+      };
+
+      const loadWebsiteMediaFallback = async (siteModelId, dataPayload) => {
+        let media = takeWebsiteMediaFromPayload(dataPayload);
+        if (media && media.length > 0) return media;
+        const slug =
+          String(form.slug_site || '').trim() ||
+          (isEdit ? String(editSlug || '').trim() : '') ||
+          (dataPayload && dataPayload.slug != null ? String(dataPayload.slug).trim() : '');
+        if (slug) {
+          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+          const rawRf = await rf.text();
+          throwIfHtmlOrCannotPost(rawRf, rf.status);
+          const detailRf = parseJsonSafe(rawRf) || {};
+          if (rf.ok && Array.isArray(detailRf.media) && detailRf.media.length > 0) {
+            return detailRf.media;
+          }
+        }
+        if (siteModelId != null && !Number.isNaN(Number(siteModelId))) {
+          const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${siteModelId}`);
+          const rawAdm = await rAdm.text();
+          throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
+          const adm = parseJsonSafe(rawAdm) || {};
+          if (rAdm.ok && Array.isArray(adm.media) && adm.media.length > 0) {
+            return adm.media;
+          }
+        }
+        return null;
+      };
+
       if (shouldUpdate) {
         if (id == null || Number.isNaN(Number(id))) {
           throw new Error('ID do modelo no site não disponível. Recarregue a página.');
         }
         let r1;
         let raw1;
-        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
-          const fd = new FormData();
-          appendModelFieldsToFormData(fd, putBody);
-          pendingImageFiles.forEach((x) => {
-            fd.append('photos', x.file, x.file.name || 'photo.jpg');
-          });
-          pendingVideoFiles.forEach((x) => {
-            fd.append('photos', x.file, x.file.name || 'video.mp4');
-          });
-          r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
-            method: 'PUT',
-            body: fd,
-          });
-          raw1 = await r1.text();
+        let data1 = {};
+        if (pendingWebsiteUploads.length > 0) {
+          let currentMedia = [...apiMedia];
+          const batches = chunkArray(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
+          let done = 0;
+          const total = pendingWebsiteUploads.length;
+          for (const batch of batches) {
+            setUploadProgress(websiteUploadProgressLabel(done, total));
+            const fd = new FormData();
+            const bodySlice = { ...putBase, ordered_images: JSON.stringify(currentMedia) };
+            appendModelFieldsToFormData(fd, bodySlice);
+            for (const x of batch) {
+              const fn = x.file.name || (isVideoFileUpload(x.file) ? 'video.mp4' : 'photo.jpg');
+              fd.append('photos', x.file, fn);
+            }
+            r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
+              method: 'PUT',
+              body: fd,
+              timeoutMs: API_REQUEST_MS_BULK,
+            });
+            raw1 = await r1.text();
+            throwIfHtmlOrCannotPost(raw1, r1.status);
+            data1 = parseJsonSafe(raw1) || {};
+            if (!r1.ok) {
+              const serverMsg = extractApiErrorMessage(data1);
+              let msg = serverMsg || `HTTP ${r1.status}`;
+              if (r1.status === 500 && !serverMsg) {
+                msg =
+                  'Erro interno no site (HTTP 500) ao guardar. MP4 é um formato normal; a falha costuma ser limite de tamanho, tempo de processamento ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
+              }
+              throw new Error(`[Dados do modelo] ${msg}`);
+            }
+            const nextMedia = await loadWebsiteMediaFallback(id, data1);
+            if (!nextMedia || nextMedia.length === 0) {
+              throw new Error(
+                'Não foi possível atualizar a pré-visualização da galeria entre lotes. Recarregue a página ou volte à lista.',
+              );
+            }
+            currentMedia = nextMedia;
+            setApiMedia(nextMedia);
+            done += batch.length;
+            setUploadProgress(websiteUploadProgressLabel(done, total));
+          }
+          setUploadProgress('');
         } else {
           r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
             method: 'PUT',
@@ -1249,19 +1372,19 @@ export default function WebsiteModeloEditorPage({
             body: JSON.stringify(putBody),
           });
           raw1 = await r1.text();
-        }
-        throwIfHtmlOrCannotPost(raw1, r1.status);
-        const data1 = parseJsonSafe(raw1) || {};
-        if (!r1.ok) {
-          const serverMsg = extractApiErrorMessage(data1);
-          let msg = serverMsg || `HTTP ${r1.status}`;
-          if (r1.status === 500 && !serverMsg) {
-            msg =
-              'Erro interno no site (HTTP 500) ao guardar. MP4 é um formato normal; a falha costuma ser limite de tamanho, tempo de processamento ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
+          throwIfHtmlOrCannotPost(raw1, r1.status);
+          data1 = parseJsonSafe(raw1) || {};
+          if (!r1.ok) {
+            const serverMsg = extractApiErrorMessage(data1);
+            let msg = serverMsg || `HTTP ${r1.status}`;
+            if (r1.status === 500 && !serverMsg) {
+              msg =
+                'Erro interno no site (HTTP 500) ao guardar. MP4 é um formato normal; a falha costuma ser limite de tamanho, tempo de processamento ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
+            }
+            throw new Error(`[Dados do modelo] ${msg}`);
           }
-          throw new Error(`[Dados do modelo] ${msg}`);
         }
-        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
+        if (pendingWebsiteUploads.length > 0) {
           setLocalMediaItems((prev) => {
             prev.forEach((m) => {
               if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -1269,7 +1392,7 @@ export default function WebsiteModeloEditorPage({
             return [];
           });
         }
-        if (!applyMediaFromResponse(data1)) {
+        if (pendingWebsiteUploads.length === 0 && !applyMediaFromResponse(data1)) {
           const slug =
             String(form.slug_site || '').trim() || (isEdit ? String(editSlug || '').trim() : '');
           let media = null;
@@ -1301,20 +1424,64 @@ export default function WebsiteModeloEditorPage({
       } else {
         let r0;
         let raw0;
-        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
-          const fd = new FormData();
-          appendModelFieldsToFormData(fd, putBody);
-          pendingImageFiles.forEach((x) => {
-            fd.append('photos', x.file, x.file.name || 'photo.jpg');
-          });
-          pendingVideoFiles.forEach((x) => {
-            fd.append('photos', x.file, x.file.name || 'video.mp4');
-          });
-          r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
-            method: 'POST',
-            body: fd,
-          });
-          raw0 = await r0.text();
+        let data0 = {};
+        if (pendingWebsiteUploads.length > 0) {
+          let currentMedia = [...apiMedia];
+          const batches = chunkArray(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
+          let done = 0;
+          const total = pendingWebsiteUploads.length;
+          let localId = id;
+          for (let bi = 0; bi < batches.length; bi += 1) {
+            const batch = batches[bi];
+            setUploadProgress(websiteUploadProgressLabel(done, total));
+            const fd = new FormData();
+            const bodySlice = { ...putBase, ordered_images: JSON.stringify(currentMedia) };
+            appendModelFieldsToFormData(fd, bodySlice);
+            for (const x of batch) {
+              const fn = x.file.name || (isVideoFileUpload(x.file) ? 'video.mp4' : 'photo.jpg');
+              fd.append('photos', x.file, fn);
+            }
+            const isFirstCreate = localId == null || Number.isNaN(Number(localId));
+            const url0 = isFirstCreate ? `${API_BASE}/admin/models` : `${API_BASE}/admin/models/${localId}`;
+            const method0 = isFirstCreate ? 'POST' : 'PUT';
+            r0 = await fetchWithAuth(url0, {
+              method: method0,
+              body: fd,
+              timeoutMs: API_REQUEST_MS_BULK,
+            });
+            raw0 = await r0.text();
+            throwIfHtmlOrCannotPost(raw0, r0.status);
+            data0 = parseJsonSafe(raw0) || {};
+            if (!r0.ok) {
+              const serverMsg = extractApiErrorMessage(data0);
+              let msg = serverMsg || `HTTP ${r0.status}`;
+              if (r0.status === 500 && !serverMsg) {
+                msg =
+                  'Erro interno no site (HTTP 500) ao criar. MP4 é um formato normal; a falha costuma ser limite de tamanho ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
+              }
+              throw new Error(isFirstCreate ? `[Criar modelo] ${msg}` : `[Dados do modelo] ${msg}`);
+            }
+            if (isFirstCreate) {
+              const newId = data0.id != null ? Number(data0.id) : NaN;
+              if (Number.isNaN(newId)) {
+                throw new Error('O site não devolveu o ID do novo modelo.');
+              }
+              localId = newId;
+              id = newId;
+              setWebsiteModelId(newId);
+            }
+            const nextMedia = await loadWebsiteMediaFallback(localId, data0);
+            if (!nextMedia || nextMedia.length === 0) {
+              throw new Error(
+                'O servidor não devolveu a galeria entre lotes. Abra o modelo na lista e tente de novo.',
+              );
+            }
+            currentMedia = nextMedia;
+            setApiMedia(nextMedia);
+            done += batch.length;
+            setUploadProgress(websiteUploadProgressLabel(done, total));
+          }
+          setUploadProgress('');
         } else {
           r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
             method: 'POST',
@@ -1322,25 +1489,25 @@ export default function WebsiteModeloEditorPage({
             body: JSON.stringify(putBody),
           });
           raw0 = await r0.text();
-        }
-        throwIfHtmlOrCannotPost(raw0, r0.status);
-        const data0 = parseJsonSafe(raw0) || {};
-        if (!r0.ok) {
-          const serverMsg = extractApiErrorMessage(data0);
-          let msg = serverMsg || `HTTP ${r0.status}`;
-          if (r0.status === 500 && !serverMsg) {
-            msg =
-              'Erro interno no site (HTTP 500) ao criar. MP4 é um formato normal; a falha costuma ser limite de tamanho ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
+          throwIfHtmlOrCannotPost(raw0, r0.status);
+          data0 = parseJsonSafe(raw0) || {};
+          if (!r0.ok) {
+            const serverMsg = extractApiErrorMessage(data0);
+            let msg = serverMsg || `HTTP ${r0.status}`;
+            if (r0.status === 500 && !serverMsg) {
+              msg =
+                'Erro interno no site (HTTP 500) ao criar. MP4 é um formato normal; a falha costuma ser limite de tamanho ou o servidor do site. Tente um ficheiro mais pequeno ou use «Vídeo (URL)».';
+            }
+            throw new Error(`[Criar modelo] ${msg}`);
           }
-          throw new Error(`[Criar modelo] ${msg}`);
+          const newId = data0.id != null ? Number(data0.id) : NaN;
+          if (Number.isNaN(newId)) {
+            throw new Error('O site não devolveu o ID do novo modelo.');
+          }
+          id = newId;
+          setWebsiteModelId(newId);
         }
-        const newId = data0.id != null ? Number(data0.id) : NaN;
-        if (Number.isNaN(newId)) {
-          throw new Error('O site não devolveu o ID do novo modelo.');
-        }
-        id = newId;
-        setWebsiteModelId(newId);
-        if (pendingImageFiles.length > 0 || pendingVideoFiles.length > 0) {
+        if (pendingWebsiteUploads.length > 0) {
           setLocalMediaItems((prev) => {
             prev.forEach((m) => {
               if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -1348,7 +1515,7 @@ export default function WebsiteModeloEditorPage({
             return [];
           });
         }
-        if (!applyMediaFromResponse(data0)) {
+        if (pendingWebsiteUploads.length === 0 && !applyMediaFromResponse(data0)) {
           const slug =
             String(form.slug_site || '').trim() ||
             (data0 && data0.slug != null ? String(data0.slug).trim() : '');
@@ -1396,6 +1563,7 @@ export default function WebsiteModeloEditorPage({
     } catch (e) {
       setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
     } finally {
+      setUploadProgress('');
       setSaveSaving(false);
     }
   }, [
@@ -1569,6 +1737,9 @@ export default function WebsiteModeloEditorPage({
       </div>
       {saveError ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{saveError}</p>
+      ) : null}
+      {uploadProgress ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{uploadProgress}</p>
       ) : null}
       {saveOk ? (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{saveOk}</p>

@@ -11,8 +11,13 @@ const router = express.Router();
 
 const websiteModelUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 120 * 1024 * 1024, files: 40 },
+  limits: {
+    fileSize: Number(process.env.MODEL_UPLOAD_MAX_FILE_BYTES) || 150 * 1024 * 1024,
+    files: Number(process.env.MODEL_UPLOAD_MAX_FILES) || 200,
+  },
 });
+
+const WEBSITE_MODEL_MULTIPART_TIMEOUT_MS = Number(process.env.WEBSITE_MODEL_MULTIPART_TIMEOUT_MS) || 600_000;
 
 /** Base do site (lista pública, admin). Override: WEBSITE_ORIGIN no .env (ex.: staging). */
 function getWebsiteOrigin() {
@@ -269,7 +274,7 @@ async function forwardMultipartModelToWebsite(method, urlString, req) {
     throw new Error('Multipart requer Node 18+ (fetch).');
   }
   const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), 120_000);
+  const tid = setTimeout(() => ctrl.abort(), WEBSITE_MODEL_MULTIPART_TIMEOUT_MS);
   try {
     const r = await fetch(urlString, { method: m, headers, body: fd, signal: ctrl.signal });
     const raw = await r.text();

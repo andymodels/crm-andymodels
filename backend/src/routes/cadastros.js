@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const { pool } = require('../config/db');
 const {
   sanitizeAndValidateCliente,
@@ -15,6 +16,15 @@ const {
 } = require('../services/modeloFotoPerfil');
 
 const router = express.Router();
+
+/** Anexos de galeria ao modelo (CRM): vários pedidos pequenos evitam 413/timeout com dezenas de fotos. */
+const modeloGaleriaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: Number(process.env.MODEL_GALLERY_MAX_FILE_BYTES) || 80 * 1024 * 1024,
+    files: Number(process.env.MODEL_GALLERY_MAX_FILES_PER_REQUEST) || 40,
+  },
+});
 
 /** Campos obrigatorios: strings vazias e arrays vazios contam como faltando (backend nao confia no frontend). */
 function missingRequiredFields(body, requiredFields) {
@@ -330,6 +340,31 @@ const makeCrudRoutes = ({
         return res.status(400).json({ message: 'ID invalido.' });
       }
 
+      if (
+        table === 'modelos' &&
+        body.perfil_site &&
+        typeof body.perfil_site === 'object' &&
+        !Object.prototype.hasOwnProperty.call(body.perfil_site, 'apiMedia')
+      ) {
+        try {
+          const prevQ = await pool.query('SELECT perfil_site FROM modelos WHERE id = $1', [id]);
+          const prevRow = prevQ.rows[0];
+          let prevP = prevRow?.perfil_site;
+          if (typeof prevP === 'string') {
+            try {
+              prevP = JSON.parse(prevP);
+            } catch {
+              prevP = {};
+            }
+          }
+          if (!prevP || typeof prevP !== 'object') prevP = {};
+          const prevMedia = Array.isArray(prevP.apiMedia) ? prevP.apiMedia : [];
+          body.perfil_site = { ...prevP, ...body.perfil_site, apiMedia: prevMedia };
+        } catch {
+          /* mantém body */
+        }
+      }
+
       if (table === 'modelos' && Object.prototype.hasOwnProperty.call(body, 'foto_perfil_base64')) {
         const prevQ = await pool.query('SELECT foto_perfil_base64 FROM modelos WHERE id = $1', [id]);
         if (prevQ.rows.length === 0) {
@@ -453,6 +488,72 @@ router.get('/modelos/:id', async (req, res, next) => {
     next(error);
   }
 });
+
+/**
+ * POST /api/modelos/:id/galeria-append — acrescenta imagens à galeria em `perfil_site.apiMedia` (multipart, campo `photos`).
+ * Vários pedidos em sequência evitam um único JSON gigante no PUT /modelos/:id.
+ */
+router.post(
+  '/modelos/:id/galeria-append',
+  modeloGaleriaUpload.array('photos', Number(process.env.MODEL_GALLERY_MAX_FILES_PER_REQUEST) || 40),
+  async (req, res, next) => {
+    try {
+      const id = Number(req.params.id);
+      if (Number.isNaN(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID invalido.' });
+      }
+      const files = Array.isArray(req.files) ? req.files : [];
+      if (files.length === 0) {
+        return res.status(400).json({ message: 'Envie imagens no campo photos.' });
+      }
+      const r = await pool.query('SELECT * FROM modelos WHERE id = $1', [id]);
+      if (r.rows.length === 0) {
+        return res.status(404).json({ message: 'Nao encontrado.' });
+      }
+      const row = r.rows[0];
+      let perfil = row.perfil_site;
+      if (typeof perfil === 'string') {
+        try {
+          perfil = perfil ? JSON.parse(perfil) : {};
+        } catch {
+          perfil = {};
+        }
+      }
+      if (!perfil || typeof perfil !== 'object') perfil = {};
+      const apiMedia = Array.isArray(perfil.apiMedia) ? [...perfil.apiMedia] : [];
+      let polaroids = [];
+      const rawPol = req.body && req.body.polaroids;
+      if (typeof rawPol === 'string' && rawPol.trim()) {
+        try {
+          const parsed = JSON.parse(rawPol);
+          polaroids = Array.isArray(parsed) ? parsed.map((x) => Boolean(x)) : [];
+        } catch {
+          polaroids = [];
+        }
+      }
+      for (let i = 0; i < files.length; i += 1) {
+        const f = files[i];
+        if (!f || !f.buffer) continue;
+        const mime = String(f.mimetype || 'image/jpeg').split(';')[0] || 'image/jpeg';
+        if (!mime.startsWith('image/')) {
+          return res.status(400).json({ message: 'Apenas imagens sao aceites em galeria-append.' });
+        }
+        const b64 = f.buffer.toString('base64');
+        const dataUrl = `data:${mime};base64,${b64}`;
+        const polaroid = polaroids.length > i ? polaroids[i] : false;
+        apiMedia.push({ type: 'image', url: dataUrl, thumb: dataUrl, polaroid });
+      }
+      const nextPerfil = { ...perfil, apiMedia };
+      const result2 = await pool.query(
+        `UPDATE modelos SET perfil_site = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [nextPerfil, id],
+      );
+      return res.json(mapModeloRowFotoForApi(result2.rows[0]));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 makeCrudRoutes({
   path: 'clientes',
