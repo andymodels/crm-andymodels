@@ -2,6 +2,7 @@
  * Colunas JSONB (telefones, emails, formas_pagamento): serializa para JSON aceito pelo Postgres.
  */
 function stringifyJsonbColumns(body) {
+  if (body == null || typeof body !== 'object') return;
   const keys = ['telefones', 'emails', 'formas_pagamento', 'perfil_site'];
   for (const key of keys) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;

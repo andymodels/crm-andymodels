@@ -2535,30 +2535,15 @@ function App({ authUser, onLogout = () => {} }) {
                 <nav className="mt-2 space-y-1.5 pl-2" aria-label="Secções do website">
                   {[
                     { id: 'modelos', label: 'Modelos' },
-                    {
-                      id: 'novo_modelo_cadastros',
-                      label: 'Novo modelo',
-                      cadastros: true,
-                    },
                     { id: 'inscricoes', label: 'Inscrições' },
                     { id: 'home', label: 'Home' },
                     { id: 'instagram', label: 'Instagram' },
                     { id: 'radio', label: 'Rádio' },
-                  ].map(({ id, label, cadastros }) => (
+                  ].map(({ id, label }) => (
                     <button
                       key={id}
                       type="button"
                       onClick={() => {
-                        if (cadastros) {
-                          setCadastrosMenuOpen(true);
-                          setModule('cadastros');
-                          setTab('modelos');
-                          setEditingId(null);
-                          setForm(cadastroConfig.modelos.form);
-                          setError('');
-                          setCadastrosSubView('formulario');
-                          return;
-                        }
                         setWebsiteMenuOpen(true);
                         setModule('website');
                         setWebsiteSubView(id);
@@ -2566,10 +2551,8 @@ function App({ authUser, onLogout = () => {} }) {
                         setWebsiteEditModelId(null);
                       }}
                       className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${navSubBtn(
-                        cadastros
-                          ? module === 'cadastros' && tab === 'modelos'
-                          : (websiteSubView === id && module === 'website') ||
-                            (id === 'modelos' && module === 'website' && websiteSubView === 'editar_modelo'),
+                        (websiteSubView === id && module === 'website') ||
+                          (id === 'modelos' && module === 'website' && websiteSubView === 'editar_modelo'),
                       )}`}
                     >
                       {label}

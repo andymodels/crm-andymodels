@@ -6,7 +6,7 @@
 const https = require('https');
 const express = require('express');
 const multer = require('multer');
-
+const { pool } = require('../config/db');
 const router = express.Router();
 
 const websiteModelUpload = multer({
@@ -316,6 +316,42 @@ function websiteDeleteRequest(urlString) {
   });
 }
 
+/** Extrai array de modelos das várias formas que o admin do site devolve. */
+function adminModelsListArray(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') {
+    if (Array.isArray(parsed.models)) return parsed.models;
+    if (Array.isArray(parsed.data)) return parsed.data;
+  }
+  return null;
+}
+
+/** Valor booleano de `ativo_site` na tabela `modelos` (Postgres pode devolver t/f). */
+function crmAtivoSiteTrue(v) {
+  if (v === true || v === 1 || v === '1') return true;
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === 't' || s === 'true' || s === 'on';
+}
+
+/** Sobrepõe `active` na lista admin com `ativo_site` do CRM quando existe `website_model_id`. */
+function mergeCrmAtivoSiteIntoAdminModelsList(parsed, rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const wid = Number(row.website_model_id);
+    if (Number.isNaN(wid) || wid <= 0) continue;
+    map.set(wid, crmAtivoSiteTrue(row.ativo_site));
+  }
+  const arr = adminModelsListArray(parsed);
+  if (!Array.isArray(arr)) return;
+  for (const m of arr) {
+    const id = m?.id != null ? Number(m.id) : NaN;
+    if (Number.isNaN(id) || id <= 0 || !map.has(id)) continue;
+    const on = map.get(id);
+    m.active = on;
+    if (m.model && typeof m.model === 'object') m.model.active = on;
+  }
+}
+
 /** Resposta proxy admin → cliente CRM (401, JSON, vazio). attemptedUrl = URL completa do pedido ao site (para mensagens). */
 function sendWebsiteAdminProxyResponse(res, statusCode, raw, attemptedUrl) {
   if (statusCode === 401) {
@@ -377,7 +413,26 @@ router.get('/admin/models', async (req, res, next) => {
     const qstr = qs.toString();
     const url = `${getWebsiteOrigin()}/api/admin/models${qstr ? `?${qstr}` : ''}`;
     const { statusCode, raw } = await fetchWebsiteAdminJson(url);
-    return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+    if (statusCode < 200 || statusCode >= 300 || !raw || !String(raw).trim()) {
+      return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+    }
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
+    }
+    if (pool) {
+      try {
+        const r = await pool.query(
+          'SELECT website_model_id, ativo_site FROM modelos WHERE website_model_id IS NOT NULL',
+        );
+        mergeCrmAtivoSiteIntoAdminModelsList(data, r.rows);
+      } catch {
+        /* lista do site mantém-se */
+      }
+    }
+    return res.status(statusCode).json(data);
   } catch (e) {
     return next(e);
   }
@@ -402,6 +457,46 @@ router.get('/admin/models/:id', async (req, res, next) => {
       getLog = raw;
     }
     console.log('GET RESPONSE SITE → CRM:', JSON.stringify(getLog, null, 2));
+    if (statusCode >= 200 && statusCode < 300 && raw && getLog && typeof getLog === 'object') {
+      const wid = Number(id);
+      if (!Number.isNaN(wid) && wid > 0 && pool) {
+        try {
+          const crm = await pool.query(
+            'SELECT perfil_site, ativo_site FROM modelos WHERE website_model_id = $1 ORDER BY id DESC LIMIT 1',
+            [wid],
+          );
+          const row = crm.rows[0];
+          if (row) {
+            const on = crmAtivoSiteTrue(row.ativo_site);
+            getLog.active = on;
+            if (getLog.model && typeof getLog.model === 'object') getLog.model.active = on;
+          }
+          let perfil = row?.perfil_site;
+          if (typeof perfil === 'string') {
+            try {
+              perfil = JSON.parse(perfil);
+            } catch {
+              perfil = null;
+            }
+          }
+          const apiMedia = perfil && typeof perfil === 'object' && Array.isArray(perfil.apiMedia) ? perfil.apiMedia : null;
+          const siteMedia = Array.isArray(getLog.media) ? getLog.media : null;
+          const siteEmpty = !siteMedia || siteMedia.length === 0;
+          if (apiMedia && apiMedia.length > 0 && siteEmpty) {
+            const merged = { ...getLog, media: apiMedia };
+            if (merged.model && typeof merged.model === 'object') {
+              merged.model = { ...merged.model, media: apiMedia };
+            }
+            return res.status(statusCode).json(merged);
+          }
+          if (row) {
+            return res.status(statusCode).json(getLog);
+          }
+        } catch {
+          /* ignora — devolve resposta do site */
+        }
+      }
+    }
     return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
   } catch (e) {
     return next(e);

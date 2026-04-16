@@ -200,7 +200,7 @@ const makeCrudRoutes = ({
 
   router.post(`/${path}`, async (req, res, next) => {
     try {
-      const body = { ...req.body };
+      const body = { ...(req.body != null && typeof req.body === 'object' ? req.body : {}) };
       if (table === 'modelos') {
         if (body.chave_pix == null) body.chave_pix = '';
         if (body.banco_dados == null) body.banco_dados = '';
@@ -291,7 +291,7 @@ const makeCrudRoutes = ({
 
   router.put(`/${path}/:id`, async (req, res, next) => {
     try {
-      const body = { ...req.body };
+      const body = { ...(req.body != null && typeof req.body === 'object' ? req.body : {}) };
 
       if (table === 'clientes') {
         const sv = sanitizeAndValidateCliente(body, false);

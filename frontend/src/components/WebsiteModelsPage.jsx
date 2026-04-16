@@ -39,6 +39,10 @@ function modelIsActiveOnSite(m) {
   if (!m || typeof m !== 'object') return false;
   const a = m.active;
   if (a === true || a === 1 || a === '1') return true;
+  if (typeof a === 'string') {
+    const t = a.trim().toLowerCase();
+    if (t === 'true' || t === 't' || t === 'on') return true;
+  }
   return false;
 }
 

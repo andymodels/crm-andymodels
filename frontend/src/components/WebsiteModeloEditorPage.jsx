@@ -19,6 +19,36 @@ import {
   mergeCrmRowIntoWebsiteForm,
 } from '../utils/modeloCrmFormMap';
 
+/** `perfil_site` na API pode vir como objeto (JSONB) ou string JSON. */
+function parsePerfilSite(row) {
+  if (!row || typeof row !== 'object') return {};
+  let p = row.perfil_site;
+  if (typeof p === 'string') {
+    try {
+      const o = JSON.parse(p);
+      return o && typeof o === 'object' ? o : {};
+    } catch {
+      return {};
+    }
+  }
+  if (p && typeof p === 'object') return p;
+  return {};
+}
+
+function apiMediaFromModeloRow(row) {
+  const perfil = parsePerfilSite(row);
+  return Array.isArray(perfil.apiMedia) ? perfil.apiMedia : [];
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onerror = () => reject(new Error('Não foi possível ler o ficheiro.'));
+    fr.readAsDataURL(file);
+  });
+}
+
 /** Idade em anos completos à data de hoje (calendário local), a partir de YYYY-MM-DD. */
 function idadeAnosCompletosHoje(dataYmd) {
   const ymd = toDateInputValue(dataYmd);
@@ -771,8 +801,7 @@ export default function WebsiteModeloEditorPage({
         setCrmLoadedRow(row);
         setForm(mergeCrmRowIntoWebsiteForm(createInitialForm(), row));
         setCrmExtra(crmRowToCrmExtra(row));
-        const perfil = row.perfil_site && typeof row.perfil_site === 'object' ? row.perfil_site : {};
-        setApiMedia(Array.isArray(perfil.apiMedia) ? perfil.apiMedia : []);
+        setApiMedia(apiMediaFromModeloRow(row));
         setWebsiteModelId(row.website_model_id != null ? Number(row.website_model_id) : null);
         setLoadError('');
       } catch (e) {
@@ -1084,7 +1113,24 @@ export default function WebsiteModeloEditorPage({
         ) {
           throw new Error('Modelo menor de idade: preencha nome, CPF e telefone do responsável (bloco Cadastro interno).');
         }
-        const body = buildCrmModeloApiBody(form, crmExtra, apiMedia, crmLoadedRow);
+        const pendingVideoLocals = localMediaItems.filter((x) => x.isVideo);
+        if (pendingVideoLocals.length > 0) {
+          throw new Error(
+            'No cadastro CRM não é possível guardar vídeo a partir de ficheiro na galeria. Use «Vídeo (URL)» ou o fluxo Website (proxy do site) para enviar MP4/WebM.',
+          );
+        }
+        const pendingImageLocals = localMediaItems.filter((x) => x.file instanceof File && !x.isVideo);
+        let mergedApiMedia = [...apiMedia];
+        for (const item of pendingImageLocals) {
+          const dataUrl = await readFileAsDataUrl(item.file);
+          mergedApiMedia.push({
+            type: 'image',
+            url: dataUrl,
+            thumb: dataUrl,
+            polaroid: Boolean(item.polaroid),
+          });
+        }
+        const body = buildCrmModeloApiBody(form, crmExtra, mergedApiMedia, crmLoadedRow);
         const cid = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
         const url = cid != null ? `${API_BASE}/modelos/${cid}` : `${API_BASE}/modelos`;
         const method = cid != null ? 'PUT' : 'POST';
@@ -1106,6 +1152,29 @@ export default function WebsiteModeloEditorPage({
           throw new Error(msg);
         }
         setCrmLoadedRow(data);
+        setApiMedia(apiMediaFromModeloRow(data));
+        setLocalMediaItems((prev) => {
+          prev.forEach((m) => {
+            if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
+          });
+          return [];
+        });
+        const wid =
+          data?.website_model_id != null && !Number.isNaN(Number(data.website_model_id))
+            ? Number(data.website_model_id)
+            : null;
+        if (wid != null && wid > 0) {
+          try {
+            const rSite = await fetchWithAuth(`${API_BASE}/admin/models/${wid}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ active: form.ativo ? '1' : '0' }),
+            });
+            await rSite.text();
+          } catch {
+            /* site indisponível — a listagem Website → Modelos usa ativo_site no GET /api/admin/models */
+          }
+        }
         if (typeof onCrmSaved === 'function') onCrmSaved(data);
         setSaveOk('Cadastro do modelo guardado na base do CRM.');
         return;
