@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import DynamicTextListField from './DynamicTextListField';
-import { API_BASE, API_REQUEST_MS_BULK, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { API_BASE, fetchWithAuth, fetchWithTimeout, throwIfHtmlOrCannotPost } from '../apiConfig';
 import { onlyDigits, formatPhoneBRMask, formatCEPMask, isValidEmail } from '../utils/brValidators';
 import { formatCpfDisplay } from '../utils/brMasks';
 import {
@@ -18,6 +18,9 @@ import {
   crmRowToCrmExtra,
   mergeCrmRowIntoWebsiteForm,
 } from '../utils/modeloCrmFormMap';
+
+/** Upload multipart/galeria: sem timeout no cliente (evita AbortController / «Fetch is aborted»). */
+const FETCH_UPLOAD = { timeoutMs: 0 };
 
 /** `perfil_site` na API pode vir como objeto (JSONB) ou string JSON. */
 function parsePerfilSite(row) {
@@ -40,15 +43,22 @@ function apiMediaFromModeloRow(row) {
   return Array.isArray(perfil.apiMedia) ? perfil.apiMedia : [];
 }
 
-/** Envio em lotes evita um único multipart gigante (proxy → site / multer). */
-const WEBSITE_MEDIA_UPLOAD_BATCH = 8;
-const CRM_GALLERY_UPLOAD_BATCH = 20;
+/** Envio em lotes sequencial (sem Promise.all); pausa entre lotes alivia proxy/servidor. */
+const WEBSITE_MEDIA_UPLOAD_BATCH = 2;
+const CRM_GALLERY_UPLOAD_BATCH = 2;
+const GALLERY_BATCH_DELAY_MS = 800;
 
 function chunkArray(arr, size) {
   if (!Array.isArray(arr) || size <= 0) return [];
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 /** Idade em anos completos à data de hoje (calendário local), a partir de YYYY-MM-DD. */
@@ -83,6 +93,14 @@ function hasUsableModelPayload(obj) {
   if (obj.name != null && String(obj.name).trim() !== '') return true;
   if (obj.slug != null && String(obj.slug).trim() !== '') return true;
   return false;
+}
+
+/** GET público /api/models/:slug — ID numérico do modelo no site (para sincronizar `active` quando falta `website_model_id`). */
+function websiteNumericIdFromPublicPayload(raw) {
+  const d = unwrapWebsiteModelDetail(raw);
+  if (!d || typeof d !== 'object') return null;
+  const n = Number(d.id);
+  return !Number.isNaN(n) && n > 0 ? n : null;
 }
 
 const CRM_WEBSITE_EXTRA_KEY = (id) => `crm_website_model_extra_v1_${id}`;
@@ -724,6 +742,8 @@ export default function WebsiteModeloEditorPage({
   const [websiteModelId, setWebsiteModelId] = useState(null);
   const [saveSaving, setSaveSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+  /** Durante lotes de ficheiros: bloqueia novo «Salvar» e evita confundir com estado intermédio. */
+  const [galleryUploadBusy, setGalleryUploadBusy] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveOk, setSaveOk] = useState('');
   const [fileQueueNotice, setFileQueueNotice] = useState('');
@@ -1089,6 +1109,7 @@ export default function WebsiteModeloEditorPage({
     setSaveOk('');
     setFileQueueNotice('');
     setUploadProgress('');
+    setGalleryUploadBusy(false);
     try {
       const emails = normalizeList(form.emails).map((x) => String(x || '').trim().toLowerCase());
       for (let i = 0; i < emails.length; i += 1) {
@@ -1143,6 +1164,7 @@ export default function WebsiteModeloEditorPage({
         let workingId = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
 
         if (pendingImageLocals.length > 0) {
+          setGalleryUploadBusy(true);
           const batches = chunkArray(pendingImageLocals, CRM_GALLERY_UPLOAD_BATCH);
           const total = pendingImageLocals.length;
           let done = 0;
@@ -1156,7 +1178,7 @@ export default function WebsiteModeloEditorPage({
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(createBody),
-              timeoutMs: API_REQUEST_MS_BULK,
+              ...FETCH_UPLOAD,
             });
             const rawCreate = await rCreate.text();
             latestRow = parseCrmJson(rawCreate, rCreate);
@@ -1166,7 +1188,8 @@ export default function WebsiteModeloEditorPage({
             }
           }
 
-          for (const batch of batches) {
+          for (let bi = 0; bi < batches.length; bi += 1) {
+            const batch = batches[bi];
             setUploadProgress(`${done} de ${total} imagens enviadas`);
             const fd = new FormData();
             fd.append('polaroids', JSON.stringify(batch.map((item) => Boolean(item.polaroid))));
@@ -1176,21 +1199,29 @@ export default function WebsiteModeloEditorPage({
             const rUp = await fetchWithAuth(`${API_BASE}/modelos/${workingId}/galeria-append`, {
               method: 'POST',
               body: fd,
-              timeoutMs: API_REQUEST_MS_BULK,
+              ...FETCH_UPLOAD,
             });
             const rawUp = await rUp.text();
             latestRow = parseCrmJson(rawUp, rUp);
             done += batch.length;
             setUploadProgress(`${done} de ${total} imagens enviadas`);
+            if (bi + 1 < batches.length) await delay(GALLERY_BATCH_DELAY_MS);
           }
           setUploadProgress('');
+          setGalleryUploadBusy(false);
         }
 
         const mergedApiMedia =
           pendingImageLocals.length > 0 ? apiMediaFromModeloRow(latestRow) : [...apiMedia];
         const body = buildCrmModeloApiBody(form, crmExtra, mergedApiMedia, latestRow || crmLoadedRow);
-        if (pendingImageLocals.length > 0 && body.perfil_site && typeof body.perfil_site === 'object') {
+        if (body.perfil_site && typeof body.perfil_site === 'object') {
           delete body.perfil_site.apiMedia;
+        }
+        const willPut = workingId != null;
+        /** PUT: nunca reenviar galeria (evita 502); o servidor faz merge de `apiMedia` existente. POST novo sem ficheiros: repõe só metadados pequenos (URLs, ordem). */
+        if (!willPut && pendingImageLocals.length === 0) {
+          if (!body.perfil_site || typeof body.perfil_site !== 'object') body.perfil_site = {};
+          body.perfil_site.apiMedia = Array.isArray(mergedApiMedia) ? mergedApiMedia : [];
         }
         const url = workingId != null ? `${API_BASE}/modelos/${workingId}` : `${API_BASE}/modelos`;
         const method = workingId != null ? 'PUT' : 'POST';
@@ -1198,7 +1229,7 @@ export default function WebsiteModeloEditorPage({
           method,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          timeoutMs: API_REQUEST_MS_BULK,
+          ...FETCH_UPLOAD,
         });
         const raw = await r.text();
         const data = parseCrmJson(raw, r);
@@ -1210,21 +1241,68 @@ export default function WebsiteModeloEditorPage({
           });
           return [];
         });
-        const wid =
+        let wid =
           data?.website_model_id != null && !Number.isNaN(Number(data.website_model_id))
             ? Number(data.website_model_id)
             : null;
+        const slugForSite = String(form.slug_site || '').trim();
+        if ((wid == null || wid <= 0) && slugForSite) {
+          try {
+            const rp = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slugForSite)}`);
+            const rawPub = await rp.text();
+            throwIfHtmlOrCannotPost(rawPub, rp.status);
+            let pub = null;
+            try {
+              pub = rawPub ? JSON.parse(rawPub) : null;
+            } catch {
+              pub = null;
+            }
+            if (rp.ok && pub) {
+              const cand = websiteNumericIdFromPublicPayload(pub);
+              if (cand != null) wid = cand;
+            }
+          } catch {
+            /* sem ID público — só CRM */
+          }
+        }
         if (wid != null && wid > 0) {
           try {
             const rSite = await fetchWithAuth(`${API_BASE}/admin/models/${wid}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ active: form.ativo ? '1' : '0' }),
+              body: JSON.stringify({
+                active: form.ativo ? true : false,
+                featured: Boolean(form.featured),
+              }),
             });
-            await rSite.text();
-          } catch {
-            /* site indisponível — a listagem Website → Modelos usa ativo_site no GET /api/admin/models */
+            const rawSite = await rSite.text();
+            throwIfHtmlOrCannotPost(rawSite, rSite.status);
+            let siteJson = null;
+            try {
+              siteJson = rawSite ? JSON.parse(rawSite) : null;
+            } catch {
+              siteJson = null;
+            }
+            if (!rSite.ok) {
+              const msg =
+                siteJson && typeof siteJson.message === 'string'
+                  ? siteJson.message
+                  : `O site devolveu HTTP ${rSite.status} ao atualizar publicação (active).`;
+              throw new Error(msg);
+            }
+          } catch (e) {
+            const hint =
+              ' Verifique WEBSITE_ADMIN_TOKEN no backend e se o modelo existe no admin do site.';
+            throw new Error(
+              `${e?.message ? String(e.message) : 'Não foi possível atualizar ativo/destaque no site.'}${hint}`,
+            );
           }
+        } else if (form.ativo) {
+          setSaveOk(
+            'Cadastro guardado no CRM. Para publicar na vitrine é necessário o modelo existir no site com o mesmo slug ou ter `website_model_id` na ficha — use o modo Website ou associe o ID.',
+          );
+          if (typeof onCrmSaved === 'function') onCrmSaved(data);
+          return;
         }
         if (typeof onCrmSaved === 'function') onCrmSaved(data);
         setSaveOk('Cadastro do modelo guardado na base do CRM.');
@@ -1248,16 +1326,15 @@ export default function WebsiteModeloEditorPage({
 
       const putBase = formToWebsiteModelPut(form);
       /**
-       * NUNCA enviar `ordered_images` como "[]" só porque o estado local está vazio (ex.: modelo inativo
-       * ausente na API pública) — o site substitui a galeria e apaga fotos. Só incluir galeria quando há
-       * itens em memória OU uploads pendentes (primeira carga de ficheiros).
+       * JSON PUT/POST: só campos de texto — nunca `ordered_images` (payload gigante → 502).
+       * Galeria ficheiros: apenas multipart em lote (cada pedido já leva `ordered_images` + fotos).
+       * `active` / `featured` em boolean (o proxy normaliza para o site); obrigatórios para publicação sem multipart.
        */
-      const mustPersistGallery =
-        apiMedia.length > 0 || pendingImageFiles.length > 0 || pendingVideoFiles.length > 0;
-      const putBody = { ...putBase };
-      if (mustPersistGallery) {
-        putBody.ordered_images = JSON.stringify(apiMedia);
-      }
+      const putBodyTextOnly = {
+        ...putBase,
+        active: Boolean(form.ativo),
+        featured: Boolean(form.featured),
+      };
 
       let id = websiteModelId;
       const hasSiteId = id != null && !Number.isNaN(Number(id));
@@ -1295,7 +1372,7 @@ export default function WebsiteModeloEditorPage({
           (isEdit ? String(editSlug || '').trim() : '') ||
           (dataPayload && dataPayload.slug != null ? String(dataPayload.slug).trim() : '');
         if (slug) {
-          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`);
+          const rf = await fetchWithAuth(`${API_BASE}/website/models/${encodeURIComponent(slug)}`, FETCH_UPLOAD);
           const rawRf = await rf.text();
           throwIfHtmlOrCannotPost(rawRf, rf.status);
           const detailRf = parseJsonSafe(rawRf) || {};
@@ -1304,7 +1381,7 @@ export default function WebsiteModeloEditorPage({
           }
         }
         if (siteModelId != null && !Number.isNaN(Number(siteModelId))) {
-          const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${siteModelId}`);
+          const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${siteModelId}`, FETCH_UPLOAD);
           const rawAdm = await rAdm.text();
           throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
           const adm = parseJsonSafe(rawAdm) || {};
@@ -1323,11 +1400,13 @@ export default function WebsiteModeloEditorPage({
         let raw1;
         let data1 = {};
         if (pendingWebsiteUploads.length > 0) {
+          setGalleryUploadBusy(true);
           let currentMedia = [...apiMedia];
           const batches = chunkArray(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
           let done = 0;
           const total = pendingWebsiteUploads.length;
-          for (const batch of batches) {
+          for (let bi = 0; bi < batches.length; bi += 1) {
+            const batch = batches[bi];
             setUploadProgress(websiteUploadProgressLabel(done, total));
             const fd = new FormData();
             const bodySlice = { ...putBase, ordered_images: JSON.stringify(currentMedia) };
@@ -1339,7 +1418,7 @@ export default function WebsiteModeloEditorPage({
             r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
               method: 'PUT',
               body: fd,
-              timeoutMs: API_REQUEST_MS_BULK,
+              ...FETCH_UPLOAD,
             });
             raw1 = await r1.text();
             throwIfHtmlOrCannotPost(raw1, r1.status);
@@ -1363,13 +1442,15 @@ export default function WebsiteModeloEditorPage({
             setApiMedia(nextMedia);
             done += batch.length;
             setUploadProgress(websiteUploadProgressLabel(done, total));
+            if (bi + 1 < batches.length) await delay(GALLERY_BATCH_DELAY_MS);
           }
           setUploadProgress('');
+          setGalleryUploadBusy(false);
         } else {
           r1 = await fetchWithAuth(`${API_BASE}/admin/models/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(putBody),
+            body: JSON.stringify(putBodyTextOnly),
           });
           raw1 = await r1.text();
           throwIfHtmlOrCannotPost(raw1, r1.status);
@@ -1426,6 +1507,7 @@ export default function WebsiteModeloEditorPage({
         let raw0;
         let data0 = {};
         if (pendingWebsiteUploads.length > 0) {
+          setGalleryUploadBusy(true);
           let currentMedia = [...apiMedia];
           const batches = chunkArray(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
           let done = 0;
@@ -1447,7 +1529,7 @@ export default function WebsiteModeloEditorPage({
             r0 = await fetchWithAuth(url0, {
               method: method0,
               body: fd,
-              timeoutMs: API_REQUEST_MS_BULK,
+              ...FETCH_UPLOAD,
             });
             raw0 = await r0.text();
             throwIfHtmlOrCannotPost(raw0, r0.status);
@@ -1480,13 +1562,15 @@ export default function WebsiteModeloEditorPage({
             setApiMedia(nextMedia);
             done += batch.length;
             setUploadProgress(websiteUploadProgressLabel(done, total));
+            if (bi + 1 < batches.length) await delay(GALLERY_BATCH_DELAY_MS);
           }
           setUploadProgress('');
+          setGalleryUploadBusy(false);
         } else {
           r0 = await fetchWithAuth(`${API_BASE}/admin/models`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(putBody),
+            body: JSON.stringify(putBodyTextOnly),
           });
           raw0 = await r0.text();
           throwIfHtmlOrCannotPost(raw0, r0.status);
@@ -1564,6 +1648,7 @@ export default function WebsiteModeloEditorPage({
       setSaveError(e?.message ? String(e.message) : 'Erro ao salvar.');
     } finally {
       setUploadProgress('');
+      setGalleryUploadBusy(false);
       setSaveSaving(false);
     }
   }, [
@@ -1721,6 +1806,7 @@ export default function WebsiteModeloEditorPage({
 
   const saveDisabled =
     saveSaving ||
+    galleryUploadBusy ||
     loadLoading ||
     (!isCrm && isEdit && (websiteModelId == null || Number.isNaN(Number(websiteModelId))));
   const saveBar = (
@@ -1732,7 +1818,13 @@ export default function WebsiteModeloEditorPage({
           disabled={saveDisabled}
           className="rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {saveSaving ? 'A salvar…' : isCrm ? 'Guardar cadastro' : 'Salvar'}
+          {uploadProgress || galleryUploadBusy
+            ? 'A enviar imagens…'
+            : saveSaving
+              ? 'A salvar…'
+              : isCrm
+                ? 'Guardar cadastro'
+                : 'Salvar'}
         </button>
       </div>
       {saveError ? (

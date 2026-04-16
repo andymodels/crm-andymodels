@@ -29,6 +29,9 @@ export const API_REQUEST_MS_BULK = 10 * 60 * 1000;
 export const RADIO_MAX_AUDIO_FILE_BYTES = 250 * 1024 * 1024;
 
 export function fetchWithTimeout(url, options = {}, timeoutMs = API_REQUEST_MS) {
+  if (timeoutMs <= 0) {
+    return fetch(url, { credentials: 'include', ...options });
+  }
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { credentials: 'include', ...options, signal: controller.signal }).finally(() => {
@@ -53,6 +56,13 @@ export function fetchWithAuth(url, options = {}) {
     /* ignore */
   }
   const ms = timeoutMs != null ? Number(timeoutMs) : API_REQUEST_MS;
+  if (ms <= 0) {
+    return fetch(url, {
+      ...rest,
+      headers,
+      credentials: 'include',
+    });
+  }
   return fetchWithTimeout(
     url,
     {

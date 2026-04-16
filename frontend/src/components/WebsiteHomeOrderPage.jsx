@@ -29,22 +29,12 @@ function strLower(v) {
   return String(v ?? '').trim().toLowerCase();
 }
 
-/**
- * Modelos em destaque na home do site (equivalente a categoria = home / ordem home).
- * Aceita category ou categoria, listas categories/categorias, home_order, featured.
- */
-function isHomeCategoryModel(m) {
+/** Home do site: apenas `featured` (API pública / admin — não usar category home, status, etc.). */
+function isFeaturedForHomeOrder(m) {
   if (!m || typeof m !== 'object') return false;
-  if (strLower(m.category) === 'home' || strLower(m.categoria) === 'home') return true;
-  const lists = [m.categories, m.categorias].filter(Array.isArray);
-  for (const arr of lists) {
-    if (arr.some((x) => strLower(x) === 'home')) return true;
-  }
-  const ho = Number(m.home_order);
-  if (Number.isFinite(ho) && ho >= 1) return true;
   if (m.featured === true || m.featured === 1 || m.featured === '1') return true;
-  if (m.destaque_home === true || m.destaque_home === 1 || m.destaque_home === '1') return true;
-  return false;
+  const s = String(m.featured ?? '').trim().toLowerCase();
+  return s === 'true' || s === 't' || s === 'on';
 }
 
 /** Prioriza home_order quando existir no objeto (mesmo 0), para alinhar ao site. */
@@ -126,7 +116,7 @@ export default function WebsiteHomeOrderPage() {
         throw new Error(msg);
       }
       const arr = extractWebsiteModelsArray(parsed);
-      const feat = arr.filter((m) => isHomeCategoryModel(m));
+      const feat = arr.filter((m) => isFeaturedForHomeOrder(m));
       const field = feat.length ? detectOrderField(feat[0]) : 'home_order';
       setOrderField(field);
       feat.sort((a, b) => getOrderValue(a, field) - getOrderValue(b, field));
@@ -202,9 +192,9 @@ export default function WebsiteHomeOrderPage() {
         <div>
           <h3 className="text-base font-semibold text-slate-800">Ordem da Home</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Modelos da categoria «home» no site — arraste para definir a ordem (1 = primeiro). A ordem também é
-            embaralhada automaticamente de hora a hora no servidor. Campo no
-            site: <span className="font-mono text-slate-700">{orderField}</span>
+            Modelos com <span className="font-medium text-slate-700">featured</span> ativo no site — arraste para
+            definir a ordem (1 = primeiro). A ordem também é embaralhada automaticamente de hora a hora no servidor.
+            Campo no site: <span className="font-mono text-slate-700">{orderField}</span>
           </p>
         </div>
         <button
@@ -228,7 +218,8 @@ export default function WebsiteHomeOrderPage() {
 
       {!loading && !error && ordered.length === 0 ? (
         <p className="mt-6 text-sm text-slate-600">
-          Nenhum modelo na categoria «home». Na ficha do modelo (Website → Modelos), defina a categoria home e guarde.
+          Nenhum modelo em destaque. Na ficha do modelo (Website → Modelos), ative «Destaque / featured», guarde e
+          volte aqui.
         </p>
       ) : null}
 

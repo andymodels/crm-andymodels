@@ -34,13 +34,20 @@ function modelIsInactive(m) {
   return a === false || a === '0' || a === 0 || Number(a) === 0;
 }
 
-/** Lista Website → Modelos: só entram modelos explicitamente ativos na vitrine. */
+/**
+ * Vitrine no CRM: filtro igual ao contrato público GET /api/models — campo `active` (boolean),
+ * normalizado no proxy CRM. Não usar status / is_active / ativo_no_site.
+ */
 function modelIsActiveOnSite(m) {
+  return Boolean(m && typeof m === 'object' && m.active === true);
+}
+
+function modelIsFeaturedOnSite(m) {
   if (!m || typeof m !== 'object') return false;
-  const a = m.active;
-  if (a === true || a === 1 || a === '1') return true;
-  if (typeof a === 'string') {
-    const t = a.trim().toLowerCase();
+  const f = m.featured;
+  if (f === true || f === 1 || f === '1') return true;
+  if (typeof f === 'string') {
+    const t = f.trim().toLowerCase();
     if (t === 'true' || t === 't' || t === 'on') return true;
   }
   return false;
@@ -57,7 +64,7 @@ function prioritizeFeaturedStable(list) {
   const featured = [];
   const rest = [];
   for (const m of list) {
-    if (m && typeof m === 'object' && m.featured === true) featured.push(m);
+    if (modelIsFeaturedOnSite(m)) featured.push(m);
     else rest.push(m);
   }
   return featured.concat(rest);

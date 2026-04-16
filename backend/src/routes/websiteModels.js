@@ -17,8 +17,6 @@ const websiteModelUpload = multer({
   },
 });
 
-const WEBSITE_MODEL_MULTIPART_TIMEOUT_MS = Number(process.env.WEBSITE_MODEL_MULTIPART_TIMEOUT_MS) || 600_000;
-
 /** Base do site (lista pública, admin). Override: WEBSITE_ORIGIN no .env (ex.: staging). */
 function getWebsiteOrigin() {
   return String(process.env.WEBSITE_ORIGIN || 'https://www.andymodels.com')
@@ -164,6 +162,7 @@ function websiteJsonRequest(method, urlString, bodyObj) {
     })
       .then((res) =>
         res.text().then((raw) => {
+          console.log('RESPONSE STATUS:', res.status);
           const preview =
             raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
           logWebsiteProxyResponse(res.status, preview);
@@ -199,10 +198,12 @@ function websiteJsonRequest(method, urlString, bodyObj) {
         raw += chunk;
       });
       res.on('end', () => {
+        const sc = res.statusCode || 0;
+        console.log('RESPONSE STATUS:', sc);
         const preview =
           raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
-        logWebsiteProxyResponse(res.statusCode || 0, preview);
-        resolve({ statusCode: res.statusCode || 0, raw });
+        logWebsiteProxyResponse(sc, preview);
+        resolve({ statusCode: sc, raw });
       });
     });
     req.on('error', reject);
@@ -273,17 +274,13 @@ async function forwardMultipartModelToWebsite(method, urlString, req) {
   if (typeof fetch !== 'function') {
     throw new Error('Multipart requer Node 18+ (fetch).');
   }
-  const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), WEBSITE_MODEL_MULTIPART_TIMEOUT_MS);
-  try {
-    const r = await fetch(urlString, { method: m, headers, body: fd, signal: ctrl.signal });
-    const raw = await r.text();
-    const preview = raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
-    logWebsiteProxyResponse(r.status, preview);
-    return { statusCode: r.status, raw };
-  } finally {
-    clearTimeout(tid);
-  }
+  /** Sem AbortController: evita «Fetch is aborted» em uploads longos; o cliente pode esperar até o site responder. */
+  const r = await fetch(urlString, { method: m, headers, body: fd });
+  console.log('RESPONSE STATUS:', r.status);
+  const raw = await r.text();
+  const preview = raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
+  logWebsiteProxyResponse(r.status, preview);
+  return { statusCode: r.status, raw };
 }
 
 function websiteDeleteRequest(urlString) {
@@ -338,7 +335,22 @@ function crmAtivoSiteTrue(v) {
   return s === 't' || s === 'true' || s === 'on';
 }
 
-/** Sobrepõe `active` na lista admin com `ativo_site` do CRM quando existe `website_model_id`. */
+/** Alinha com o front público: `active` / `featured` como flags (evita modelo ativo no site sumir na lista CRM). */
+function websitePublicActiveTruthy(v) {
+  if (v === true || v === 1 || v === '1') return true;
+  if (v === false || v === 0 || v === '0') return false;
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === 'true' || s === 't' || s === 'on';
+}
+
+function websitePublicFeaturedTruthy(v) {
+  if (v === true || v === 1 || v === '1') return true;
+  if (v === false || v === 0 || v === '0') return false;
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === 'true' || s === 't' || s === 'on';
+}
+
+/** Lista admin: `active` visível se o site OU o CRM (`ativo_site`) indicar publicado — não esconder quem está ativo no site. */
 function mergeCrmAtivoSiteIntoAdminModelsList(parsed, rows) {
   const map = new Map();
   for (const row of rows) {
@@ -351,10 +363,79 @@ function mergeCrmAtivoSiteIntoAdminModelsList(parsed, rows) {
   for (const m of arr) {
     const id = m?.id != null ? Number(m.id) : NaN;
     if (Number.isNaN(id) || id <= 0 || !map.has(id)) continue;
-    const on = map.get(id);
-    m.active = on;
-    if (m.model && typeof m.model === 'object') m.model.active = on;
+    const crmOn = map.get(id);
+    const siteOn = websitePublicActiveTruthy(m.active);
+    const merged = siteOn || crmOn;
+    m.active = merged;
+    if (m.model && typeof m.model === 'object') m.model.active = merged;
   }
+}
+
+/** Detalhe admin: mesmo contrato que a lista (`active` / `featured` booleanos). */
+function normalizeAdminModelDetailForCrm(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const strip = ['ativo_no_site', 'status', 'show_on_home', 'is_active'];
+  const o = { ...obj };
+  for (const k of strip) {
+    if (Object.prototype.hasOwnProperty.call(o, k)) delete o[k];
+  }
+  o.active = websitePublicActiveTruthy(o.active);
+  if (o.featured !== undefined && o.featured !== null) o.featured = websitePublicFeaturedTruthy(o.featured);
+  if (o.model && typeof o.model === 'object') {
+    const m = { ...o.model };
+    for (const k of strip) {
+      if (Object.prototype.hasOwnProperty.call(m, k)) delete m[k];
+    }
+    if (m.active !== undefined && m.active !== null) m.active = websitePublicActiveTruthy(m.active);
+    if (m.featured !== undefined && m.featured !== null) m.featured = websitePublicFeaturedTruthy(m.featured);
+    o.model = m;
+  }
+  return o;
+}
+
+/** Lista admin GET /api/admin/models: `active` / `featured` como booleanos; remove aliases que confundem o CRM. */
+function normalizeAdminModelsListForCrm(data) {
+  const strip = ['ativo_no_site', 'status', 'show_on_home', 'is_active'];
+  const clean = (m) => {
+    if (!m || typeof m !== 'object') return;
+    for (const k of strip) {
+      if (Object.prototype.hasOwnProperty.call(m, k)) delete m[k];
+    }
+    m.active = websitePublicActiveTruthy(m.active);
+    m.featured = websitePublicFeaturedTruthy(m.featured);
+    if (m.model && typeof m.model === 'object') {
+      for (const k of strip) {
+        if (Object.prototype.hasOwnProperty.call(m.model, k)) delete m.model[k];
+      }
+      if (m.model.active !== undefined) m.model.active = websitePublicActiveTruthy(m.model.active);
+      if (m.model.featured !== undefined) m.model.featured = websitePublicFeaturedTruthy(m.model.featured);
+    }
+  };
+  const arr = adminModelsListArray(data);
+  if (!Array.isArray(arr)) return data;
+  for (const m of arr) clean(m);
+  return data;
+}
+
+/** GET /api/models (público): garantir `active` e `featured` booleanos na resposta JSON. */
+function normalizeWebsitePublicModelsPayload(data) {
+  if (data == null) return data;
+  const normOne = (m) => {
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return m;
+    return {
+      ...m,
+      active: websitePublicActiveTruthy(m.active),
+      featured: websitePublicFeaturedTruthy(m.featured),
+    };
+  };
+  if (Array.isArray(data)) return data.map(normOne);
+  if (typeof data === 'object' && Array.isArray(data.models)) {
+    return { ...data, models: data.models.map(normOne) };
+  }
+  if (typeof data === 'object' && Array.isArray(data.data)) {
+    return { ...data, data: data.data.map(normOne) };
+  }
+  return data;
 }
 
 /** Resposta proxy admin → cliente CRM (401, JSON, vazio). attemptedUrl = URL completa do pedido ao site (para mensagens). */
@@ -437,7 +518,7 @@ router.get('/admin/models', async (req, res, next) => {
         /* lista do site mantém-se */
       }
     }
-    return res.status(statusCode).json(data);
+    return res.status(statusCode).json(normalizeAdminModelsListForCrm(data));
   } catch (e) {
     return next(e);
   }
@@ -472,9 +553,13 @@ router.get('/admin/models/:id', async (req, res, next) => {
           );
           const row = crm.rows[0];
           if (row) {
-            const on = crmAtivoSiteTrue(row.ativo_site);
-            getLog.active = on;
-            if (getLog.model && typeof getLog.model === 'object') getLog.model.active = on;
+            const crmOn = crmAtivoSiteTrue(row.ativo_site);
+            const siteOn = websitePublicActiveTruthy(
+              getLog.active != null ? getLog.active : getLog.model && getLog.model.active,
+            );
+            const mergedActive = siteOn || crmOn;
+            getLog.active = mergedActive;
+            if (getLog.model && typeof getLog.model === 'object') getLog.model.active = mergedActive;
           }
           let perfil = row?.perfil_site;
           if (typeof perfil === 'string') {
@@ -492,10 +577,10 @@ router.get('/admin/models/:id', async (req, res, next) => {
             if (merged.model && typeof merged.model === 'object') {
               merged.model = { ...merged.model, media: apiMedia };
             }
-            return res.status(statusCode).json(merged);
+            return res.status(statusCode).json(normalizeAdminModelDetailForCrm(merged));
           }
           if (row) {
-            return res.status(statusCode).json(getLog);
+            return res.status(statusCode).json(normalizeAdminModelDetailForCrm(getLog));
           }
         } catch {
           /* ignora — devolve resposta do site */
@@ -534,13 +619,13 @@ router.get('/website/models', async (_req, res, next) => {
         message: `Website retornou HTTP ${statusCode}.`,
       });
     }
-    let data;
+       let data;
     try {
       data = JSON.parse(raw);
     } catch {
       return res.status(502).json({ message: 'Resposta do website não é JSON válido.' });
     }
-    return res.json(data);
+    return res.json(normalizeWebsitePublicModelsPayload(data));
   } catch (e) {
     return next(e);
   }
@@ -569,6 +654,12 @@ router.get('/website/models/:slug', async (req, res, next) => {
     } catch {
       return res.status(502).json({ message: 'Resposta do website não é JSON válido.' });
     }
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const one = { ...data };
+      if (one.active !== undefined) one.active = websitePublicActiveTruthy(one.active);
+      if (one.featured !== undefined) one.featured = websitePublicFeaturedTruthy(one.featured);
+      return res.json(one);
+    }
     return res.json(data);
   } catch (e) {
     return next(e);
@@ -594,9 +685,7 @@ router.post('/admin/models', websiteModelUpload.any(), async (req, res, next) =>
         return res.status(400).json({ message: 'Body invalido.' });
       }
       const payload = normalizeWebsiteModelPatchBody(req.body);
-      if (isDebugWebsiteProxy()) {
-        console.log('PAYLOAD ENVIADO:', payload);
-      }
+      console.log('POST BODY FINAL (admin models):', JSON.stringify(payload));
       const r = await websiteJsonRequest('POST', url, payload);
       statusCode = r.statusCode;
       raw = r.raw;
@@ -657,11 +746,8 @@ async function handleWebsiteAdminModelPut(req, res, next) {
       if (!req.body || typeof req.body !== 'object') {
         return res.status(400).json({ message: 'Body invalido.' });
       }
-      console.log('PUT PAYLOAD CRM → SITE:', JSON.stringify(req.body, null, 2));
       const payload = normalizeWebsiteModelPatchBody(req.body);
-      if (isDebugWebsiteProxy()) {
-        console.log('PAYLOAD ENVIADO:', payload);
-      }
+      console.log('PUT BODY FINAL:', JSON.stringify(payload));
       const r = await websiteJsonRequest('PUT', url, payload);
       statusCode = r.statusCode;
       raw = r.raw;
