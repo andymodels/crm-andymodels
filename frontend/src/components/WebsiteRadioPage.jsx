@@ -83,6 +83,17 @@ function trackCoverImgSrc(t) {
   return `${u}${sep}t=${encodeURIComponent(String(ts))}`;
 }
 
+/** maxresdefault pode 404 em vídeos muito antigos — cai para hqdefault. */
+function onYoutubeCoverImgError(e, videoId) {
+  const id = String(videoId || '').trim();
+  if (!id) return;
+  const el = e.currentTarget;
+  const base = el.src.split('?')[0];
+  if (base.includes('maxresdefault')) {
+    el.src = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  }
+}
+
 function formMatchesPlaylist(form, p) {
   if (!form || !p) return true;
   return (
@@ -328,7 +339,11 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <div className="radio-cover-frame relative w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14">
           {art ? (
-            <img src={art} alt="" />
+            <img
+              src={art}
+              alt=""
+              onError={cur?.youtube_video_id ? (e) => onYoutubeCoverImgError(e, cur.youtube_video_id) : undefined}
+            />
           ) : (
             <AndyPlaylistCoverPlaceholder />
           )}
@@ -1246,7 +1261,7 @@ export default function WebsiteRadioPage() {
                     </p>
                     <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
                       Faixas com ficheiro: capa automática (ID3 → iTunes/Deezer → pool B2). Faixas só com link YouTube:
-                      capa oficial <span className="font-mono text-[11px]">hqdefault</span> do vídeo; sem upload de
+                      capa HD do YouTube (miniatura 16:9); sem upload de
                       áudio.
                     </p>
                   </div>
@@ -1426,6 +1441,11 @@ export default function WebsiteRadioPage() {
                               alt=""
                               loading="eager"
                               decoding="async"
+                              onError={
+                                t.youtube_video_id
+                                  ? (e) => onYoutubeCoverImgError(e, t.youtube_video_id)
+                                  : undefined
+                              }
                             />
                           </div>
                         ) : (

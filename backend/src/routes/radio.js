@@ -250,7 +250,7 @@ async function createTrackFromYoutubeUrl(playlistId, rawUrl, overrides = {}) {
   logRadioCoverImage('track_insert_youtube', {
     playlist_id: playlistId,
     track_id: row.id,
-    cover_source: 'youtube_hqdefault',
+    cover_source: 'youtube_maxres_thumb',
     image_url_received: coverUrl,
     image_url_saved: row.cover_url || null,
     image_url_returned: row.cover_url || null,

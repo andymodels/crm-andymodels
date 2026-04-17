@@ -1,5 +1,5 @@
 /**
- * Andy Radio (CRM): links YouTube — extrair ID e URL de capa oficial (hqdefault).
+ * Andy Radio (CRM): links YouTube — extrair ID e URL de capa (maxres / fallback hq).
  * Sem upload nem B2 para o áudio; capa é URL pública i.ytimg.com.
  */
 
@@ -62,10 +62,19 @@ function extractYoutubeVideoId(raw) {
 }
 
 /**
+ * Capa pública do vídeo — preferir maxres (16:9, ~1280×720) para evitar letterbox
+ * embutido em hqdefault (480×360, 4:3). Vídeos antigos podem não ter maxres (404).
+ *
  * @param {string} videoId
  * @returns {string}
  */
 function youtubeThumbnailHqUrl(videoId) {
+  const id = String(videoId || '').trim();
+  return `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`;
+}
+
+/** Fallback quando maxres não existe (raro). */
+function youtubeThumbnailHqFallbackUrl(videoId) {
   const id = String(videoId || '').trim();
   return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 }
@@ -110,5 +119,6 @@ async function fetchYoutubeOEmbedMeta(videoId) {
 module.exports = {
   extractYoutubeVideoId,
   youtubeThumbnailHqUrl,
+  youtubeThumbnailHqFallbackUrl,
   fetchYoutubeOEmbedMeta,
 };
