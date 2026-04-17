@@ -207,9 +207,10 @@ async function fetchPublicModelIdBySlug(slug) {
   } catch {
     return null;
   }
-  const d =
-    data && typeof data === 'object' && data.model && typeof data.model === 'object' ? data.model : data;
-  const n = Number(d && d.id);
+  const top = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const nested = top.model && typeof top.model === 'object' ? top.model : {};
+  const idRaw = nested.id != null && nested.id !== '' ? nested.id : top.id;
+  const n = Number(idRaw);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
@@ -274,4 +275,5 @@ module.exports = {
   extractWebsiteModelIdFromCreateResponse,
   createWebsiteModelOnSite,
   syncWebsiteModelIdIntoRow,
+  fetchPublicModelIdBySlug,
 };

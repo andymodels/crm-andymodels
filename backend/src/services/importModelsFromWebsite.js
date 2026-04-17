@@ -1,17 +1,20 @@
 /**
- * Importa modelos da API pública do site (GET /api/models) para a tabela `modelos` do CRM.
- * Não copia mídia/base64 — apenas metadados e ligação website_model_id.
+ * Importa modelos do site para a tabela `modelos` do CRM.
+ * Ordem: GET /api/admin/models (com token) — ids garantidos; fallback GET /api/models + detalhe por slug.
+ * Não copia mídia/base64 — apenas metadados e website_model_id.
  */
 
 const { insertModeloRow } = require('../utils/modeloInsert');
 const { isValidCPF } = require('../utils/brValidators');
-const { fetchWebsiteJson, getWebsiteOrigin } = require('./websiteHttpClient');
+const { fetchWebsiteAdminJson, fetchWebsiteJson, getWebsiteOrigin } = require('./websiteHttpClient');
+const { fetchPublicModelIdBySlug } = require('./websiteModelSync');
 
 function extractModelsArray(data) {
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object') {
-    if (Array.isArray(data.models)) return data.models;
-    if (Array.isArray(data.data)) return data.data;
+    for (const key of ['models', 'data', 'items', 'results', 'records']) {
+      if (Array.isArray(data[key])) return data[key];
+    }
   }
   return [];
 }
@@ -30,8 +33,26 @@ function websitePublicBool(v) {
 }
 
 /**
- * CPF válido único por wid (evita colisão com CPF real: espaço reservado 9 dígitos derivados do id).
+ * Resolve id numérico do modelo no site (lista admin, lista pública ou objeto nested).
  */
+function parseWebsiteModelNumericId(m) {
+  if (!m || typeof m !== 'object') return null;
+  const candidates = [
+    m.id,
+    m.model_id,
+    m.modelId,
+    m.numeric_id,
+    m?.model?.id,
+    m?.model?.model_id,
+  ];
+  for (const c of candidates) {
+    if (c == null || c === '') continue;
+    const n = Number(String(c).trim());
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return null;
+}
+
 function cpfPlaceholderForWebsiteId(wid, salt = 0) {
   const n = Number(wid);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -111,36 +132,128 @@ function mapMedidas(mRaw) {
 }
 
 /**
- * @returns {Promise<{ imported: number, skipped: number, errors: Array<{ website_model_id?: number, slug?: string, message: string }> }>}
+ * Carrega lista de modelos: prioriza admin (ids); se vazio ou indisponível, usa API pública.
  */
-async function runImportModelsFromWebsite(pool) {
-  const listUrl = `${getWebsiteOrigin()}/api/models`;
-  const { statusCode, raw } = await fetchWebsiteJson(listUrl);
-  if (statusCode < 200 || statusCode >= 300) {
-    const err = new Error(`Website retornou HTTP ${statusCode} ao listar modelos.`);
-    err.statusCode = statusCode >= 400 ? statusCode : 502;
-    throw err;
-  }
-  let data;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    const err = new Error('Resposta do site não é JSON válido.');
-    err.statusCode = 502;
-    throw err;
+async function loadWebsiteModelsList() {
+  const origin = getWebsiteOrigin();
+  const adminUrl = `${origin}/api/admin/models`;
+  const publicUrl = `${origin}/api/models`;
+
+  let list = [];
+  let listSource = 'none';
+  let adminHttpStatus = null;
+  let publicHttpStatus = null;
+  let parseNote = null;
+
+  const adminRes = await fetchWebsiteAdminJson(adminUrl);
+  adminHttpStatus = adminRes.statusCode;
+  if (adminRes.statusCode >= 200 && adminRes.statusCode < 300 && adminRes.raw && String(adminRes.raw).trim()) {
+    try {
+      const data = JSON.parse(adminRes.raw);
+      list = extractModelsArray(data);
+      if (list.length > 0) {
+        listSource = 'admin';
+      }
+    } catch (e) {
+      parseNote = `Resposta admin nao e JSON: ${e.message}`;
+    }
   }
 
-  const list = extractModelsArray(data);
+  if (list.length === 0) {
+    const pubRes = await fetchWebsiteJson(publicUrl);
+    publicHttpStatus = pubRes.statusCode;
+    if (pubRes.statusCode >= 200 && pubRes.statusCode < 300 && pubRes.raw && String(pubRes.raw).trim()) {
+      try {
+        const data = JSON.parse(pubRes.raw);
+        list = extractModelsArray(data);
+        if (list.length > 0) {
+          listSource = 'public';
+        }
+      } catch (e) {
+        parseNote = parseNote || `Resposta publica nao e JSON: ${e.message}`;
+      }
+    }
+  }
+
+  return {
+    list,
+    listSource,
+    adminHttpStatus,
+    publicHttpStatus,
+    parseNote,
+    origin,
+  };
+}
+
+/**
+ * @returns {Promise<object>}
+ */
+async function runImportModelsFromWebsite(pool) {
+  const {
+    list: rawList,
+    listSource,
+    adminHttpStatus,
+    publicHttpStatus,
+    parseNote,
+    origin,
+  } = await loadWebsiteModelsList();
+
+  const totalReceived = rawList.length;
   const imported = [];
   const skipped = [];
   const errors = [];
 
-  for (const item of list) {
+  if (totalReceived === 0) {
+    const hint = [
+      parseNote,
+      adminHttpStatus === 401 ? 'Admin do site recusou token (401). Defina WEBSITE_ADMIN_TOKEN igual ao ADMIN_SECRET do site para listar com ids.' : null,
+      publicHttpStatus != null && (publicHttpStatus < 200 || publicHttpStatus >= 300)
+        ? `GET publico /api/models retornou HTTP ${publicHttpStatus}.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    errors.push({
+      message: `Nenhum modelo na lista do site (${origin}). ${hint || 'Verifique WEBSITE_ORIGIN.'}`,
+    });
+    return {
+      imported: 0,
+      skipped: 0,
+      total_received: 0,
+      list_source: listSource,
+      admin_http_status: adminHttpStatus,
+      public_http_status: publicHttpStatus,
+      imported_details: [],
+      errors,
+    };
+  }
+
+  for (const item of rawList) {
     const m = unwrapPublicModel(item);
-    if (!m || typeof m !== 'object') continue;
-    const wid = Number(m.id);
-    if (!Number.isFinite(wid) || wid <= 0) {
-      errors.push({ message: 'Modelo sem id numérico na lista pública.' });
+    if (!m || typeof m !== 'object') {
+      errors.push({ message: 'Item invalido na lista (nao objeto).' });
+      continue;
+    }
+
+    let wid = parseWebsiteModelNumericId(m);
+    const slug = str(m.slug || m.slug_site);
+
+    if (wid == null && slug) {
+      try {
+        wid = await fetchPublicModelIdBySlug(slug);
+      } catch (e) {
+        errors.push({ slug, message: `Falha ao obter id por slug: ${e.message || String(e)}` });
+        continue;
+      }
+    }
+
+    if (wid == null || wid <= 0) {
+      errors.push({
+        slug: slug || undefined,
+        name: str(m.name || m.nome),
+        message:
+          'ID numerico do modelo no site nao encontrado (lista sem id; use token admin ou slug valido em GET /api/models/:slug).',
+      });
       continue;
     }
 
@@ -150,7 +263,6 @@ async function runImportModelsFromWebsite(pool) {
       continue;
     }
 
-    const slug = str(m.slug) || str(m.slug_site);
     const nome = str(m.name || m.nome) || slug || `Modelo #${wid}`;
     const flags = categoriesToFlags(m);
     const sexo = flags.catMasculino ? 'Masculino' : 'Feminino';
@@ -158,7 +270,7 @@ async function runImportModelsFromWebsite(pool) {
     const med = mapMedidas(m);
 
     let cpf = null;
-    for (let salt = 0; salt < 8; salt += 1) {
+    for (let salt = 0; salt < 16; salt += 1) {
       const cand = cpfPlaceholderForWebsiteId(wid, salt);
       if (!cand) continue;
       const taken = await pool.query('SELECT id FROM modelos WHERE cpf = $1 LIMIT 1', [cand]);
@@ -185,7 +297,7 @@ async function runImportModelsFromWebsite(pool) {
       chave_pix: '',
       banco_dados: '',
       emite_nf_propria: false,
-      observacoes: `Importado automaticamente do site (${getWebsiteOrigin()}) em ${new Date().toISOString().slice(0, 10)}. Completar CPF, contactos e dados reais.`,
+      observacoes: `Importado automaticamente do site (${origin}) em ${new Date().toISOString().slice(0, 10)}. Completar CPF, contactos e dados reais.`,
       ativo: true,
       data_nascimento: '1990-01-01',
       formas_pagamento: [],
@@ -212,9 +324,13 @@ async function runImportModelsFromWebsite(pool) {
   return {
     imported: imported.length,
     skipped: skipped.length,
+    total_received: totalReceived,
+    list_source: listSource,
+    admin_http_status: adminHttpStatus,
+    public_http_status: publicHttpStatus,
     imported_details: imported,
     errors,
   };
 }
 
-module.exports = { runImportModelsFromWebsite };
+module.exports = { runImportModelsFromWebsite, loadWebsiteModelsList };

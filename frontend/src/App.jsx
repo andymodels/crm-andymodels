@@ -1710,9 +1710,26 @@ function App({ authUser, onLogout = () => {} }) {
       throwIfHtmlOrCannotPost(raw, response.status);
       const data = raw ? JSON.parse(raw) : {};
       if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
-      const errN = Array.isArray(data.errors) ? data.errors.length : 0;
+      const errList = Array.isArray(data.errors) ? data.errors : [];
+      const errN = errList.length;
+      const errPreview = errList
+        .slice(0, 6)
+        .map((e) => {
+          const parts = [e.slug && `slug:${e.slug}`, e.name && String(e.name).slice(0, 40), e.message]
+            .filter(Boolean);
+          return parts.join(' — ') || JSON.stringify(e);
+        })
+        .join(' | ');
       setImportSiteMsg(
-        `Importados: ${data.imported ?? 0}. Já existiam no CRM (ignorados): ${data.skipped ?? 0}.${errN ? ` Avisos/erros: ${errN}.` : ''}`,
+        [
+          data.list_source && `Lista: ${data.list_source}`,
+          data.total_received != null && `No site: ${data.total_received} modelo(s)`,
+          `Importados: ${data.imported ?? 0}`,
+          `Ignorados (já tinham website_model_id): ${data.skipped ?? 0}`,
+          errN > 0 && `Erros (${errN}): ${errPreview}${errN > 6 ? '…' : ''}`,
+        ]
+          .filter(Boolean)
+          .join('. ') + '.',
       );
       const listRes = await fetchWithTimeout(`${API_BASE}/modelos`);
       const listRaw = await listRes.text();
