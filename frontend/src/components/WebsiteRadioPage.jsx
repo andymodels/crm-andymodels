@@ -8,6 +8,28 @@ import {
   xhrPostWithAuth,
 } from '../apiConfig';
 
+let ytIframeApiPromise;
+function loadYoutubeIframeApi() {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (window.YT && window.YT.Player) return Promise.resolve();
+  if (!ytIframeApiPromise) {
+    ytIframeApiPromise = new Promise((resolve) => {
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        if (typeof prev === 'function') prev();
+        resolve();
+      };
+      if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+        const tag = document.createElement('script');
+        tag.src = 'https://www.youtube.com/iframe_api';
+        const first = document.getElementsByTagName('script')[0];
+        first.parentNode.insertBefore(tag, first);
+      }
+    });
+  }
+  return ytIframeApiPromise;
+}
+
 function fmtDur(sec) {
   if (sec == null || !Number.isFinite(Number(sec))) return '—';
   const n = Math.floor(Number(sec));
@@ -92,20 +114,47 @@ function IconTrackNext({ className = 'h-6 w-6' }) {
 }
 
 /**
- * Pré-escuta no CRM (UI sem alterar a lógica de áudio do site): barra visível, seek, faixa anterior/seguinte.
+ * Pré-escuta no CRM: áudio (MP3…) ou YouTube via iframe API (YT.Player), mesmo layout.
  */
 function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
   const audioRef = useRef(null);
+  const ytPlayerRef = useRef(null);
   const [idx, setIdx] = useState(0);
   const [pos, setPos] = useState(0);
   const [dur, setDur] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [ytApiReady, setYtApiReady] = useState(false);
+
+  const ytContainerId = useMemo(() => `crm-radio-yt-${playlistId}`, [playlistId]);
+  const hasAnyYt = useMemo(() => tracks.some((t) => t.youtube_video_id), [tracks]);
+
+  useEffect(() => {
+    if (!hasAnyYt) {
+      setYtApiReady(false);
+      return;
+    }
+    let cancelled = false;
+    loadYoutubeIframeApi().then(() => {
+      if (!cancelled) setYtApiReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasAnyYt]);
 
   useEffect(() => {
     setIdx(0);
     setPos(0);
     setDur(0);
     setPlaying(false);
+    if (ytPlayerRef.current) {
+      try {
+        ytPlayerRef.current.destroy();
+      } catch {
+        /* */
+      }
+      ytPlayerRef.current = null;
+    }
   }, [playlistId]);
 
   useEffect(() => {
@@ -115,38 +164,127 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
 
   const cur = tracks[idx];
   const src = cur?.audio_url;
+  const isYt = Boolean(cur?.youtube_video_id);
 
   useEffect(() => {
-    const a = audioRef.current;
-    if (!a || !src) return;
-    a.src = src;
-    a.load();
-    const onTime = () => setPos(a.currentTime);
-    const onDur = () => {
-      const x = a.duration;
-      setDur(Number.isFinite(x) && x > 0 ? x : 0);
-    };
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
-    const onEnded = () => {
+    if (!cur) return;
+
+    if (!isYt) {
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch {
+          /* */
+        }
+        ytPlayerRef.current = null;
+      }
+      const a = audioRef.current;
+      if (!a || !src) return;
+      setPos(0);
+      setDur(0);
       setPlaying(false);
-      if (tracks.length > 1) setIdx((i) => (i + 1) % tracks.length);
-    };
-    a.addEventListener('timeupdate', onTime);
-    a.addEventListener('loadedmetadata', onDur);
-    a.addEventListener('durationchange', onDur);
-    a.addEventListener('play', onPlay);
-    a.addEventListener('pause', onPause);
-    a.addEventListener('ended', onEnded);
-    return () => {
-      a.removeEventListener('timeupdate', onTime);
-      a.removeEventListener('loadedmetadata', onDur);
-      a.removeEventListener('durationchange', onDur);
-      a.removeEventListener('play', onPlay);
-      a.removeEventListener('pause', onPause);
-      a.removeEventListener('ended', onEnded);
-    };
-  }, [src, tracks.length]);
+      a.src = src;
+      a.load();
+      const onTime = () => setPos(a.currentTime);
+      const onDur = () => {
+        const x = a.duration;
+        setDur(Number.isFinite(x) && x > 0 ? x : 0);
+      };
+      const onPlay = () => setPlaying(true);
+      const onPause = () => setPlaying(false);
+      const onEnded = () => {
+        setPlaying(false);
+        if (tracks.length > 1) setIdx((i) => (i + 1) % tracks.length);
+      };
+      a.addEventListener('timeupdate', onTime);
+      a.addEventListener('loadedmetadata', onDur);
+      a.addEventListener('durationchange', onDur);
+      a.addEventListener('play', onPlay);
+      a.addEventListener('pause', onPause);
+      a.addEventListener('ended', onEnded);
+      return () => {
+        a.removeEventListener('timeupdate', onTime);
+        a.removeEventListener('loadedmetadata', onDur);
+        a.removeEventListener('durationchange', onDur);
+        a.removeEventListener('play', onPlay);
+        a.removeEventListener('pause', onPause);
+        a.removeEventListener('ended', onEnded);
+      };
+    }
+
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+    }
+    return undefined;
+  }, [isYt, src, cur?.id, tracks.length]);
+
+  useEffect(() => {
+    if (!isYt || !cur?.youtube_video_id || !ytApiReady || typeof window === 'undefined' || !window.YT) return;
+
+    const vid = cur.youtube_video_id;
+    setPos(0);
+    setPlaying(false);
+
+    if (ytPlayerRef.current) {
+      try {
+        ytPlayerRef.current.loadVideoById(vid);
+        const d = ytPlayerRef.current.getDuration?.();
+        if (d && Number.isFinite(d) && d > 0) setDur(d);
+      } catch {
+        /* */
+      }
+      return undefined;
+    }
+
+    ytPlayerRef.current = new window.YT.Player(ytContainerId, {
+      videoId: vid,
+      height: '144',
+      width: '256',
+      playerVars: {
+        controls: 0,
+        rel: 0,
+        playsinline: 1,
+        modestbranding: 1,
+      },
+      events: {
+        onReady: (e) => {
+          const d = e.target.getDuration?.();
+          setDur(Number.isFinite(d) && d > 0 ? d : 0);
+          setPos(0);
+        },
+        onStateChange: (e) => {
+          if (e.data === window.YT.PlayerState.PLAYING) setPlaying(true);
+          if (e.data === window.YT.PlayerState.PAUSED) setPlaying(false);
+          if (e.data === window.YT.PlayerState.ENDED) {
+            setPlaying(false);
+            setPos(0);
+            if (tracks.length > 1) setIdx((i) => (i + 1) % tracks.length);
+          }
+        },
+      },
+    });
+
+    return undefined;
+  }, [isYt, cur?.youtube_video_id, ytApiReady, ytContainerId, tracks.length]);
+
+  useEffect(() => {
+    if (!isYt || !playing) return;
+    const t = setInterval(() => {
+      const p = ytPlayerRef.current;
+      if (!p?.getCurrentTime) return;
+      try {
+        setPos(p.getCurrentTime());
+        const d = p.getDuration?.();
+        if (d && Number.isFinite(d) && d > 0) setDur(d);
+      } catch {
+        /* */
+      }
+    }, 250);
+    return () => clearInterval(t);
+  }, [isYt, playing]);
 
   const pct = dur > 0 ? Math.min(1000, Math.round((pos / dur) * 1000)) : 0;
   const art = playlistCoverUrl || (cur ? trackCoverImgSrc(cur) : '');
@@ -161,6 +299,17 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
   };
 
   const togglePlay = () => {
+    if (cur?.youtube_video_id) {
+      const p = ytPlayerRef.current;
+      if (!p?.playVideo) return;
+      try {
+        if (playing) p.pauseVideo();
+        else void p.playVideo();
+      } catch {
+        /* */
+      }
+      return;
+    }
     const a = audioRef.current;
     if (!a) return;
     if (playing) a.pause();
@@ -173,7 +322,8 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
     <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-sm font-semibold text-slate-900">Pré-escuta (CRM)</p>
       <p className="mt-0.5 text-xs text-slate-500">
-        Mesmos ficheiros que o site; a barra e o botão «seguinte» devem corresponder ao player público.
+        MP3 no elemento de áudio; faixas YouTube via iframe API. O JSON público inclui{' '}
+        <span className="font-mono text-[11px]">youtube_video_id</span> para o site.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <div className="radio-cover-frame relative w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14">
@@ -188,6 +338,11 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
           <p className="truncate text-xs text-slate-600">{cur.artist || '—'}</p>
         </div>
       </div>
+      <div
+        id={ytContainerId}
+        className="pointer-events-none fixed left-[-9999px] top-0 h-px w-px overflow-hidden opacity-0"
+        aria-hidden
+      />
       <audio ref={audioRef} preload="metadata" className="hidden" />
       <div className="mt-3 flex items-center gap-2">
         <span className="w-10 shrink-0 text-right text-xs tabular-nums text-slate-600">{fmtDur(pos)}</span>
@@ -199,6 +354,15 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
           value={pct}
           disabled={!dur}
           onChange={(e) => {
+            if (cur?.youtube_video_id) {
+              const p = ytPlayerRef.current;
+              if (!p?.seekTo || !dur) return;
+              const next01 = Number(e.target.value) / 1000;
+              const t = next01 * dur;
+              p.seekTo(t, true);
+              setPos(t);
+              return;
+            }
             const a = audioRef.current;
             if (!a || !dur) return;
             const next01 = Number(e.target.value) / 1000;
@@ -258,6 +422,9 @@ export default function WebsiteRadioPage() {
   const [bulkUploadStatus, setBulkUploadStatus] = useState(null);
   /** Ficheiros MP3 escolhidos — só sobem ao clicar «Enviar músicas». */
   const [pendingAudioFiles, setPendingAudioFiles] = useState([]);
+  const [ytUrl, setYtUrl] = useState('');
+  const [ytTitle, setYtTitle] = useState('');
+  const [ytArtist, setYtArtist] = useState('');
   /** Rascunho local da playlist selecionada — grava com «Guardar alterações». */
   const [editForm, setEditForm] = useState(null);
   /** Evita repor o rascunho ao dar refresh às playlists (perdia edição não guardada). */
@@ -733,6 +900,52 @@ export default function WebsiteRadioPage() {
     setError('');
   };
 
+  const addYoutubeTrack = async () => {
+    if (selectedId == null) return;
+    const url = String(ytUrl || '').trim();
+    if (!url) {
+      setError('Cole o link do YouTube.');
+      return;
+    }
+    const max = radioMeta?.max_tracks_per_playlist ?? 50;
+    if (tracks.length >= max) {
+      setError(`Limite de ${max} faixas por playlist.`);
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setOkMsg('');
+    try {
+      const body = {
+        youtube_url: url,
+        ...(String(ytTitle || '').trim() ? { title: String(ytTitle).trim() } : {}),
+        ...(String(ytArtist || '').trim() ? { artist: String(ytArtist).trim() } : {}),
+      };
+      const r = await fetchWithAuth(
+        `${API_BASE}/radio/playlists/${encodeURIComponent(String(selectedId))}/tracks/youtube`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      const raw = await r.text();
+      throwIfHtmlOrCannotPost(raw, r.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (!r.ok) throw new Error(parseErr(raw, r));
+      setOkMsg(`Faixa YouTube adicionada${data?.youtube_video_id ? ` (${data.youtube_video_id})` : ''}.`);
+      setYtUrl('');
+      setYtTitle('');
+      setYtArtist('');
+      await loadTracks(selectedId);
+      await loadPlaylists();
+    } catch (e) {
+      setError(e?.message ? String(e.message) : 'Erro ao adicionar YouTube.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <header className="border-b border-slate-100 pb-5">
@@ -1032,9 +1245,9 @@ export default function WebsiteRadioPage() {
                       ) : null}
                     </p>
                     <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-500">
-                      Capa por faixa (automática): primeiro ID3 no ficheiro; senão capa oficial (iTunes/Deezer); senão
-                      imagem aleatória listada no bucket B2 (prefixo configurável no servidor; sem repetir a última
-                      escolha para a mesma faixa nesta instância). Sem upload manual.
+                      Faixas com ficheiro: capa automática (ID3 → iTunes/Deezer → pool B2). Faixas só com link YouTube:
+                      capa oficial <span className="font-mono text-[11px]">hqdefault</span> do vídeo; sem upload de
+                      áudio.
                     </p>
                   </div>
 
@@ -1129,6 +1342,55 @@ export default function WebsiteRadioPage() {
                         ) : null}
                       </div>
                     </div>
+                    <div className="mt-4 border-t border-slate-200 pt-4">
+                      <p className="text-center text-sm font-medium text-slate-900">Adicionar do YouTube</p>
+                      <p className="mt-0.5 text-center text-xs text-slate-500">
+                        Link do vídeo (watch, youtu.be ou shorts) — sem ficheiro
+                      </p>
+                      <label className="mx-auto mt-3 block max-w-sm text-left text-xs text-slate-700">
+                        <span className="mb-1 block font-medium text-slate-800">URL do YouTube</span>
+                        <input
+                          type="url"
+                          value={ytUrl}
+                          onChange={(e) => setYtUrl(e.target.value)}
+                          placeholder="https://www.youtube.com/watch?v=…"
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                          disabled={saving}
+                        />
+                      </label>
+                      <div className="mx-auto mt-2 grid max-w-sm gap-2 sm:grid-cols-2">
+                        <label className="block text-xs text-slate-700">
+                          <span className="mb-1 block font-medium text-slate-800">Título (opcional)</span>
+                          <input
+                            type="text"
+                            value={ytTitle}
+                            onChange={(e) => setYtTitle(e.target.value)}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                            disabled={saving}
+                          />
+                        </label>
+                        <label className="block text-xs text-slate-700">
+                          <span className="mb-1 block font-medium text-slate-800">Artista (opcional)</span>
+                          <input
+                            type="text"
+                            value={ytArtist}
+                            onChange={(e) => setYtArtist(e.target.value)}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                            disabled={saving}
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-3 flex justify-center">
+                        <button
+                          type="button"
+                          disabled={saving || !String(ytUrl || '').trim()}
+                          onClick={addYoutubeTrack}
+                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          Adicionar vídeo
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1174,14 +1436,18 @@ export default function WebsiteRadioPage() {
                             {t.artist || '—'} · {fmtDur(t.duration_sec)}
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-3">
-                            <button
-                              type="button"
-                              className="text-xs font-medium text-slate-700 hover:underline"
-                              disabled={saving}
-                              onClick={() => regenerateTrackCover(t)}
-                            >
-                              Nova capa
-                            </button>
+                            {!t.youtube_video_id ? (
+                              <button
+                                type="button"
+                                className="text-xs font-medium text-slate-700 hover:underline"
+                                disabled={saving}
+                                onClick={() => regenerateTrackCover(t)}
+                              >
+                                Nova capa
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-400">Capa: YouTube</span>
+                            )}
                             <button
                               type="button"
                               className="text-xs text-red-600 hover:underline"

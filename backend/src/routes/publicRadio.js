@@ -7,19 +7,29 @@
 const express = require('express');
 const { pool } = require('../config/db');
 const storage = require('../services/storage');
+const youtubeRadio = require('../services/youtubeRadio');
 
 const router = express.Router();
 
 function mapTrackRow(t, playlistMeta) {
-  const url = storage.getPublicUrl(t.audio_storage_path);
+  const audioPath = t.audio_storage_path;
+  const url = audioPath ? storage.getPublicUrl(audioPath) : null;
+  const ytId = t.youtube_url ? youtubeRadio.extractYoutubeVideoId(t.youtube_url) : null;
+  const filename = audioPath
+    ? String(audioPath).split('/').pop() || ''
+    : ytId
+      ? `youtube-${ytId}.yt`
+      : '';
   const modeloNome =
     t.modelo_nome != null && String(t.modelo_nome).trim() !== '' ? String(t.modelo_nome).trim() : null;
   return {
     id: t.id,
     title: t.title,
     artist: t.artist || '',
-    filename: String(t.audio_storage_path || '').split('/').pop() || '',
+    filename,
     url,
+    youtube_url: t.youtube_url != null && String(t.youtube_url).trim() !== '' ? String(t.youtube_url).trim() : null,
+    youtube_video_id: ytId || null,
     cover_url: t.cover_url || null,
     modelo_nome: modeloNome,
     cover_modelo_id: t.cover_modelo_id != null ? Number(t.cover_modelo_id) : null,
@@ -57,7 +67,7 @@ async function sendPublicRadio(req, res, next) {
 
     for (const p of playlists) {
       const { rows: tracks } = await pool.query(
-        `SELECT t.id, t.playlist_id, t.title, t.artist, t.audio_storage_path, t.cover_url, t.cover_modelo_id,
+        `SELECT t.id, t.playlist_id, t.title, t.artist, t.audio_storage_path, t.youtube_url, t.cover_url, t.cover_modelo_id,
                 t.duration_sec, t.sort_order, t.active, m.nome AS modelo_nome
          FROM radio_tracks t
          LEFT JOIN modelos m ON m.id = t.cover_modelo_id
@@ -134,7 +144,7 @@ router.get('/public/radio/tracks-only', async (req, res, next) => {
     const tracks = [];
     for (const p of playlists) {
       const { rows: tr } = await pool.query(
-        `SELECT t.id, t.playlist_id, t.title, t.artist, t.audio_storage_path, t.cover_url, t.cover_modelo_id,
+        `SELECT t.id, t.playlist_id, t.title, t.artist, t.audio_storage_path, t.youtube_url, t.cover_url, t.cover_modelo_id,
                 t.duration_sec, t.sort_order, m.nome AS modelo_nome
          FROM radio_tracks t
          LEFT JOIN modelos m ON m.id = t.cover_modelo_id

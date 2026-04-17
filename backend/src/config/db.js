@@ -955,6 +955,12 @@ const initDb = async () => {
     CREATE INDEX IF NOT EXISTS idx_radio_tracks_cover_modelo ON radio_tracks (playlist_id, cover_modelo_id)
     WHERE cover_modelo_id IS NOT NULL;
   `);
+  await pool.query(`
+    ALTER TABLE radio_tracks ADD COLUMN IF NOT EXISTS youtube_url TEXT;
+  `);
+  await pool.query(`
+    ALTER TABLE radio_tracks ALTER COLUMN audio_storage_path DROP NOT NULL;
+  `);
 };
 
 module.exports = {

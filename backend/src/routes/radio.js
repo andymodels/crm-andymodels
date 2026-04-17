@@ -14,6 +14,7 @@ const storage = require('../services/storage');
 const { radioStorageKey } = require('../services/radioStoragePaths');
 const radioCoverPool = require('../services/radioCoverFromPool');
 const radioExternalCover = require('../services/radioTrackCoverExternal');
+const youtubeRadio = require('../services/youtubeRadio');
 const router = express.Router();
 
 /**
@@ -181,6 +182,74 @@ async function assertNoDuplicateTrackInPlaylist(playlistId, finalTitle, finalArt
   }
 }
 
+async function assertNoDuplicateYoutubeInPlaylist(playlistId, videoId) {
+  const { rows } = await pool.query(
+    `SELECT id, youtube_url FROM radio_tracks WHERE playlist_id = $1 AND youtube_url IS NOT NULL AND TRIM(youtube_url) <> ''`,
+    [playlistId],
+  );
+  for (const r of rows) {
+    const existing = youtubeRadio.extractYoutubeVideoId(r.youtube_url);
+    if (existing && existing === videoId) {
+      const e = new Error('Este vídeo do YouTube já está nesta playlist.');
+      e.code = 'RADIO_DUPLICATE_YOUTUBE';
+      e.statusCode = 409;
+      throw e;
+    }
+  }
+}
+
+function trackRowApiOut(row) {
+  if (!row) return row;
+  const vid = row.youtube_url ? youtubeRadio.extractYoutubeVideoId(row.youtube_url) : null;
+  return {
+    ...row,
+    audio_url: row.audio_storage_path ? storage.getPublicUrl(row.audio_storage_path) : null,
+    youtube_video_id: vid || null,
+  };
+}
+
+/**
+ * Faixa só com link YouTube (sem ficheiro de áudio no storage).
+ */
+async function createTrackFromYoutubeUrl(playlistId, rawUrl, overrides = {}) {
+  const videoId = youtubeRadio.extractYoutubeVideoId(rawUrl);
+  if (!videoId) {
+    const e = new Error(
+      'URL do YouTube inválida. Use um link youtu.be, youtube.com/watch?v=… ou /shorts/…',
+    );
+    e.code = 'RADIO_YOUTUBE_URL_INVALID';
+    e.statusCode = 400;
+    throw e;
+  }
+
+  const finalTitle = String(overrides.title != null ? overrides.title : '').trim().slice(0, 500) || 'YouTube';
+  const finalArtist = String(overrides.artist != null ? overrides.artist : '').trim().slice(0, 500);
+  await assertNoDuplicateYoutubeInPlaylist(playlistId, videoId);
+
+  const youtubeUrlStored = String(rawUrl).trim().slice(0, 2000);
+  const coverUrl = youtubeRadio.youtubeThumbnailHqUrl(videoId);
+  const sortOrder = await nextSortOrder(playlistId);
+
+  const { rows } = await pool.query(
+    `INSERT INTO radio_tracks (
+       playlist_id, title, artist, audio_storage_path, cover_url, cover_modelo_id, youtube_url, duration_sec, sort_order, active, updated_at
+     ) VALUES ($1, $2, $3, NULL, $4, NULL, $5, NULL, $6, TRUE, NOW())
+     RETURNING *`,
+    [playlistId, finalTitle, finalArtist, coverUrl, youtubeUrlStored, sortOrder],
+  );
+  const row = rows[0];
+  logRadioCoverImage('track_insert_youtube', {
+    playlist_id: playlistId,
+    track_id: row.id,
+    cover_source: 'youtube_hqdefault',
+    image_url_received: coverUrl,
+    image_url_saved: row.cover_url || null,
+    image_url_returned: row.cover_url || null,
+    youtube_video_id: videoId,
+  });
+  return row;
+}
+
 /**
  * Grava uma faixa a partir de buffer de áudio; opcionalmente sobrescreve título/artista.
  */
@@ -308,6 +377,7 @@ router.get('/radio/meta', (_req, res) => {
     max_bulk_audio_files: MAX_BULK,
     max_audio_file_bytes: RADIO_MAX_AUDIO_BYTES,
     max_audio_file_mb: Math.floor(RADIO_MAX_AUDIO_BYTES / (1024 * 1024)),
+    youtube_tracks: true,
     /** Faixas: ID3 → iTunes/Deezer (RADIO_COVER_EXTERNAL) → imagens no B2 (RADIO_COVER_IMAGE_POOL + prefixo opcional). Sem upload manual. */
     cover_pipeline: ['id3_embedded', 'external_store', 'image_pool'],
     cover_embedded_first: true,
@@ -539,11 +609,7 @@ router.get('/radio/playlists/:id/tracks', async (req, res, next) => {
       `SELECT * FROM radio_tracks WHERE playlist_id = $1 ORDER BY sort_order ASC, id ASC`,
       [playlistId],
     );
-    const mapped = rows.map((t) => ({
-      ...t,
-      audio_url: storage.getPublicUrl(t.audio_storage_path),
-    }));
-    return res.json(mapped);
+    return res.json(rows.map((t) => trackRowApiOut(t)));
   } catch (e) {
     return next(e);
   }
@@ -569,13 +635,44 @@ router.post('/radio/playlists/:id/tracks', audioUpload.single('audio'), async (r
       artist: req.body?.artist != null ? String(req.body.artist).trim() : undefined,
     };
     const row = await createTrackFromAudioBuffer(playlistId, f.buffer, f.originalname, f.mimetype, overrides);
-    return res.status(201).json({
-      ...row,
-      audio_url: storage.getPublicUrl(row.audio_storage_path),
-    });
+    return res.status(201).json(trackRowApiOut(row));
   } catch (e) {
     if (e && e.statusCode === 409 && e.code === 'RADIO_DUPLICATE_TRACK') {
       return res.status(409).json({ message: e.message, code: e.code });
+    }
+    return next(e);
+  }
+});
+
+router.post('/radio/playlists/:id/tracks/youtube', express.json(), async (req, res, next) => {
+  try {
+    const playlistId = Number(req.params.id);
+    if (!Number.isFinite(playlistId)) return res.status(400).json({ message: 'ID inválido.' });
+    const rawUrl = req.body?.youtube_url != null ? String(req.body.youtube_url) : '';
+    if (!rawUrl.trim()) {
+      return res.status(400).json({ message: 'Indique youtube_url com o link do vídeo.' });
+    }
+
+    const p = await pool.query(`SELECT id FROM radio_playlists WHERE id = $1`, [playlistId]);
+    if (!p.rows.length) return res.status(404).json({ message: 'Playlist não encontrada.' });
+
+    const n = await countTracks(playlistId);
+    if (n >= MAX_TRACKS_PER_PLAYLIST) {
+      return res.status(400).json(playlistFullPayload(n));
+    }
+
+    const overrides = {
+      title: req.body?.title != null ? String(req.body.title).trim() : undefined,
+      artist: req.body?.artist != null ? String(req.body.artist).trim() : undefined,
+    };
+    const row = await createTrackFromYoutubeUrl(playlistId, rawUrl, overrides);
+    return res.status(201).json(trackRowApiOut(row));
+  } catch (e) {
+    if (e && e.statusCode === 409 && e.code === 'RADIO_DUPLICATE_YOUTUBE') {
+      return res.status(409).json({ message: e.message, code: e.code });
+    }
+    if (e && e.statusCode === 400 && e.code === 'RADIO_YOUTUBE_URL_INVALID') {
+      return res.status(400).json({ message: e.message, code: e.code });
     }
     return next(e);
   }
@@ -610,7 +707,7 @@ router.post('/radio/playlists/:id/tracks/bulk', audioUpload.array('audio', MAX_B
       const f = files[i];
       try {
         const row = await createTrackFromAudioBuffer(playlistId, f.buffer, f.originalname, f.mimetype, {});
-        created.push({ ...row, audio_url: storage.getPublicUrl(row.audio_storage_path) });
+        created.push(trackRowApiOut(row));
       } catch (err) {
         errors.push({ file: f.originalname, error: String(err?.message || err) });
       }
@@ -641,8 +738,7 @@ router.patch('/radio/tracks/:trackId', express.json(), async (req, res, next) =>
        WHERE id = $5 RETURNING *`,
       [title, artist, Number.isFinite(sort_order) ? sort_order : 0, active, trackId],
     );
-    const out = rows[0];
-    return res.json({ ...out, audio_url: storage.getPublicUrl(out.audio_storage_path) });
+    return res.json(trackRowApiOut(rows[0]));
   } catch (e) {
     return next(e);
   }
@@ -656,6 +752,16 @@ router.post('/radio/tracks/:trackId/cover/regenerate-model', express.json(), asy
   try {
     const trackId = Number(req.params.trackId);
     if (!Number.isFinite(trackId)) return res.status(400).json({ message: 'ID inválido.' });
+    const curTr = await pool.query(
+      `SELECT youtube_url FROM radio_tracks WHERE id = $1`,
+      [trackId],
+    );
+    const yu = curTr.rows[0]?.youtube_url;
+    if (yu != null && String(yu).trim() !== '') {
+      return res.status(400).json({
+        message: 'Faixas do YouTube usam a capa oficial do vídeo; não é possível gerar capa do pool.',
+      });
+    }
     if (!radioCoverPool.poolCoverEnabled()) {
       return res.status(503).json({ message: 'Pool de capas desligado (RADIO_COVER_IMAGE_POOL).' });
     }
