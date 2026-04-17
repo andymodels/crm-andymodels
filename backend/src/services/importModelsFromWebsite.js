@@ -53,6 +53,74 @@ function parseWebsiteModelNumericId(m) {
   return null;
 }
 
+/** Rótulos de categoria para log (sem filtrar importação). */
+function rawCategoryLabel(m) {
+  const u = unwrapPublicModel(m) || {};
+  const cats = Array.isArray(u.categories) ? u.categories.map((c) => String(c).trim()) : [];
+  const cat = u.category != null ? String(u.category).trim() : '';
+  const g = u.gender != null ? String(u.gender).trim() : '';
+  if (cats.length) return cats.join(', ') || '—';
+  if (cat) return cat;
+  if (g) return g;
+  return '—';
+}
+
+/**
+ * Deteção explícita — NÃO usar String.includes('men') (a palavra "women" contém "men").
+ */
+function isWomenToken(s) {
+  const c = String(s ?? '')
+    .toLowerCase()
+    .trim();
+  if (!c) return false;
+  return (
+    c === 'women' ||
+    c === 'woman' ||
+    c === 'female' ||
+    c === 'feminino' ||
+    c === 'feminina' ||
+    c === 'w' ||
+    c === 'f'
+  );
+}
+
+function isMenToken(s) {
+  const c = String(s ?? '')
+    .toLowerCase()
+    .trim();
+  if (!c) return false;
+  if (isWomenToken(c)) return false;
+  return c === 'men' || c === 'male' || c === 'masculino' || c === 'homem' || c === 'm';
+}
+
+function categoriesToFlags(m) {
+  const u = unwrapPublicModel(m) || {};
+  const cats = Array.isArray(u.categories) ? u.categories.map((c) => String(c).toLowerCase().trim()) : [];
+  const cat = String(u.category || '')
+    .toLowerCase()
+    .trim();
+  const gender = String(u.gender || '')
+    .toLowerCase()
+    .trim();
+  const tokens = [...cats, cat, gender].filter(Boolean);
+  let men = tokens.some(isMenToken);
+  let women = tokens.some(isWomenToken);
+  const creators = tokens.some((t) => t === 'creators' || t === 'creator' || t.includes('creator'));
+  if (!men && !women && tokens.length === 0) {
+    women = true;
+    men = false;
+  } else if (men && women) {
+    /* ambos no payload: manter os dois */
+  } else if (!men && !women) {
+    women = true;
+  }
+  return {
+    catMasculino: men,
+    catFeminino: women,
+    catCreators: creators,
+  };
+}
+
 function cpfPlaceholderForWebsiteId(wid, salt = 0) {
   const n = Number(wid);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -78,23 +146,32 @@ function cpfPlaceholderForWebsiteId(wid, salt = 0) {
   return isValidCPF(out) ? out : null;
 }
 
-function categoriesToFlags(m) {
-  const cats = Array.isArray(m.categories) ? m.categories.map((c) => String(c).toLowerCase()) : [];
-  const cat = String(m.category || '').toLowerCase();
-  const has = (x) => cats.some((c) => c.includes(x)) || cat === x;
-  const men = has('men') || has('masculino');
-  const women = has('women') || has('feminino');
-  return {
-    catMasculino: men,
-    catFeminino: women || (!men && !women),
-    catCreators: has('creators'),
-  };
-}
-
 function unwrapPublicModel(m) {
   if (!m || typeof m !== 'object') return null;
   if (m.model && typeof m.model === 'object') return { ...m, ...m.model };
   return m;
+}
+
+/**
+ * União admin + público por id ou slug (sem filtrar por categoria).
+ */
+function mergeModelLists(adminArr, publicArr) {
+  const map = new Map();
+  const push = (arr) => {
+    for (const raw of arr) {
+      const m = unwrapPublicModel(raw);
+      if (!m || typeof m !== 'object') continue;
+      const wid = parseWebsiteModelNumericId(m);
+      const slug = str(m.slug || m.slug_site);
+      const key =
+        wid != null && wid > 0 ? `id:${wid}` : slug ? `slug:${slug.toLowerCase()}` : null;
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, raw);
+    }
+  };
+  push(adminArr || []);
+  push(publicArr || []);
+  return [...map.values()];
 }
 
 function buildPerfilSite(mRaw, slug) {
@@ -132,14 +209,15 @@ function mapMedidas(mRaw) {
 }
 
 /**
- * Carrega lista de modelos: prioriza admin (ids); se vazio ou indisponível, usa API pública.
+ * Carrega modelos: GET admin + GET público e faz união (evita perder quem só aparece numa lista).
  */
 async function loadWebsiteModelsList() {
   const origin = getWebsiteOrigin();
   const adminUrl = `${origin}/api/admin/models`;
   const publicUrl = `${origin}/api/models`;
 
-  let list = [];
+  let adminList = [];
+  let publicList = [];
   let listSource = 'none';
   let adminHttpStatus = null;
   let publicHttpStatus = null;
@@ -150,29 +228,28 @@ async function loadWebsiteModelsList() {
   if (adminRes.statusCode >= 200 && adminRes.statusCode < 300 && adminRes.raw && String(adminRes.raw).trim()) {
     try {
       const data = JSON.parse(adminRes.raw);
-      list = extractModelsArray(data);
-      if (list.length > 0) {
-        listSource = 'admin';
-      }
+      adminList = extractModelsArray(data);
     } catch (e) {
       parseNote = `Resposta admin nao e JSON: ${e.message}`;
     }
   }
 
-  if (list.length === 0) {
-    const pubRes = await fetchWebsiteJson(publicUrl);
-    publicHttpStatus = pubRes.statusCode;
-    if (pubRes.statusCode >= 200 && pubRes.statusCode < 300 && pubRes.raw && String(pubRes.raw).trim()) {
-      try {
-        const data = JSON.parse(pubRes.raw);
-        list = extractModelsArray(data);
-        if (list.length > 0) {
-          listSource = 'public';
-        }
-      } catch (e) {
-        parseNote = parseNote || `Resposta publica nao e JSON: ${e.message}`;
-      }
+  const pubRes = await fetchWebsiteJson(publicUrl);
+  publicHttpStatus = pubRes.statusCode;
+  if (pubRes.statusCode >= 200 && pubRes.statusCode < 300 && pubRes.raw && String(pubRes.raw).trim()) {
+    try {
+      const data = JSON.parse(pubRes.raw);
+      publicList = extractModelsArray(data);
+    } catch (e) {
+      parseNote = parseNote || `Resposta publica nao e JSON: ${e.message}`;
     }
+  }
+
+  const list = mergeModelLists(adminList, publicList);
+  if (list.length > 0) {
+    if (adminList.length > 0 && publicList.length > 0) listSource = 'admin+public';
+    else if (adminList.length > 0) listSource = 'admin';
+    else listSource = 'public';
   }
 
   return {
@@ -180,6 +257,8 @@ async function loadWebsiteModelsList() {
     listSource,
     adminHttpStatus,
     publicHttpStatus,
+    admin_list_length: adminList.length,
+    public_list_length: publicList.length,
     parseNote,
     origin,
   };
@@ -194,6 +273,8 @@ async function runImportModelsFromWebsite(pool) {
     listSource,
     adminHttpStatus,
     publicHttpStatus,
+    admin_list_length: adminListLength,
+    public_list_length: publicListLength,
     parseNote,
     origin,
   } = await loadWebsiteModelsList();
@@ -202,6 +283,17 @@ async function runImportModelsFromWebsite(pool) {
   const imported = [];
   const skipped = [];
   const errors = [];
+
+  console.log(
+    '[import-site] TOTAL RECEBIDO:',
+    totalReceived,
+    '| admin raw:',
+    adminListLength,
+    '| public raw:',
+    publicListLength,
+    '| fonte:',
+    listSource,
+  );
 
   if (totalReceived === 0) {
     const hint = [
@@ -225,6 +317,8 @@ async function runImportModelsFromWebsite(pool) {
       public_http_status: publicHttpStatus,
       imported_details: [],
       errors,
+      admin_list_length: adminListLength,
+      public_list_length: publicListLength,
     };
   }
 
@@ -260,12 +354,16 @@ async function runImportModelsFromWebsite(pool) {
     const dup = await pool.query('SELECT id FROM modelos WHERE website_model_id = $1 LIMIT 1', [wid]);
     if (dup.rows.length > 0) {
       skipped.push(wid);
+      console.log('[import-site] IGNORADO (ja no CRM):', str(m.name || m.nome) || slug, 'id=', wid);
       continue;
     }
 
     const nome = str(m.name || m.nome) || slug || `Modelo #${wid}`;
+    const catLabel = rawCategoryLabel(item);
+    console.log('[import-site] IMPORTANDO:', nome, 'id=', wid, 'categoria=', catLabel);
+
     const flags = categoriesToFlags(m);
-    const sexo = flags.catMasculino ? 'Masculino' : 'Feminino';
+    const sexo = flags.catMasculino && !flags.catFeminino ? 'Masculino' : 'Feminino';
     const perfilSite = buildPerfilSite(m, slug);
     const med = mapMedidas(m);
 
@@ -315,10 +413,18 @@ async function runImportModelsFromWebsite(pool) {
     try {
       const row = await insertModeloRow(pool, body);
       imported.push({ id: row.id, website_model_id: wid, nome });
+      console.log('[import-site] INSERIDO CRM id CRM=', row.id, 'website_model_id=', wid, nome);
     } catch (e) {
       const msg = e.code === '23505' ? 'CPF ou dado unico duplicado.' : e.message || String(e);
       errors.push({ website_model_id: wid, slug, message: msg });
+      console.warn('[import-site] ERRO ao inserir:', wid, nome, msg);
     }
+  }
+
+  if (imported.length === 0 && totalReceived > 0) {
+    errors.push({
+      message: `Nenhum modelo novo foi inserido. Recebidos do site: ${totalReceived}. Ignorados (website_model_id ja existente): ${skipped.length}. Verifique erros acima.`,
+    });
   }
 
   return {
@@ -328,6 +434,8 @@ async function runImportModelsFromWebsite(pool) {
     list_source: listSource,
     admin_http_status: adminHttpStatus,
     public_http_status: publicHttpStatus,
+    admin_list_length: adminListLength,
+    public_list_length: publicListLength,
     imported_details: imported,
     errors,
   };
