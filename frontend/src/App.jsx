@@ -628,6 +628,8 @@ function App({ authUser, onLogout = () => {} }) {
   const [error, setError] = useState('');
   /** Erro ao carregar a lista (GET); separado para não apagar mensagens do formulário quando o GET termina depois. */
   const [cadastroListError, setCadastroListError] = useState('');
+  const [importSiteBusy, setImportSiteBusy] = useState(false);
+  const [importSiteMsg, setImportSiteMsg] = useState('');
   const [cadastroSaving, setCadastroSaving] = useState(false);
   /** Cadastros: `entrada` = painel busca + últimos 10; `formulario` = ficha + lista completa (comportamento anterior). */
   const [cadastrosSubView, setCadastrosSubView] = useState('entrada');
@@ -1687,6 +1689,45 @@ function App({ authUser, onLogout = () => {} }) {
     setForm(cadastroConfig[tab].form);
     setError('');
     setCadastrosSubView('formulario');
+  };
+
+  const importarModelosDoSite = async () => {
+    if (
+      !window.confirm(
+        'Importar modelos a partir do site (GET /api/models)? Entradas com o mesmo ID no site (website_model_id) já registadas no CRM serão ignoradas. CPF e contactos serão placeholders até completar a ficha.',
+      )
+    ) {
+      return;
+    }
+    setImportSiteMsg('');
+    setImportSiteBusy(true);
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/modelos/import-from-website`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const raw = await response.text();
+      throwIfHtmlOrCannotPost(raw, response.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+      const errN = Array.isArray(data.errors) ? data.errors.length : 0;
+      setImportSiteMsg(
+        `Importados: ${data.imported ?? 0}. Já existiam no CRM (ignorados): ${data.skipped ?? 0}.${errN ? ` Avisos/erros: ${errN}.` : ''}`,
+      );
+      const listRes = await fetchWithTimeout(`${API_BASE}/modelos`);
+      const listRaw = await listRes.text();
+      throwIfHtmlOrCannotPost(listRaw, listRes.status);
+      if (listRes.ok) {
+        const listData = listRaw ? JSON.parse(listRaw) : [];
+        if (Array.isArray(listData)) setItems(listData);
+      }
+    } catch (e) {
+      setImportSiteMsg(
+        e?.name === 'AbortError' ? 'Servidor não respondeu.' : e?.message || 'Erro ao importar do site.',
+      );
+    } finally {
+      setImportSiteBusy(false);
+    }
   };
 
   const handleDelete = async (id) => {
@@ -4182,18 +4223,35 @@ function App({ authUser, onLogout = () => {} }) {
                     {CADASTRO_PAINEL_BUSCA_DICA[tab] || ''}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm"
-                  style={{ backgroundColor: BRAND_ORANGE }}
-                  onClick={iniciarNovoCadastro}
-                >
-                  {CADASTRO_PAINEL_BOTAO_NOVO[tab] || 'Criar novo cadastro'}
-                </button>
+                <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
+                  {tab === 'modelos' && (
+                    <button
+                      type="button"
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                      onClick={importarModelosDoSite}
+                      disabled={importSiteBusy}
+                    >
+                      {importSiteBusy ? 'A importar…' : 'Importar do site'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={iniciarNovoCadastro}
+                  >
+                    {CADASTRO_PAINEL_BOTAO_NOVO[tab] || 'Criar novo cadastro'}
+                  </button>
+                </div>
               </div>
               {cadastroListError ? (
                 <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
                   {cadastroListError}
+                </p>
+              ) : null}
+              {tab === 'modelos' && importSiteMsg ? (
+                <p className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                  {importSiteMsg}
                 </p>
               ) : null}
               <h4 className="mb-2 text-sm font-semibold text-slate-800">Últimos cadastros (até 10)</h4>

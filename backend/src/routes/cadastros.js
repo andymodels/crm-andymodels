@@ -20,6 +20,7 @@ const {
   forwardMultipartModelToWebsite,
   sendWebsiteAdminProxyResponse,
 } = require('../services/websiteHttpClient');
+const { runImportModelsFromWebsite } = require('../services/importModelsFromWebsite');
 
 const router = express.Router();
 
@@ -564,6 +565,23 @@ router.post(
     }
   },
 );
+
+/**
+ * POST /api/modelos/import-from-website
+ * Lista GET {WEBSITE_ORIGIN}/api/models e cria linhas em `modelos` para ids ainda inexistentes (website_model_id).
+ */
+router.post('/modelos/import-from-website', async (req, res, next) => {
+  try {
+    const result = await runImportModelsFromWebsite(pool);
+    return res.json(result);
+  } catch (e) {
+    const code = e.statusCode && Number(e.statusCode) >= 400 ? Number(e.statusCode) : 502;
+    if (e.statusCode) {
+      return res.status(code).json({ message: e.message || 'Falha ao importar do site.' });
+    }
+    return next(e);
+  }
+});
 
 makeCrudRoutes({
   path: 'clientes',
