@@ -206,7 +206,9 @@ const makeCrudRoutes = ({
     try {
       const result = await pool.query(`SELECT * FROM ${table} ORDER BY id DESC`);
       if (table === 'modelos') {
-        res.json(result.rows.map(mapModeloRowFotoForApi));
+        const rows = result.rows.map(mapModeloRowFotoForApi);
+        console.log('[cadastros] GET /api/modelos →', rows.length, 'linhas (tabela modelos, sem filtro)');
+        res.json(rows);
       } else {
         res.json(result.rows);
       }

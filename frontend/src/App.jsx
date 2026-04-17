@@ -668,8 +668,9 @@ function App({ authUser, onLogout = () => {} }) {
   const [osError, setOsError] = useState('');
   const [osDraft, setOsDraft] = useState(null);
   const [modelosList, setModelosList] = useState([]);
+  /** Orçamento / extrato: todos os registros de GET /api/modelos (tabela `modelos`), sem filtrar por ativo/CPF/origem. */
   const modelosParaSelecao = useMemo(
-    () => modelosList.filter((m) => Boolean(m.ativo)),
+    () => (Array.isArray(modelosList) ? modelosList : []),
     [modelosList],
   );
   const [bookersList, setBookersList] = useState([]);
@@ -975,12 +976,18 @@ function App({ authUser, onLogout = () => {} }) {
     if (module !== 'orcamentos') return;
     (async () => {
       try {
+        const opts = { credentials: 'include' };
         const [m, bookRes, parRes] = await Promise.all([
-          fetch(`${API_BASE}/modelos`),
-          fetch(`${API_BASE}/bookers`),
-          fetch(`${API_BASE}/parceiros`),
+          fetch(`${API_BASE}/modelos`, opts),
+          fetch(`${API_BASE}/bookers`, opts),
+          fetch(`${API_BASE}/parceiros`, opts),
         ]);
-        if (m.ok) setModelosList(await m.json());
+        if (m.ok) {
+          const arr = await m.json();
+          setModelosList(Array.isArray(arr) ? arr : []);
+        } else {
+          setModelosList([]);
+        }
         if (bookRes.ok) setBookersList(await bookRes.json());
         if (parRes.ok) setParceirosList(await parRes.json());
       } catch {
