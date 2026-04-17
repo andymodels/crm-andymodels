@@ -164,7 +164,6 @@ export function buildCrmModeloApiBody(form, crmExtra, apiMediaSnapshot, mergeFro
     public_info: String(form.public_info ?? ''),
     slug_site: String(form.slug_site ?? ''),
     instagram: String(form.instagram ?? ''),
-    apiMedia: Array.isArray(apiMediaSnapshot) ? apiMediaSnapshot : [],
   };
 
   const cpfDigits = onlyDigits(form.cpf);

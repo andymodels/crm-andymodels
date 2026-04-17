@@ -824,8 +824,28 @@ export default function WebsiteModeloEditorPage({
         setCrmLoadedRow(row);
         setForm(mergeCrmRowIntoWebsiteForm(createInitialForm(), row));
         setCrmExtra(crmRowToCrmExtra(row));
-        setApiMedia(apiMediaFromModeloRow(row));
-        setWebsiteModelId(row.website_model_id != null ? Number(row.website_model_id) : null);
+        const widLoad = row.website_model_id != null ? Number(row.website_model_id) : null;
+        let media = apiMediaFromModeloRow(row);
+        if (widLoad != null && !Number.isNaN(widLoad) && widLoad > 0) {
+          try {
+            const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${widLoad}`);
+            const rawAdm = await rAdm.text();
+            throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
+            let adm = null;
+            try {
+              adm = rawAdm ? JSON.parse(rawAdm) : null;
+            } catch {
+              adm = null;
+            }
+            if (rAdm.ok && adm && typeof adm === 'object' && Array.isArray(adm.media)) {
+              media = adm.media;
+            }
+          } catch {
+            /* mantém media do CRM */
+          }
+        }
+        setApiMedia(Array.isArray(media) ? media : []);
+        setWebsiteModelId(widLoad != null && !Number.isNaN(widLoad) ? widLoad : null);
         setLoadError('');
       } catch (e) {
         if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
@@ -1160,6 +1180,29 @@ export default function WebsiteModeloEditorPage({
           return data;
         };
 
+        const parseJsonSafeLocal = (raw) => {
+          try {
+            return raw ? JSON.parse(raw) : null;
+          } catch {
+            return null;
+          }
+        };
+
+        const loadCrmWebsiteMediaFallback = async (siteModelId, dataPayload) => {
+          let media = dataPayload?.media ?? dataPayload?.model?.media;
+          if (Array.isArray(media) && media.length > 0) return media;
+          if (siteModelId != null && !Number.isNaN(Number(siteModelId))) {
+            const rAdm = await fetchWithAuth(`${API_BASE}/admin/models/${siteModelId}`, FETCH_UPLOAD);
+            const rawAdm = await rAdm.text();
+            throwIfHtmlOrCannotPost(rawAdm, rAdm.status);
+            const adm = parseJsonSafeLocal(rawAdm) || {};
+            if (rAdm.ok && Array.isArray(adm.media) && adm.media.length > 0) {
+              return adm.media;
+            }
+          }
+          return null;
+        };
+
         let latestRow = crmLoadedRow;
         let workingId = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
 
@@ -1170,7 +1213,7 @@ export default function WebsiteModeloEditorPage({
           let done = 0;
 
           if (workingId == null) {
-            const createBody = buildCrmModeloApiBody(form, crmExtra, [...apiMedia], crmLoadedRow);
+            const createBody = buildCrmModeloApiBody(form, crmExtra, [], crmLoadedRow);
             if (createBody.perfil_site && typeof createBody.perfil_site === 'object') {
               delete createBody.perfil_site.apiMedia;
             }
@@ -1182,9 +1225,49 @@ export default function WebsiteModeloEditorPage({
             });
             const rawCreate = await rCreate.text();
             latestRow = parseCrmJson(rawCreate, rCreate);
+            if (latestRow?.website_sync_warning) {
+              console.warn('[CRM]', latestRow.website_sync_warning);
+            }
             workingId = Number(latestRow?.id);
             if (workingId == null || Number.isNaN(workingId)) {
               throw new Error('O servidor não devolveu o ID do novo modelo.');
+            }
+          }
+
+          let widSync =
+            latestRow?.website_model_id != null && !Number.isNaN(Number(latestRow.website_model_id))
+              ? Number(latestRow.website_model_id)
+              : null;
+          if (widSync == null || widSync <= 0) {
+            const rGet = await fetchWithAuth(`${API_BASE}/modelos/${workingId}`);
+            const rawGet = await rGet.text();
+            latestRow = parseCrmJson(rawGet, rGet);
+            widSync =
+              latestRow?.website_model_id != null && !Number.isNaN(Number(latestRow.website_model_id))
+                ? Number(latestRow.website_model_id)
+                : null;
+          }
+          if (widSync == null || widSync <= 0) {
+            throw new Error(
+              'Não há ID do modelo no site (website_model_id). Verifique WEBSITE_ADMIN_TOKEN no backend do CRM e guarde a ficha sem fotos primeiro.',
+            );
+          }
+
+          const putBase = formToWebsiteModelPut(form);
+          let currentMedia = [...apiMedia].filter(
+            (it) =>
+              it &&
+              typeof it === 'object' &&
+              String(it.url || '').trim() &&
+              !String(it.url).startsWith('data:'),
+          );
+          if (currentMedia.length === 0) {
+            const rAdm0 = await fetchWithAuth(`${API_BASE}/admin/models/${widSync}`, FETCH_UPLOAD);
+            const rawAdm0 = await rAdm0.text();
+            throwIfHtmlOrCannotPost(rawAdm0, rAdm0.status);
+            const adm0 = parseJsonSafeLocal(rawAdm0) || {};
+            if (rAdm0.ok && Array.isArray(adm0.media)) {
+              currentMedia = adm0.media;
             }
           }
 
@@ -1192,17 +1275,31 @@ export default function WebsiteModeloEditorPage({
             const batch = batches[bi];
             setUploadProgress(`${done} de ${total} imagens enviadas`);
             const fd = new FormData();
-            fd.append('polaroids', JSON.stringify(batch.map((item) => Boolean(item.polaroid))));
+            const bodySlice = { ...putBase, ordered_images: JSON.stringify(currentMedia) };
+            appendModelFieldsToFormData(fd, bodySlice);
             batch.forEach((item) => {
               fd.append('photos', item.file, item.file.name || 'photo.jpg');
             });
-            const rUp = await fetchWithAuth(`${API_BASE}/modelos/${workingId}/galeria-append`, {
-              method: 'POST',
+            const rUp = await fetchWithAuth(`${API_BASE}/admin/models/${widSync}`, {
+              method: 'PUT',
               body: fd,
               ...FETCH_UPLOAD,
             });
             const rawUp = await rUp.text();
-            latestRow = parseCrmJson(rawUp, rUp);
+            throwIfHtmlOrCannotPost(rawUp, rUp.status);
+            const dataUp = parseJsonSafeLocal(rawUp) || {};
+            if (!rUp.ok) {
+              const msg = extractApiErrorMessage(dataUp) || `HTTP ${rUp.status}`;
+              throw new Error(msg);
+            }
+            const nextMedia = await loadCrmWebsiteMediaFallback(widSync, dataUp);
+            if (!nextMedia || nextMedia.length === 0) {
+              throw new Error(
+                'Não foi possível atualizar a pré-visualização da galeria entre lotes. Recarregue a página.',
+              );
+            }
+            currentMedia = nextMedia;
+            setApiMedia(nextMedia);
             done += batch.length;
             setUploadProgress(`${done} de ${total} imagens enviadas`);
             if (bi + 1 < batches.length) await delay(GALLERY_BATCH_DELAY_MS);
@@ -1211,17 +1308,9 @@ export default function WebsiteModeloEditorPage({
           setGalleryUploadBusy(false);
         }
 
-        const mergedApiMedia =
-          pendingImageLocals.length > 0 ? apiMediaFromModeloRow(latestRow) : [...apiMedia];
-        const body = buildCrmModeloApiBody(form, crmExtra, mergedApiMedia, latestRow || crmLoadedRow);
+        const body = buildCrmModeloApiBody(form, crmExtra, [], latestRow || crmLoadedRow);
         if (body.perfil_site && typeof body.perfil_site === 'object') {
           delete body.perfil_site.apiMedia;
-        }
-        const willPut = workingId != null;
-        /** PUT: nunca reenviar galeria (evita 502); o servidor faz merge de `apiMedia` existente. POST novo sem ficheiros: repõe só metadados pequenos (URLs, ordem). */
-        if (!willPut && pendingImageLocals.length === 0) {
-          if (!body.perfil_site || typeof body.perfil_site !== 'object') body.perfil_site = {};
-          body.perfil_site.apiMedia = Array.isArray(mergedApiMedia) ? mergedApiMedia : [];
         }
         const url = workingId != null ? `${API_BASE}/modelos/${workingId}` : `${API_BASE}/modelos`;
         const method = workingId != null ? 'PUT' : 'POST';
@@ -1234,7 +1323,27 @@ export default function WebsiteModeloEditorPage({
         const raw = await r.text();
         const data = parseCrmJson(raw, r);
         setCrmLoadedRow(data);
-        setApiMedia(apiMediaFromModeloRow(data));
+        const widForGallery =
+          data?.website_model_id != null && !Number.isNaN(Number(data.website_model_id))
+            ? Number(data.website_model_id)
+            : null;
+        if (widForGallery != null && widForGallery > 0) {
+          try {
+            const rM = await fetchWithAuth(`${API_BASE}/admin/models/${widForGallery}`, FETCH_UPLOAD);
+            const rawM = await rM.text();
+            throwIfHtmlOrCannotPost(rawM, rM.status);
+            const adm = parseJsonSafeLocal(rawM) || {};
+            if (rM.ok && Array.isArray(adm.media)) {
+              setApiMedia(adm.media);
+            } else {
+              setApiMedia(apiMediaFromModeloRow(data));
+            }
+          } catch {
+            setApiMedia(apiMediaFromModeloRow(data));
+          }
+        } else {
+          setApiMedia(apiMediaFromModeloRow(data));
+        }
         setLocalMediaItems((prev) => {
           prev.forEach((m) => {
             if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);

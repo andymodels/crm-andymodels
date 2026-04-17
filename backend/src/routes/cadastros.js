@@ -14,6 +14,12 @@ const {
   replaceModeloFotoPerfil,
   removeStoredModeloFotoIfAny,
 } = require('../services/modeloFotoPerfil');
+const { syncWebsiteModelIdIntoRow } = require('../services/websiteModelSync');
+const {
+  getWebsiteOrigin,
+  forwardMultipartModelToWebsite,
+  sendWebsiteAdminProxyResponse,
+} = require('../services/websiteHttpClient');
 
 const router = express.Router();
 
@@ -256,8 +262,23 @@ const makeCrudRoutes = ({
       }
 
       if (table === 'modelos') {
+        if (body.perfil_site && typeof body.perfil_site === 'object') {
+          delete body.perfil_site.apiMedia;
+        }
         const result = await insertModeloRow(pool, body);
-        return res.status(201).json(mapModeloRowFotoForApi(result));
+        let outRow = result;
+        let websiteSyncWarning = null;
+        try {
+          const sync = await syncWebsiteModelIdIntoRow(pool, result);
+          outRow = sync.row;
+          if (sync.error) websiteSyncWarning = sync.error;
+        } catch (e) {
+          console.warn('[cadastros] sync website_model_id apos POST modelos:', e.message);
+          websiteSyncWarning = e.message || 'Falha ao sincronizar com o site.';
+        }
+        const payload = mapModeloRowFotoForApi(outRow);
+        if (websiteSyncWarning) payload.website_sync_warning = websiteSyncWarning;
+        return res.status(201).json(payload);
       }
 
       stringifyJsonbColumns(body);
@@ -340,12 +361,7 @@ const makeCrudRoutes = ({
         return res.status(400).json({ message: 'ID invalido.' });
       }
 
-      if (
-        table === 'modelos' &&
-        body.perfil_site &&
-        typeof body.perfil_site === 'object' &&
-        !Object.prototype.hasOwnProperty.call(body.perfil_site, 'apiMedia')
-      ) {
+      if (table === 'modelos' && body.perfil_site && typeof body.perfil_site === 'object') {
         try {
           const prevQ = await pool.query('SELECT perfil_site FROM modelos WHERE id = $1', [id]);
           const prevRow = prevQ.rows[0];
@@ -358,8 +374,8 @@ const makeCrudRoutes = ({
             }
           }
           if (!prevP || typeof prevP !== 'object') prevP = {};
-          const prevMedia = Array.isArray(prevP.apiMedia) ? prevP.apiMedia : [];
-          body.perfil_site = { ...prevP, ...body.perfil_site, apiMedia: prevMedia };
+          body.perfil_site = { ...prevP, ...body.perfil_site };
+          delete body.perfil_site.apiMedia;
         } catch {
           /* mantém body */
         }
@@ -407,7 +423,21 @@ const makeCrudRoutes = ({
       }
 
       if (table === 'modelos') {
-        return res.json(mapModeloRowFotoForApi(result.rows[0]));
+        const stripQ = await pool.query(
+          `UPDATE modelos SET perfil_site = (COALESCE(perfil_site::jsonb, '{}'::jsonb) - 'apiMedia'), updated_at = NOW() WHERE id = $1 RETURNING *`,
+          [id],
+        );
+        let out = stripQ.rows[0] || result.rows[0];
+        const wid = out.website_model_id != null ? Number(out.website_model_id) : NaN;
+        if (Number.isNaN(wid) || wid <= 0) {
+          try {
+            const sync = await syncWebsiteModelIdIntoRow(pool, out);
+            out = sync.row;
+          } catch (e) {
+            console.warn('[cadastros] sync website_model_id apos PUT modelos:', e.message);
+          }
+        }
+        return res.json(mapModeloRowFotoForApi(out));
       }
       return res.json(result.rows[0]);
     } catch (error) {
@@ -490,8 +520,8 @@ router.get('/modelos/:id', async (req, res, next) => {
 });
 
 /**
- * POST /api/modelos/:id/galeria-append — acrescenta imagens à galeria em `perfil_site.apiMedia` (multipart, campo `photos`).
- * Vários pedidos em sequência evitam um único JSON gigante no PUT /modelos/:id.
+ * POST /api/modelos/:id/galeria-append — repassa multipart ao admin do site (PUT …/api/admin/models/:wid).
+ * A galeria deixa de ser persistida em base64 no CRM; o site grava ficheiros (ex.: B2).
  */
 router.post(
   '/modelos/:id/galeria-append',
@@ -511,44 +541,24 @@ router.post(
         return res.status(404).json({ message: 'Nao encontrado.' });
       }
       const row = r.rows[0];
-      let perfil = row.perfil_site;
-      if (typeof perfil === 'string') {
-        try {
-          perfil = perfil ? JSON.parse(perfil) : {};
-        } catch {
-          perfil = {};
-        }
-      }
-      if (!perfil || typeof perfil !== 'object') perfil = {};
-      const apiMedia = Array.isArray(perfil.apiMedia) ? [...perfil.apiMedia] : [];
-      let polaroids = [];
-      const rawPol = req.body && req.body.polaroids;
-      if (typeof rawPol === 'string' && rawPol.trim()) {
-        try {
-          const parsed = JSON.parse(rawPol);
-          polaroids = Array.isArray(parsed) ? parsed.map((x) => Boolean(x)) : [];
-        } catch {
-          polaroids = [];
-        }
+      const wid = row.website_model_id != null ? Number(row.website_model_id) : NaN;
+      if (Number.isNaN(wid) || wid <= 0) {
+        return res.status(400).json({
+          message:
+            'Este modelo ainda nao tem ID no site (website_model_id). Guarde a ficha no CRM para sincronizar antes de enviar fotos.',
+        });
       }
       for (let i = 0; i < files.length; i += 1) {
         const f = files[i];
         if (!f || !f.buffer) continue;
         const mime = String(f.mimetype || 'image/jpeg').split(';')[0] || 'image/jpeg';
         if (!mime.startsWith('image/')) {
-          return res.status(400).json({ message: 'Apenas imagens sao aceites em galeria-append.' });
+          return res.status(400).json({ message: 'Apenas imagens sao aceites na galeria.' });
         }
-        const b64 = f.buffer.toString('base64');
-        const dataUrl = `data:${mime};base64,${b64}`;
-        const polaroid = polaroids.length > i ? polaroids[i] : false;
-        apiMedia.push({ type: 'image', url: dataUrl, thumb: dataUrl, polaroid });
       }
-      const nextPerfil = { ...perfil, apiMedia };
-      const result2 = await pool.query(
-        `UPDATE modelos SET perfil_site = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-        [nextPerfil, id],
-      );
-      return res.json(mapModeloRowFotoForApi(result2.rows[0]));
+      const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(String(wid))}`;
+      const { statusCode, raw } = await forwardMultipartModelToWebsite('PUT', url, req);
+      return sendWebsiteAdminProxyResponse(res, statusCode, raw, url);
     } catch (error) {
       next(error);
     }
