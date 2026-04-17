@@ -70,7 +70,45 @@ function youtubeThumbnailHqUrl(videoId) {
   return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 }
 
+/**
+ * Metadados públicos via oEmbed (sem API key): título do vídeo e nome do canal (`author_name`).
+ * Vídeos privados / restritos podem falhar — nesse caso devolve null.
+ *
+ * @param {string} videoId
+ * @returns {Promise<{ title: string, author_name: string } | null>}
+ */
+async function fetchYoutubeOEmbedMeta(videoId) {
+  const id = String(videoId || '').trim();
+  if (!id) return null;
+  const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+  const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`;
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 10000);
+  try {
+    const r = await fetch(oembedUrl, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'AndyModels-CRM-Radio/1.0' },
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const title = data.title != null ? String(data.title).trim() : '';
+    const authorName = data.author_name != null ? String(data.author_name).trim() : '';
+    if (!title && !authorName) return null;
+    return {
+      title: title || '',
+      author_name: authorName || '',
+    };
+  } catch (e) {
+    console.warn('[radio/youtube] oEmbed:', e?.message || e);
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 module.exports = {
   extractYoutubeVideoId,
   youtubeThumbnailHqUrl,
+  fetchYoutubeOEmbedMeta,
 };

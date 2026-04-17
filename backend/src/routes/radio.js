@@ -222,8 +222,17 @@ async function createTrackFromYoutubeUrl(playlistId, rawUrl, overrides = {}) {
     throw e;
   }
 
-  const finalTitle = String(overrides.title != null ? overrides.title : '').trim().slice(0, 500) || 'YouTube';
-  const finalArtist = String(overrides.artist != null ? overrides.artist : '').trim().slice(0, 500);
+  const userTitle = overrides.title != null ? String(overrides.title).trim() : '';
+  const userArtist = overrides.artist != null ? String(overrides.artist).trim() : '';
+
+  let oembed = null;
+  if (!userTitle || !userArtist) {
+    oembed = await youtubeRadio.fetchYoutubeOEmbedMeta(videoId);
+  }
+
+  const finalTitle = (userTitle || oembed?.title || '').trim().slice(0, 500) || 'YouTube';
+  const finalArtist = (userArtist || oembed?.author_name || '').trim().slice(0, 500);
+
   await assertNoDuplicateYoutubeInPlaylist(playlistId, videoId);
 
   const youtubeUrlStored = String(rawUrl).trim().slice(0, 2000);

@@ -1345,7 +1345,8 @@ export default function WebsiteRadioPage() {
                     <div className="mt-4 border-t border-slate-200 pt-4">
                       <p className="text-center text-sm font-medium text-slate-900">Adicionar do YouTube</p>
                       <p className="mt-0.5 text-center text-xs text-slate-500">
-                        Link do vídeo (watch, youtu.be ou shorts) — sem ficheiro
+                        Link do vídeo (watch, youtu.be ou shorts) — sem ficheiro. Se não preencher título/artista, o
+                        servidor obtém o nome do vídeo e do canal no YouTube (oEmbed).
                       </p>
                       <label className="mx-auto mt-3 block max-w-sm text-left text-xs text-slate-700">
                         <span className="mb-1 block font-medium text-slate-800">URL do YouTube</span>
