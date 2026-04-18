@@ -337,7 +337,13 @@ function RadioCrmPreviewPlayer({ tracks, playlistCoverUrl, playlistId }) {
         <span className="font-mono text-[11px]">youtube_video_id</span> para o site.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <div className="radio-cover-frame relative w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14">
+        <div
+          className={`radio-cover-frame relative shrink-0 rounded-lg bg-slate-100 ${
+            cur?.youtube_video_id
+              ? 'radio-cover-frame--youtube w-[107px] sm:w-[124px]'
+              : 'w-12 sm:w-14'
+          }`}
+        >
           {art ? (
             <img
               src={art}
@@ -1434,7 +1440,13 @@ export default function WebsiteRadioPage() {
                           {index + 1}
                         </span>
                         {t.cover_url ? (
-                          <div className="radio-cover-frame relative w-12 shrink-0 rounded-lg bg-slate-100 sm:w-14">
+                          <div
+                            className={`radio-cover-frame relative shrink-0 rounded-lg bg-slate-100 ${
+                              t.youtube_video_id
+                                ? 'radio-cover-frame--youtube w-[107px] sm:w-[124px]'
+                                : 'w-12 sm:w-14'
+                            }`}
+                          >
                             <img
                               key={`track-cover-${t.id}-${t.cover_url}-${String(t.updated_at ?? '')}`}
                               src={trackCoverImgSrc(t)}
