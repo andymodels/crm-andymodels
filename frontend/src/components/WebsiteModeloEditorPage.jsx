@@ -18,6 +18,7 @@ import {
   crmRowToCrmExtra,
   mergeCrmRowIntoWebsiteForm,
 } from '../utils/modeloCrmFormMap';
+import { validateAndBuildPublicCadastroBody } from '../utils/modeloPublicCadastroLink';
 
 /** Upload multipart/galeria: sem timeout no cliente (evita AbortController / «Fetch is aborted»). */
 const FETCH_UPLOAD = { timeoutMs: 0 };
@@ -714,23 +715,29 @@ function Field({ label, children, className = '' }) {
  * Cadastro mestre Website — «Novo modelo» (mode=create) e «Editar modelo» (mode=edit) são o MESMO ecrã.
  * Qualquer ajuste de campo, mídia ou validação deve ser feito aqui; não há segunda página de cadastro.
  * Salvar: PUT/POST no site via CRM (multipart ou JSON); galeria pela resposta ou GET /website/models/:slug.
+ * `cadastro_link` = mesmo formulário, envio para POST /api/public/cadastro-modelo (link com token).
  */
 export default function WebsiteModeloEditorPage({
   mode = 'create',
   editSlug = '',
   editModelId = null,
   onBackToList,
-  /** `website` = API do site (predefinido); `crm` = grava na tabela `modelos` do CRM. */
+  /** `website` | `crm` | `cadastro_link` */
   persistenceMode = 'website',
   /** Com `persistenceMode=crm`: id do registo em `modelos` ou null para novo. */
   crmModeloId = null,
   onCrmSaved,
   /** Publicação na vitrine (`ativo_site` / `active`); predef.: todos os utilizadores CRM autenticados. */
   canEditSiteActive = true,
+  /** Com `cadastro_link`: token da query (obrigatório para gravar). */
+  cadastroLinkToken = '',
+  /** Após POST público 201. */
+  onCadastroLinkSuccess,
 }) {
   const fileInputId = `${useId()}-files`;
   const isCrm = persistenceMode === 'crm';
-  const isEdit = isCrm ? Boolean(crmModeloId) : mode === 'edit';
+  const isCadastroLink = persistenceMode === 'cadastro_link';
+  const isEdit = isCadastroLink ? false : isCrm ? Boolean(crmModeloId) : mode === 'edit';
   const [form, setForm] = useState(createInitialForm);
   /** Em edição: cópia de `model.media` apenas — URLs tal como no backend. */
   const [apiMedia, setApiMedia] = useState([]);
@@ -757,6 +764,12 @@ export default function WebsiteModeloEditorPage({
   /** Cadastro unificado (CRM): campos orçamento / internos. */
   const [crmExtra, setCrmExtra] = useState(createCrmExtraInitial);
   const [crmLoadedRow, setCrmLoadedRow] = useState(null);
+  /** Link público (token): senha extrato, foto perfil, NF — não faz parte do CRM autenticado. */
+  const [linkSenha, setLinkSenha] = useState('');
+  const [linkFotoBase64, setLinkFotoBase64] = useState('');
+  const [linkFotoPreview, setLinkFotoPreview] = useState('');
+  const [linkEmiteNf, setLinkEmiteNf] = useState(false);
+  const linkFotoInputId = `${useId()}-link-foto`;
   const cepLookupRef = useRef(null);
   const localMediaRef = useRef([]);
   useEffect(() => {
@@ -1131,6 +1144,36 @@ export default function WebsiteModeloEditorPage({
     setUploadProgress('');
     setGalleryUploadBusy(false);
     try {
+      if (isCadastroLink) {
+        const built = validateAndBuildPublicCadastroBody(
+          form,
+          crmExtra,
+          {
+            senha_acesso: linkSenha,
+            foto_perfil_base64: linkFotoBase64,
+            emite_nf_propria: linkEmiteNf,
+          },
+          cadastroLinkToken,
+        );
+        if (!built.ok) {
+          throw new Error(built.message);
+        }
+        const r = await fetchWithTimeout(`${API_BASE.replace(/\/$/, '')}/public/cadastro-modelo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(built.body),
+        });
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        const data = raw ? JSON.parse(raw) : {};
+        if (!r.ok) {
+          throw new Error(data.message || `Erro ao enviar (HTTP ${r.status}).`);
+        }
+        setSaveOk(data.message || 'Cadastro recebido com sucesso.');
+        if (typeof onCadastroLinkSuccess === 'function') onCadastroLinkSuccess(data);
+        return;
+      }
+
       const emails = normalizeList(form.emails).map((x) => String(x || '').trim().toLowerCase());
       for (let i = 0; i < emails.length; i += 1) {
         if (emails[i] && !isValidEmail(emails[i])) {
@@ -1762,6 +1805,12 @@ export default function WebsiteModeloEditorPage({
     }
   }, [
     isCrm,
+    isCadastroLink,
+    cadastroLinkToken,
+    linkSenha,
+    linkFotoBase64,
+    linkEmiteNf,
+    onCadastroLinkSuccess,
     crmModeloId,
     crmExtra,
     crmLoadedRow,
@@ -1781,6 +1830,11 @@ export default function WebsiteModeloEditorPage({
     setWebsiteModelId(null);
     setApiMedia([]);
     setFileQueueNotice('');
+    setLinkSenha('');
+    setLinkFotoBase64('');
+    setLinkFotoPreview('');
+    setLinkEmiteNf(false);
+    if (isCadastroLink) setCrmExtra(createCrmExtraInitial());
     setLocalMediaItems((prev) => {
       prev.forEach((m) => {
         if (m.preview?.startsWith('blob:')) URL.revokeObjectURL(m.preview);
@@ -1931,9 +1985,11 @@ export default function WebsiteModeloEditorPage({
             ? 'A enviar imagens…'
             : saveSaving
               ? 'A salvar…'
-              : isCrm
-                ? 'Guardar cadastro'
-                : 'Salvar'}
+              : isCadastroLink
+                ? 'Enviar cadastro'
+                : isCrm
+                  ? 'Guardar cadastro'
+                  : 'Salvar'}
         </button>
       </div>
       {saveError ? (
@@ -1951,7 +2007,7 @@ export default function WebsiteModeloEditorPage({
   return (
     <div className="space-y-5">
       <form onSubmit={onSubmit} className="space-y-5">
-        <Section title="Identificação e site">
+        <Section title={isCadastroLink ? 'Identificação' : 'Identificação e site'}>
           <Field label="Nome completo" className="md:col-span-2">
             <input
               value={formSafe.nome_completo ?? ''}
@@ -1961,9 +2017,12 @@ export default function WebsiteModeloEditorPage({
               autoComplete="name"
             />
             <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
-              Nome civil completo para o vosso cadastro interno. O visitante vê apenas o «Nome para o site» em baixo.
+              {isCadastroLink
+                ? 'Nome completo para o cadastro na agência.'
+                : 'Nome civil completo para o vosso cadastro interno. O visitante vê apenas o «Nome para o site» em baixo.'}
             </p>
           </Field>
+          {!isCadastroLink ? (
           <Field label="Nome para o site" className="md:col-span-2">
             <input
               value={formSafe.nome ?? ''}
@@ -1976,6 +2035,7 @@ export default function WebsiteModeloEditorPage({
               É o nome exibido na vitrine, nos cartões e no perfil público. Pode ser mais curto que o nome completo.
             </p>
           </Field>
+          ) : null}
           <Field label="Data de nascimento" className="md:col-span-2">
             <div className="flex flex-wrap items-center gap-3">
               <input
@@ -1997,10 +2057,13 @@ export default function WebsiteModeloEditorPage({
               ) : null}
             </div>
             <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
-              Cadastro interno no CRM — não é exibida na vitrine nem no perfil público do site. A idade ao lado
-              atualiza automaticamente (referência: dia de hoje no teu dispositivo).
+              {isCadastroLink
+                ? 'A idade ao lado atualiza automaticamente (referência: dia de hoje no teu dispositivo).'
+                : 'Cadastro interno no CRM — não é exibida na vitrine nem no perfil público do site. A idade ao lado atualiza automaticamente (referência: dia de hoje no teu dispositivo).'}
             </p>
           </Field>
+          {!isCadastroLink ? (
+          <>
           <Field label="Slug (URL no site)" className="md:col-span-2">
             <input
               value={formSafe.slug_site ?? ''}
@@ -2047,8 +2110,12 @@ export default function WebsiteModeloEditorPage({
             (tira do ar temporariamente). <span className="font-medium">Não apaga</span> fotos, vídeo nem dados — tudo
             continua guardado no servidor até voltar a marcar e salvar.
           </p>
+          </>
+          ) : null}
           <div className="md:col-span-2">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Categoria no site</p>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {isCadastroLink ? 'Feminino ou Masculino (medidas)' : 'Categoria no site'}
+            </p>
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-6">
               <div className="flex flex-wrap gap-4">
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
@@ -2072,6 +2139,7 @@ export default function WebsiteModeloEditorPage({
                   Masculino
                 </label>
               </div>
+              {!isCadastroLink ? (
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
@@ -2081,8 +2149,10 @@ export default function WebsiteModeloEditorPage({
                 />
                 Creators (adicional — continua nas listagens de creators quando marcado)
               </label>
+              ) : null}
             </div>
           </div>
+          {!isCadastroLink ? (
           <Field label="Informação pública" className="md:col-span-2">
             <input
               value={formSafe.public_info ?? ''}
@@ -2092,9 +2162,44 @@ export default function WebsiteModeloEditorPage({
               autoComplete="off"
             />
           </Field>
+          ) : null}
         </Section>
 
-        {isCrm ? (
+        {isCadastroLink && idadeCalculada !== null && idadeCalculada < 18 ? (
+          <Section title="Responsável legal (menor de idade)">
+            <Field label="Nome do responsável" className="md:col-span-2">
+              <input
+                value={crmExtra.responsavel_nome ?? ''}
+                onChange={(e) => setCrmExtra((p) => ({ ...p, responsavel_nome: e.target.value }))}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </Field>
+            <Field label="CPF do responsável">
+              <input
+                value={crmExtra.responsavel_cpf ?? ''}
+                onChange={(e) =>
+                  setCrmExtra((p) => ({ ...p, responsavel_cpf: formatCpfDisplay(onlyDigits(e.target.value)) }))
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                maxLength={14}
+              />
+            </Field>
+            <Field label="Telefone do responsável">
+              <input
+                value={crmExtra.responsavel_telefone ?? ''}
+                onChange={(e) =>
+                  setCrmExtra((p) => ({
+                    ...p,
+                    responsavel_telefone: formatPhoneBRMask(onlyDigits(e.target.value)),
+                  }))
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </Field>
+          </Section>
+        ) : null}
+
+        {isCrm && !isCadastroLink ? (
           <Section title="Cadastro interno (CRM)">
             <p className="text-xs leading-relaxed text-slate-600 md:col-span-2">
               «Ativo no site» (secção anterior) controla a vitrine pública. Aqui: participação em orçamentos e dados
@@ -2231,6 +2336,8 @@ export default function WebsiteModeloEditorPage({
               onRemove={removeEmail}
             />
           </div>
+          {!isCadastroLink ? (
+            <>
           <Field label="Instagram" className="md:col-span-2">
             <input
               value={formSafe.instagram ?? ''}
@@ -2259,6 +2366,8 @@ export default function WebsiteModeloEditorPage({
               placeholder="@usuario ou URL"
             />
           </Field>
+            </>
+          ) : null}
         </Section>
 
         <Section title="Documentos">
@@ -2345,6 +2454,80 @@ export default function WebsiteModeloEditorPage({
             />
           </Field>
         </Section>
+
+        {isCadastroLink ? (
+          <>
+            <Section title="Acesso ao extrato e foto">
+              <label className="text-sm text-slate-600 md:col-span-2">
+                <span className="mb-1 block font-medium text-slate-800">
+                  Senha de acesso ao extrato <span className="text-red-600">*</span>
+                </span>
+                <input
+                  type="password"
+                  value={linkSenha}
+                  onChange={(e) => setLinkSenha(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  autoComplete="new-password"
+                />
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={linkEmiteNf}
+                  onChange={(e) => setLinkEmiteNf(e.target.checked)}
+                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-400"
+                />
+                Emite NF própria <span className="text-red-600">*</span>
+              </label>
+              <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="mb-2 text-sm font-medium text-amber-950">Foto de perfil</p>
+                <label className="inline-flex cursor-pointer items-center rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white">
+                  Escolher foto
+                  <input
+                    id={linkFotoInputId}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) {
+                        setLinkFotoBase64('');
+                        setLinkFotoPreview('');
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const b64 = String(reader.result || '');
+                        setLinkFotoBase64(b64);
+                        setLinkFotoPreview(b64);
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+                {linkFotoPreview ? (
+                  <img
+                    src={linkFotoPreview}
+                    alt=""
+                    className="mt-2 h-24 w-24 rounded-lg border border-slate-200 object-cover"
+                  />
+                ) : null}
+              </div>
+            </Section>
+            <Section title="Observações (opcional)">
+              <Field label="Mensagem para a agência" className="md:col-span-2">
+                <textarea
+                  value={formSafe.observacoes ?? ''}
+                  onChange={(e) => setField('observacoes', e.target.value)}
+                  rows={4}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Opcional"
+                />
+              </Field>
+            </Section>
+          </>
+        ) : null}
 
         <Section title="Dados bancários">
           <div className="md:col-span-2 space-y-4">
@@ -2455,6 +2638,7 @@ export default function WebsiteModeloEditorPage({
           </div>
         </Section>
 
+        {isCrm && !isCadastroLink ? (
         <Section title="Informações internas">
           <Field label="Observações" className="md:col-span-2">
             <textarea
@@ -2466,7 +2650,9 @@ export default function WebsiteModeloEditorPage({
             />
           </Field>
         </Section>
+        ) : null}
 
+        {!isCadastroLink ? (
         <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
           <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-200 pb-2">
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -2779,10 +2965,11 @@ export default function WebsiteModeloEditorPage({
             ) : null}
           </div>
         </section>
+        ) : null}
 
         <div className="sticky bottom-0 z-10 mt-6 border-t border-slate-200 bg-white/95 py-4 backdrop-blur supports-[backdrop-filter]:bg-white/80">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            {onBackToList ? (
+            {onBackToList && !isCadastroLink ? (
               <button
                 type="button"
                 onClick={() => onBackToList()}
@@ -2793,7 +2980,7 @@ export default function WebsiteModeloEditorPage({
             ) : (
               <span />
             )}
-            {!isEdit ? (
+            {!isEdit && !isCadastroLink ? (
               <button
                 type="button"
                 onClick={clearForm}
