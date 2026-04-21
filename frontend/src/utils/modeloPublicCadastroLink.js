@@ -1,10 +1,11 @@
 /**
- * Corpo JSON para POST /api/public/cadastro-modelo — mesmo contrato do fluxo antigo do link (token).
- * Usado pelo WebsiteModeloEditorPage em persistenceMode=cadastro_link.
+ * Corpo JSON para POST /api/public/cadastro-modelo — mesmo contrato que POST /api/modelos (buildCrmModeloApiBody)
+ * + token e senha_acesso para o fluxo do link.
  */
 
-import { sanitizeAndValidateModelo, onlyDigits } from './brValidators';
+import { onlyDigits } from './brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './formasPagamento';
+import { buildCrmModeloApiBody, createCrmExtraInitial } from './modeloCrmFormMap';
 
 function trimStr(v) {
   return String(v ?? '').trim();
@@ -124,74 +125,25 @@ export function validateAndBuildPublicCadastroBody(form, crmExtra, linkExtras, t
   const fr = sanitizeAndValidateFormasPagamentoArray(form.formas_pagamento);
   if (!fr.ok) return { ok: false, message: fr.message };
 
-  const sexoStr = form.catMasculino ? 'Masculino' : 'Feminino';
-
-  const payload = {
-    nome: nomePrincipal,
-    cpf: form.cpf,
-    data_nascimento: form.data_nascimento,
-    telefones,
-    emails,
-    telefone: telefones[0],
-    email: emails[0],
+  const crmMerged = {
+    ...createCrmExtraInitial(),
+    ...(crmExtra && typeof crmExtra === 'object' ? crmExtra : {}),
     emite_nf_propria: Boolean(linkExtras?.emite_nf_propria),
-    responsavel_nome: trimStr(crmExtra?.responsavel_nome),
-    responsavel_cpf: crmExtra?.responsavel_cpf,
-    responsavel_telefone: crmExtra?.responsavel_telefone,
-    observacoes: trimStr(form.observacoes),
-    sexo: sexoStr,
-    medida_altura: form.medida_altura,
-    medida_busto: form.medida_busto,
-    medida_torax: form.medida_torax,
-    medida_cintura: form.medida_cintura,
-    medida_quadril: form.medida_quadril,
-    medida_sapato: form.medida_sapato,
-    medida_cabelo: form.medida_cabelo,
-    medida_olhos: form.medida_olhos,
-    formas_pagamento: fr.formas,
-    ativo: false,
+    ativo_crm: false,
   };
 
-  const sv = sanitizeAndValidateModelo(payload, false);
-  if (!sv.ok) return { ok: false, message: sv.message };
+  const built = buildCrmModeloApiBody(form, crmMerged, [], {
+    foto_perfil_base64: linkExtras?.foto_perfil_base64,
+  });
 
-  const body = {
-    nome: sv.body.nome,
-    cpf: sv.body.cpf,
-    passaporte: trimStr(form.passport),
-    rg: trimStr(form.rg),
-    data_nascimento: sv.body.data_nascimento,
-    telefones: sv.body.telefones,
-    emails: sv.body.emails,
-    emite_nf_propria: sv.body.emite_nf_propria,
-    observacoes: sv.body.observacoes,
-    sexo: sexoStr,
-    cep: trimStr(form.cep),
-    logradouro: trimStr(form.logradouro),
-    numero: trimStr(form.numero),
-    complemento: trimStr(form.complemento),
-    bairro: trimStr(form.bairro),
-    cidade: trimStr(form.cidade),
-    uf: trimStr(form.uf).toUpperCase().slice(0, 2),
-    formas_pagamento: fr.formas,
-    medida_altura: trimStr(form.medida_altura),
-    medida_busto: trimStr(form.medida_busto),
-    medida_torax: trimStr(form.medida_torax),
-    medida_cintura: trimStr(form.medida_cintura),
-    medida_quadril: trimStr(form.medida_quadril),
-    medida_sapato: trimStr(form.medida_sapato),
-    medida_cabelo: trimStr(form.medida_cabelo),
-    medida_olhos: trimStr(form.medida_olhos),
-    foto_perfil_base64: trimStr(linkExtras?.foto_perfil_base64),
-    senha_acesso: senhaAcesso,
-    token: t,
+  built.formas_pagamento = fr.formas;
+
+  return {
+    ok: true,
+    body: {
+      ...built,
+      token: t,
+      senha_acesso: senhaAcesso,
+    },
   };
-
-  if (isMinor) {
-    body.responsavel_nome = sv.body.responsavel_nome;
-    body.responsavel_cpf = sv.body.responsavel_cpf;
-    body.responsavel_telefone = sv.body.responsavel_telefone;
-  }
-
-  return { ok: true, body };
 }

@@ -21,6 +21,7 @@ const {
   sendWebsiteAdminProxyResponse,
 } = require('../services/websiteHttpClient');
 const { runImportModelsFromWebsite } = require('../services/importModelsFromWebsite');
+const { missingRequiredFields, MODEL_POST_REQUIRED_FIELDS } = require('../utils/modeloPostRequired');
 
 const router = express.Router();
 
@@ -32,17 +33,6 @@ const modeloGaleriaUpload = multer({
     files: Number(process.env.MODEL_GALLERY_MAX_FILES_PER_REQUEST) || 40,
   },
 });
-
-/** Campos obrigatorios: strings vazias e arrays vazios contam como faltando (backend nao confia no frontend). */
-function missingRequiredFields(body, requiredFields) {
-  return requiredFields.filter((field) => {
-    const v = body[field];
-    if (v === undefined || v === null) return true;
-    if (typeof v === 'string' && v.trim() === '') return true;
-    if (Array.isArray(v) && v.length === 0) return true;
-    return false;
-  });
-}
 
 function escHtml(v) {
   return String(v ?? '')
@@ -676,18 +666,7 @@ makeCrudRoutes({
 makeCrudRoutes({
   path: 'modelos',
   table: 'modelos',
-  requiredFields: [
-    'nome',
-    'cpf',
-    'telefone',
-    'email',
-    'emite_nf_propria',
-    'data_nascimento',
-    'telefones',
-    'emails',
-    'formas_pagamento',
-    'ativo',
-  ],
+  requiredFields: MODEL_POST_REQUIRED_FIELDS,
   updateFields: [
     'nome',
     'cpf',
