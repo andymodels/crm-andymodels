@@ -617,6 +617,10 @@ const initDb = async () => {
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinatura_token TEXT;`);
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinado_nome TEXT;`);
   await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_assinado_documento TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_html_snapshot TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_pdf_snapshot TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS contrato_snapshot_hash TEXT;`);
+  await pool.query(`ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS data_assinatura TIMESTAMP;`);
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_ordens_servico_contrato_assinatura_token ON ordens_servico(contrato_assinatura_token) WHERE contrato_assinatura_token IS NOT NULL`,
   );

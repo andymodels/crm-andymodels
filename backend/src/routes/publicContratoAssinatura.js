@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../config/db');
 const { buildContratoDocumentHtml } = require('../services/contratoHtml');
 const { loadContratoContext } = require('../services/contratoContext');
+const { createImmutableSnapshotForOs, loadOsSnapshotMeta } = require('../services/contratoWorkflow');
 
 const router = express.Router();
 
@@ -47,9 +48,19 @@ router.get('/public/contratos/documento', async (req, res, next) => {
     if (!os || !os.emitir_contrato || String(os.status || '') === 'cancelada') {
       return res.status(404).send('Link inválido.');
     }
-    const ctx = await loadContratoContext(pool, os.id);
-    if (!ctx) return res.status(404).send('O.S. não encontrada.');
-    const html = buildContratoDocumentHtml(ctx);
+    const snapMeta = await loadOsSnapshotMeta(pool, os.id);
+    const assinado = os.contrato_status === 'assinado' || os.contrato_status === 'recebido';
+    let html = '';
+    if (assinado) {
+      html = String(snapMeta?.contrato_html_snapshot || '').trim();
+      if (!html) {
+        return res.status(409).send('Contrato assinado sem snapshot imutável (legado).');
+      }
+    } else {
+      const ctx = await loadContratoContext(pool, os.id);
+      if (!ctx) return res.status(404).send('O.S. não encontrada.');
+      html = buildContratoDocumentHtml(ctx);
+    }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (e) {
@@ -73,11 +84,18 @@ router.post('/public/contratos/assinar', async (req, res, next) => {
       return res.status(400).json({ message: 'Contrato já assinado.' });
     }
 
+    const snap = await createImmutableSnapshotForOs(pool, os.id);
+    if (!snap.ok) {
+      return res.status(500).json({
+        message: snap.message || 'Falha ao gerar snapshot imutável do contrato assinado.',
+      });
+    }
     await pool.query(
       `
       UPDATE ordens_servico
       SET contrato_status = 'assinado',
-          contrato_assinado_em = NOW(),
+          contrato_assinado_em = COALESCE(contrato_assinado_em, NOW()),
+          data_assinatura = COALESCE(data_assinatura, NOW()),
           contrato_assinado_nome = $2,
           contrato_assinado_documento = $3,
           updated_at = NOW()

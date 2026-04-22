@@ -121,6 +121,14 @@ router.delete('/ordens-servico/:id/documentos/:docId', async (req, res, next) =>
     }
     const osCheck = await pool.query('SELECT id FROM ordens_servico WHERE id = $1', [osId]);
     if (osCheck.rows.length === 0) return res.status(404).json({ message: 'O.S. nao encontrada.' });
+    const pre = await pool.query(
+      'SELECT storage_path, tipo FROM os_documentos WHERE id = $1 AND os_id = $2',
+      [docId, osId],
+    );
+    if (pre.rows.length === 0) return res.status(404).json({ message: 'Documento nao encontrado.' });
+    if (pre.rows[0].tipo === 'contrato_pdf_snapshot') {
+      return res.status(400).json({ message: 'Snapshot imutavel do contrato assinado nao pode ser removido.' });
+    }
     const r = await pool.query(
       'DELETE FROM os_documentos WHERE id = $1 AND os_id = $2 RETURNING storage_path, tipo',
       [docId, osId],

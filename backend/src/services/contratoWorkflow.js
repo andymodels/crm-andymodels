@@ -81,10 +81,98 @@ async function saveGeneratedContractSnapshot(db, osId, pdfBuffer) {
   );
 }
 
+function isContratoAssinadoStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return s === 'assinado' || s === 'recebido';
+}
+
+async function loadOsSnapshotMeta(db, osId) {
+  const r = await db.query(
+    `
+    SELECT
+      id,
+      contrato_status,
+      contrato_html_snapshot,
+      contrato_pdf_snapshot,
+      contrato_snapshot_hash,
+      data_assinatura,
+      contrato_assinado_em
+    FROM ordens_servico
+    WHERE id = $1
+    `,
+    [osId],
+  );
+  return r.rows[0] || null;
+}
+
+async function createImmutableSnapshotForOs(db, osId) {
+  const current = await loadOsSnapshotMeta(db, osId);
+  if (!current) return { ok: false, message: 'O.S. nao encontrada.' };
+  if (current.contrato_html_snapshot && current.contrato_pdf_snapshot) {
+    return {
+      ok: true,
+      html_snapshot: current.contrato_html_snapshot,
+      pdf_snapshot: current.contrato_pdf_snapshot,
+      hash: current.contrato_snapshot_hash || null,
+      data_assinatura: current.data_assinatura || current.contrato_assinado_em || null,
+    };
+  }
+  const ctx = await loadContratoContext(db, osId);
+  if (!ctx) return { ok: false, message: 'O.S. nao encontrada.' };
+  if (!ctx.os.emitir_contrato) return { ok: false, message: 'O.S. sem emissao de contrato ativa.' };
+  const erros = await validarContratoPronto(db, osId, ctx.os, ctx.os.tipo_os || 'com_modelo');
+  if (erros.length > 0) return { ok: false, message: `Dados incompletos para contrato: ${erros.join('; ')}` };
+
+  const html = buildContratoDocumentHtml(ctx);
+  const pdfBuffer = await renderContratoPdfBuffer(html);
+  const hash = sha256Hex(Buffer.concat([Buffer.from(html, 'utf8'), pdfBuffer]));
+  const fileName = `contrato-os-${osId}-assinado-${Date.now()}.pdf`;
+  const relPath = `os/${osId}/${fileName}`;
+  await storage.saveFile({
+    buffer: pdfBuffer,
+    relativePath: relPath,
+    contentType: 'application/pdf',
+  });
+
+  await db.query(
+    `
+    INSERT INTO os_documentos (os_id, tipo, nome_arquivo, mime, storage_path, sha256)
+    VALUES ($1, 'contrato_pdf_snapshot', $2, 'application/pdf', $3, $4)
+    `,
+    [osId, fileName, relPath, hash],
+  );
+  await db.query(
+    `
+    UPDATE ordens_servico
+    SET contrato_html_snapshot = $2,
+        contrato_pdf_snapshot = $3,
+        contrato_snapshot_hash = $4,
+        data_assinatura = COALESCE(data_assinatura, NOW()),
+        contrato_assinado_em = COALESCE(contrato_assinado_em, NOW()),
+        updated_at = NOW()
+    WHERE id = $1
+    `,
+    [osId, html, relPath, hash],
+  );
+  return {
+    ok: true,
+    html_snapshot: html,
+    pdf_snapshot: relPath,
+    hash,
+  };
+}
+
 async function generateContratoForOs(db, osId) {
   const ctx = await loadContratoContext(db, osId);
   if (!ctx) return { ok: false, message: 'O.S. nao encontrada.' };
   if (!ctx.os.emitir_contrato) return { ok: false, message: 'O.S. sem emissao de contrato ativa.' };
+  if (isContratoAssinadoStatus(ctx.os.contrato_status)) {
+    return {
+      ok: false,
+      message: 'Contrato ja assinado: a versao imutavel foi bloqueada para regeneracao.',
+      code: 'CONTRATO_ASSINADO_IMUTAVEL',
+    };
+  }
   const erros = await validarContratoPronto(db, osId, ctx.os, ctx.os.tipo_os || 'com_modelo');
   if (erros.length > 0) return { ok: false, message: `Dados incompletos para contrato: ${erros.join('; ')}` };
 
@@ -116,8 +204,17 @@ async function sendContratoAssinaturaEmail(db, osId, destinatario) {
   if (!ctx) return { ok: false, message: 'O.S. nao encontrada.' };
   const token = await ensureContratoToken(db, osId);
   const link = contratoAssinaturaUrl(token);
-  const htmlContrato = buildContratoDocumentHtml(ctx);
-  const pdfBuffer = await renderContratoPdfBuffer(htmlContrato);
+  let pdfBuffer;
+  if (isContratoAssinadoStatus(ctx.os.contrato_status)) {
+    const snap = await createImmutableSnapshotForOs(db, osId);
+    if (!snap.ok || !snap.pdf_snapshot) {
+      return { ok: false, message: snap.message || 'Snapshot imutavel indisponivel.' };
+    }
+    pdfBuffer = await storage.readFileBuffer(snap.pdf_snapshot);
+  } else {
+    const htmlContrato = buildContratoDocumentHtml(ctx);
+    pdfBuffer = await renderContratoPdfBuffer(htmlContrato);
+  }
   const fileName = `contrato-os-${osId}.pdf`;
   const previewLink = `${appBaseUrl()}/api/ordens-servico/${osId}/contrato-preview`;
   const pdfLink = `${appBaseUrl()}/api/ordens-servico/${osId}/contrato-pdf`;
@@ -206,6 +303,8 @@ module.exports = {
   contratoAssinaturaPath,
   contratoAssinaturaUrl,
   ensureContratoToken,
+  createImmutableSnapshotForOs,
+  loadOsSnapshotMeta,
   generateContratoForOs,
   sendContratoAssinaturaEmail,
 };

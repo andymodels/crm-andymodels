@@ -4489,7 +4489,7 @@ function App({ authUser, onLogout = () => {} }) {
                           <td className="px-2 py-2">{labelContratoStatus(item.status)}</td>
                           <td className="px-2 py-2 space-x-2">
                             <a
-                              href={`${API_BASE}/contratos/${item.os_id}/preview`}
+                              href={`${API_BASE}/contratos/${item.os_id}/preview${item.status === 'assinado' ? '?snapshot=1' : ''}`}
                               target="_blank"
                               rel="noreferrer"
                               className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700"
@@ -4497,7 +4497,7 @@ function App({ authUser, onLogout = () => {} }) {
                               Visualizar
                             </a>
                             <a
-                              href={`${API_BASE}/ordens-servico/${item.os_id}/contrato-pdf`}
+                              href={`${API_BASE}/ordens-servico/${item.os_id}/contrato-pdf${item.status === 'assinado' ? '?snapshot=1' : ''}`}
                               target="_blank"
                               rel="noreferrer"
                               className="rounded-md border border-blue-300 px-2 py-1 text-xs text-blue-800"
@@ -6531,7 +6531,7 @@ function App({ authUser, onLogout = () => {} }) {
                       </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <a
-                          href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-preview`}
+                          href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-preview${contratoUiStatusFromRow(osDraft) === 'assinado' ? '?snapshot=1' : ''}`}
                           target="_blank"
                           rel="noreferrer"
                           className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-800"
@@ -6539,7 +6539,7 @@ function App({ authUser, onLogout = () => {} }) {
                           Pré-visualizar HTML
                         </a>
                         <a
-                          href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-pdf`}
+                          href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-pdf${contratoUiStatusFromRow(osDraft) === 'assinado' ? '?snapshot=1' : ''}`}
                           target="_blank"
                           rel="noreferrer"
                           className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-800"

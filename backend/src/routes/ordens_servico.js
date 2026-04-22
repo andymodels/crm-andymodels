@@ -5,7 +5,13 @@ const { buildContratoDocumentHtml } = require('../services/contratoHtml');
 const { loadContratoContext } = require('../services/contratoContext');
 const { validarContratoPronto } = require('../services/contratoReadiness');
 const { buildOsDocumentHtml } = require('../services/documentoOrcamentoOsHtml');
-const { generateContratoForOs, sendContratoAssinaturaEmail } = require('../services/contratoWorkflow');
+const {
+  generateContratoForOs,
+  sendContratoAssinaturaEmail,
+  createImmutableSnapshotForOs,
+  loadOsSnapshotMeta,
+} = require('../services/contratoWorkflow');
+const storage = require('../services/storage');
 
 const router = express.Router();
 
@@ -19,6 +25,34 @@ function contratoUiStatusFromRow(row) {
   if (raw === 'assinado' || raw === 'recebido') return 'assinado';
   if (row.contrato_enviado_em) return 'enviado';
   return 'pendente';
+}
+
+function isContratoAssinadoStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return s === 'assinado' || s === 'recebido';
+}
+
+async function ensureSnapshotForSignedOr409(osId, forceSnapshotOnly = true) {
+  const snap = await loadOsSnapshotMeta(pool, osId);
+  const assinado = isContratoAssinadoStatus(snap?.contrato_status);
+  if (!assinado) return { assinado: false, html: '', pdfPath: '' };
+  const html = String(snap?.contrato_html_snapshot || '').trim();
+  const pdfPath = String(snap?.contrato_pdf_snapshot || '').trim();
+  if (!html || !pdfPath) {
+    if (forceSnapshotOnly) {
+      return { assinado: true, error: 'Contrato assinado sem snapshot imutável (legado).' };
+    }
+    const created = await createImmutableSnapshotForOs(pool, osId);
+    if (!created.ok) {
+      return { assinado: true, error: created.message || 'Snapshot imutável indisponível.' };
+    }
+    return {
+      assinado: true,
+      html: String(created.html_snapshot || ''),
+      pdfPath: String(created.pdf_snapshot || ''),
+    };
+  }
+  return { assinado: true, html, pdfPath };
 }
 
 async function loadDocumentos(osId) {
@@ -85,6 +119,16 @@ router.get('/ordens-servico/:id/contrato-preview', async (req, res, next) => {
     if (!ctx.os.emitir_contrato) {
       return res.status(400).send('Esta O.S. nao esta marcada para emitir contrato.');
     }
+    const requireSnapshot = String(req.query.snapshot || '') === '1';
+    const snap = await ensureSnapshotForSignedOr409(id, true);
+    if (snap.assinado) {
+      if (snap.error) return res.status(409).send(snap.error);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(snap.html);
+    }
+    if (requireSnapshot) {
+      return res.status(409).send('Snapshot imutável ainda não existe para contrato não assinado.');
+    }
     const errosPrev = await validarContratoPronto(pool, id, ctx.os, ctx.os.tipo_os || 'com_modelo');
     if (errosPrev.length > 0) {
       return res
@@ -127,6 +171,21 @@ router.get('/ordens-servico/:id/contrato-pdf', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (Number.isNaN(id)) return res.status(400).send('ID invalido.');
+    const requireSnapshot = String(req.query.snapshot || '') === '1';
+    const snap = await ensureSnapshotForSignedOr409(id, true);
+    if (snap.assinado) {
+      if (snap.error) return res.status(409).send(snap.error);
+      const exists = await storage.fileExists(snap.pdfPath);
+      if (!exists) return res.status(404).send('Snapshot PDF do contrato assinado não encontrado.');
+      const stream = await storage.getReadableStream(snap.pdfPath);
+      if (!stream) return res.status(404).send('Snapshot PDF do contrato assinado não encontrado.');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="contrato-os-${id}-assinado.pdf"`);
+      return stream.pipe(res);
+    }
+    if (requireSnapshot) {
+      return res.status(409).send('Snapshot imutável ainda não existe para contrato não assinado.');
+    }
     const generated = await generateContratoForOs(pool, id);
     if (!generated.ok) {
       return res.status(400).send(generated.message || 'Falha ao gerar contrato.');
@@ -169,19 +228,25 @@ router.post('/ordens-servico/:id/contrato-enviar-email', async (req, res, next) 
     if (!ctx.os.emitir_contrato) {
       return res.status(400).json({ message: 'O.S. sem opcao de contrato ativa.' });
     }
-    const errosMail = await validarContratoPronto(pool, id, ctx.os, ctx.os.tipo_os || 'com_modelo');
-    if (errosMail.length > 0) {
-      return res.status(400).json({
-        message: `Dados incompletos para o contrato: ${errosMail.join('; ')}.`,
-      });
+    const assinado = isContratoAssinadoStatus(ctx.os.contrato_status);
+    if (!assinado) {
+      const errosMail = await validarContratoPronto(pool, id, ctx.os, ctx.os.tipo_os || 'com_modelo');
+      if (errosMail.length > 0) {
+        return res.status(400).json({
+          message: `Dados incompletos para o contrato: ${errosMail.join('; ')}.`,
+        });
+      }
     }
     const destinatario = (req.body && req.body.destinatario) || ctx.cliente.email;
     if (!destinatario || String(destinatario).trim() === '') {
       return res.status(400).json({ message: 'Informe destinatario ou cadastre e-mail do cliente.' });
     }
-    const generated = await generateContratoForOs(pool, id);
-    if (!generated.ok) {
-      return res.status(400).json({ message: generated.message || 'Nao foi possivel gerar contrato.' });
+    let generated = { assinatura_link: ctx.os.contrato_assinatura_token ? `${publicAppBase()}/assinatura-contrato?token=${encodeURIComponent(ctx.os.contrato_assinatura_token)}` : null };
+    if (!assinado) {
+      generated = await generateContratoForOs(pool, id);
+      if (!generated.ok) {
+        return res.status(400).json({ message: generated.message || 'Nao foi possivel gerar contrato.' });
+      }
     }
     const sent = await sendContratoAssinaturaEmail(pool, id, destinatario);
     res.json({
@@ -300,10 +365,15 @@ router.post('/contratos/:osId/status', async (req, res, next) => {
     }
 
     if (target === 'assinado') {
+      const snap = await createImmutableSnapshotForOs(pool, osId);
+      if (!snap.ok) {
+        return res.status(400).json({ message: snap.message || 'Falha ao criar snapshot imutável.' });
+      }
       await pool.query(
         `UPDATE ordens_servico
          SET contrato_status = 'assinado',
              contrato_assinado_em = COALESCE(contrato_assinado_em, NOW()),
+             data_assinatura = COALESCE(data_assinatura, NOW()),
              updated_at = NOW()
          WHERE id = $1`,
         [osId],
@@ -357,6 +427,16 @@ router.get('/contratos/:osId/preview', async (req, res, next) => {
     const ctx = await loadContratoContext(pool, osId);
     if (!ctx) return res.status(404).send('Contrato nao encontrado.');
     if (!ctx.os.emitir_contrato) return res.status(400).send('Contrato cancelado para esta O.S.');
+    const requireSnapshot = String(req.query.snapshot || '') === '1';
+    const snap = await ensureSnapshotForSignedOr409(osId, true);
+    if (snap.assinado) {
+      if (snap.error) return res.status(409).send(snap.error);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(snap.html);
+    }
+    if (requireSnapshot) {
+      return res.status(409).send('Snapshot imutável ainda não existe para contrato não assinado.');
+    }
     const html = buildContratoDocumentHtml(ctx);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
@@ -385,8 +465,17 @@ router.post('/contratos/:osId/reenviar', async (req, res, next) => {
     const destino = String(req.body?.destinatario || dbRow.rows[0].cliente_email || '').trim();
     if (!destino) return res.status(400).json({ message: 'Cliente sem e-mail cadastrado.' });
 
-    const generated = await generateContratoForOs(pool, osId);
-    if (!generated.ok) return res.status(400).json({ message: generated.message || 'Falha ao gerar contrato.' });
+    const osRow = await pool.query(`SELECT contrato_status, contrato_assinatura_token FROM ordens_servico WHERE id = $1`, [osId]);
+    const assinado = isContratoAssinadoStatus(osRow.rows[0]?.contrato_status);
+    let generated = {
+      assinatura_link: osRow.rows[0]?.contrato_assinatura_token
+        ? `${publicAppBase()}/assinatura-contrato?token=${encodeURIComponent(osRow.rows[0].contrato_assinatura_token)}`
+        : null,
+    };
+    if (!assinado) {
+      generated = await generateContratoForOs(pool, osId);
+      if (!generated.ok) return res.status(400).json({ message: generated.message || 'Falha ao gerar contrato.' });
+    }
     const sent = await sendContratoAssinaturaEmail(pool, osId, destino);
     res.json({
       message: 'Contrato reenviado com sucesso.',
@@ -426,6 +515,13 @@ router.post('/ordens-servico/:id/contrato-regenerar', async (req, res, next) => 
   const id = Number(req.params.id);
   try {
     if (Number.isNaN(id)) return res.status(400).json({ message: 'ID invalido.' });
+    const stR = await pool.query(`SELECT contrato_status FROM ordens_servico WHERE id = $1`, [id]);
+    if (stR.rows.length === 0) return res.status(404).json({ message: 'O.S. nao encontrada.' });
+    if (isContratoAssinadoStatus(stR.rows[0].contrato_status)) {
+      return res.status(409).json({
+        message: 'Contrato assinado é imutável: regeneração bloqueada.',
+      });
+    }
     const generated = await generateContratoForOs(pool, id);
     if (!generated.ok) return res.status(400).json({ message: generated.message || 'Falha ao regenerar contrato.' });
     res.json({
