@@ -1,36 +1,41 @@
-name: Backup base de dados (semanal)
+name: CRM Backup PostgreSQL -> B2
 
 on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
+concurrency:
+  group: crm-backup-postgres-b2
+  cancel-in-progress: false
+
 jobs:
   backup:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Instalar PostgreSQL client 18
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg
-          echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          wget -qO - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-18
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Instalar dependências
-        run: npm install
+      - name: Install backend dependencies (without postinstall)
         working-directory: backend
+        run: npm ci --ignore-scripts
 
-      - name: Rodar backup (forçando pg_dump 18)
+      - name: Validate Docker and pg_dump 18 image
         run: |
-          export PATH="/usr/lib/postgresql/18/bin:$PATH"
-          pg_dump --version
-          npm run backup:db-b2
+          docker --version
+          docker pull postgres:18
+          docker run --rm postgres:18 pg_dump --version
+
+      - name: Run backup script
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -38,4 +43,8 @@ jobs:
           B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
           B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
           B2_BUCKET: ${{ secrets.B2_BUCKET }}
-          B2_PUBLIC_BASE_URL: ${{ secrets.B2_PUBLIC_BASE_URL }}
+          BACKUP_B2_PREFIX: backups/database/
+          BACKUP_RETENTION_KEEP: 12
+          PG_DUMP_DOCKER_IMAGE: postgres:18
+          NODE_ENV: production
+        run: node scripts/backupDatabaseToB2.js

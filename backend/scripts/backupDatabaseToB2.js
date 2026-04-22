@@ -85,30 +85,152 @@ function assertPostgresUrl(url) {
   return u;
 }
 
-function runPgDump(databaseUrl, outFile) {
-  const r = spawnSync(
-    'pg_dump',
-    ['-F', 'p', '-f', outFile, '--no-owner', '--no-acl', '--dbname', databaseUrl],
-    {
-      encoding: 'utf8',
-      maxBuffer: 1024 * 1024,
-    },
-  );
+function runCommand(bin, args, opts = {}) {
+  return spawnSync(bin, args, {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    ...opts,
+  });
+}
+
+function parseDatabaseUrl(databaseUrl) {
+  try {
+    const u = new URL(databaseUrl);
+    const dbName = String(u.pathname || '').replace(/^\/+/, '');
+    return {
+      host: u.hostname,
+      port: u.port ? String(u.port) : '5432',
+      user: decodeURIComponent(u.username || ''),
+      password: decodeURIComponent(u.password || ''),
+      dbName,
+      sslMode: u.searchParams.get('sslmode') || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isVersionMismatchError(text) {
+  const t = String(text || '').toLowerCase();
+  return t.includes('server version mismatch') || (t.includes('server version:') && t.includes('pg_dump version:'));
+}
+
+function ensureDockerAvailable() {
+  const check = runCommand('docker', ['--version']);
+  return !(check.error || check.status !== 0);
+}
+
+function runPgDumpNative(databaseUrl, outFile) {
+  const r = runCommand('pg_dump', ['-F', 'p', '-f', outFile, '--no-owner', '--no-acl', '--dbname', databaseUrl]);
   if (r.error) {
     if (r.error.code === 'ENOENT') {
-      logErr(
-        'Comando pg_dump não encontrado. Instale o cliente PostgreSQL (ex.: Ubuntu `postgresql-client`, macOS `brew install libpq`). No GitHub Actions o workflow instala automaticamente.',
-      );
-    } else {
-      logErr(`pg_dump falhou a arrancar: ${r.error.message}`);
+      return { ok: false, reason: 'missing_binary', stderr: 'pg_dump não encontrado no PATH.' };
     }
-    process.exit(1);
+    return { ok: false, reason: 'spawn_error', stderr: String(r.error.message || r.error) };
   }
   if (r.status !== 0) {
-    const err = (r.stderr || r.stdout || '').trim().slice(0, 2000);
-    logErr(`pg_dump terminou com código ${r.status}. Saída (sem credenciais): ${err || '(vazio)'}`);
+    const stderr = (r.stderr || r.stdout || '').trim();
+    return { ok: false, reason: isVersionMismatchError(stderr) ? 'version_mismatch' : 'exit_non_zero', stderr };
+  }
+  return { ok: true };
+}
+
+function runPgDumpDocker(databaseUrl, outFile, image) {
+  const parsed = parseDatabaseUrl(databaseUrl);
+  if (!parsed || !parsed.host || !parsed.user || !parsed.dbName) {
+    return {
+      ok: false,
+      reason: 'invalid_database_url',
+      stderr: 'Não foi possível interpretar DATABASE_URL para execução via Docker.',
+    };
+  }
+  if (!ensureDockerAvailable()) {
+    return {
+      ok: false,
+      reason: 'docker_unavailable',
+      stderr: 'Docker não disponível no ambiente para usar pg_dump via imagem postgres:18.',
+    };
+  }
+
+  const outDir = path.dirname(outFile);
+  const outName = path.basename(outFile);
+  const env = { ...process.env };
+  if (parsed.password) env.PGPASSWORD = parsed.password;
+  if (parsed.sslMode) env.PGSSLMODE = parsed.sslMode;
+
+  const args = [
+    'run',
+    '--rm',
+    '-v',
+    `${outDir}:/backup`,
+    '--network',
+    'host',
+    '-e',
+    'PGPASSWORD',
+    '-e',
+    'PGSSLMODE',
+    image,
+    'pg_dump',
+    '--host',
+    parsed.host,
+    '--port',
+    parsed.port,
+    '--username',
+    parsed.user,
+    '--dbname',
+    parsed.dbName,
+    '--format=plain',
+    '--file',
+    `/backup/${outName}`,
+    '--no-owner',
+    '--no-acl',
+  ];
+  const r = runCommand('docker', args, { env });
+  if (r.error) {
+    return { ok: false, reason: 'docker_spawn_error', stderr: String(r.error.message || r.error) };
+  }
+  if (r.status !== 0) {
+    return { ok: false, reason: 'docker_exit_non_zero', stderr: (r.stderr || r.stdout || '').trim() };
+  }
+  return { ok: true };
+}
+
+function runPgDump(databaseUrl, outFile) {
+  const dockerImage = String(process.env.PG_DUMP_DOCKER_IMAGE || '').trim();
+  if (dockerImage) {
+    log(`A usar pg_dump via Docker image: ${dockerImage}`);
+    const dockerResult = runPgDumpDocker(databaseUrl, outFile, dockerImage);
+    if (!dockerResult.ok) {
+      const err = String(dockerResult.stderr || '').slice(0, 2000);
+      logErr(`Falha no pg_dump via Docker (${dockerResult.reason}). Saída (sem credenciais): ${err || '(vazio)'}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const nativeResult = runPgDumpNative(databaseUrl, outFile);
+  if (nativeResult.ok) return;
+
+  if (nativeResult.reason === 'version_mismatch') {
+    const fallbackImage = String(process.env.PG_DUMP_DOCKER_FALLBACK_IMAGE || 'postgres:18').trim();
+    log(`Versão local do pg_dump incompatível. A tentar fallback Docker (${fallbackImage})…`);
+    const dockerResult = runPgDumpDocker(databaseUrl, outFile, fallbackImage);
+    if (dockerResult.ok) return;
+    const derr = String(dockerResult.stderr || '').slice(0, 2000);
+    logErr(`Fallback Docker falhou (${dockerResult.reason}). Saída (sem credenciais): ${derr || '(vazio)'}`);
     process.exit(1);
   }
+
+  if (nativeResult.reason === 'missing_binary') {
+    logErr(
+      'Comando pg_dump não encontrado. Instale cliente PostgreSQL no host ou defina PG_DUMP_DOCKER_IMAGE=postgres:18 para usar Docker.',
+    );
+    process.exit(1);
+  }
+
+  const err = String(nativeResult.stderr || '').slice(0, 2000);
+  logErr(`pg_dump terminou com erro (${nativeResult.reason}). Saída (sem credenciais): ${err || '(vazio)'}`);
+  process.exit(1);
 }
 
 function getS3Module() {
@@ -275,27 +397,13 @@ async function main() {
       return;
     }
 
-    const storage = require('../src/services/storage');
-    if (storage.driver() !== 'b2') {
-      logErr('STORAGE_DRIVER tem de ser b2 para enviar o backup. (Ou use BACKUP_DRY_RUN=1 para testar só o dump.)');
-      process.exit(1);
-    }
-
     const sqlBuf = fs.readFileSync(tmpSql);
     log(`A enviar para B2: ${keySql}`);
-    await storage.saveFile({
-      buffer: sqlBuf,
-      relativePath: keySql,
-      contentType: 'application/sql',
-    });
+    await putObject(keySql, sqlBuf, 'application/sql');
 
     const metaBuf = Buffer.from(JSON.stringify(meta, null, 2), 'utf8');
     log(`A enviar metadados: ${keyMeta}`);
-    await storage.saveFile({
-      buffer: metaBuf,
-      relativePath: keyMeta,
-      contentType: 'application/json',
-    });
+    await putObject(keyMeta, metaBuf, 'application/json');
 
     log(`Sucesso. Backup SQL: ${keySql} (${stat.size} bytes). Metadados: ${keyMeta}`);
 
