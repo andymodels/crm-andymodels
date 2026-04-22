@@ -2,6 +2,8 @@
 
 Este documento descreve o **backup da base de dados** (PostgreSQL) para o **Backblaze B2**, a **retenção** de cópias antigas e como **restaurar** em emergência. O código da aplicação continua a ser o **GitHub**; ficheiros grandes (fotos, áudio) estão no **B2** — o maior risco residual é a **base relacional**, daí o foco do backup.
 
+**Nota de repositório:** não incluímos ficheiros em **`.github/workflows/`** neste projeto. Motivo: pushes com workflows exigem token/credencial com permissão **`workflow`**; muitos PATs bloqueiam. O script `backupDatabaseToB2.js` mantém-se no `backend/scripts/`. Para agendamento automático (ex.: GitHub Actions), **crie o workflow no painel do GitHub** ou cole o YAML do [anexo](#anexo-yaml-github-actions-opcional) quando tiverem permissões — **não** voltar a comitar `.github/workflows/backup-database-weekly.yml` sem alinhar com a equipa.
+
 ---
 
 ## 1. Que base de dados é esta?
@@ -36,7 +38,9 @@ Cada execução gera **um novo par** de ficheiros; **nunca** sobrescreve um back
 | Variável | Obrigatório | Descrição |
 |----------|-------------|-----------|
 | `DATABASE_URL` | Sim | URL `postgresql://...` (no Render use a URL **externa** da base se o backup correr fora do datacenter, p.ex. CI ou máquina local). |
+| `STORAGE_DRIVER` | Sim (upload) | Tem de ser **`b2`** para enviar para o B2. |
 | `B2_S3_ENDPOINT`, `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET` | Sim | Iguais ao CRM em produção. |
+| `B2_PUBLIC_BASE_URL` | Sim | Obrigatório para o módulo `storage` gravar no B2 (mesmo valor que no Render). |
 | `B2_REGION` | Não | Predefinição usada pelo SDK se omitido. |
 | `BACKUP_B2_PREFIX` | Não | Predefinição: `backups/database/`. |
 | `BACKUP_RETENTION_KEEP` | Não | Número de backups **mais recentes** a manter (predef.: **12**). Os mais antigos são apagados no B2 após um backup bem-sucedido. |
@@ -53,10 +57,12 @@ Na máquina (com `pg_dump` instalado) ou num runner com PostgreSQL client:
 ```bash
 cd backend
 export DATABASE_URL="postgresql://..."   # mesma lógica que o CRM
+export STORAGE_DRIVER=b2
 export B2_S3_ENDPOINT=...
 export B2_KEY_ID=...
 export B2_APPLICATION_KEY=...
 export B2_BUCKET=...
+export B2_PUBLIC_BASE_URL=...
 node scripts/backupDatabaseToB2.js
 ```
 
@@ -77,29 +83,29 @@ node scripts/backupDatabaseToB2.js
 
 ---
 
-## 5. Agendamento automático (semanal)
+## 5. Agendamento automático (opcional — não está no repo)
 
-Este projeto já inclui o workflow:
+Até configurarem um job externo, o backup corre **manualmente** (secção 4): `npm run backup:db-b2` com variáveis exportadas.
 
-- `.github/workflows/main.yml`
-- Cron semanal: segunda-feira, 06:00 UTC
-- Disparo manual: **Actions → CRM Backup PostgreSQL -> B2 → Run workflow**
+### GitHub Actions (quando quiserem ativar)
 
-### Como resolvemos o erro crítico de versão do `pg_dump` (18 vs 16)
+- **Não** há ficheiro `.github/workflows/...` neste repositório (ver nota no início deste doc).
+- No GitHub: **Actions** → **New workflow** → colar YAML (ver [anexo](#anexo-yaml-github-actions-opcional)), ou criar **Scheduled workflow** na UI com os mesmos passos.
+- **Secrets:** `DATABASE_URL`, `B2_S3_ENDPOINT`, `B2_KEY_ID`, `B2_APPLICATION_KEY`, `B2_BUCKET`, `B2_PUBLIC_BASE_URL` (use um PAT ou deploy key com permissão **`workflow`** se adicionarem o ficheiro por Git).
+- **Motivo típico para não commitar o workflow:** Personal Access Tokens sem scope `workflow` falham no `git push`.
 
-- O backup no CI usa **Docker `postgres:18`** (`PG_DUMP_DOCKER_IMAGE=postgres:18`).
-- Assim, o `pg_dump` usado é sempre da versão 18, independente do cliente instalado no runner.
-- O script também tem fallback automático: se o `pg_dump` local tiver mismatch, tenta Docker `postgres:18`.
+**Porquê Actions vs Cron só no Render?**
 
-### Secrets esperados no GitHub
+- O serviço Web Render (Node) **não traz** `pg_dump`; instalar `postgresql-client` no build é frágil.
+- Um runner Ubuntu com `apt-get install postgresql-client` é estável e não afeta o CRM em produção.
 
-- `DATABASE_URL`
-- `B2_S3_ENDPOINT`
-- `B2_KEY_ID`
-- `B2_APPLICATION_KEY`
-- `B2_BUCKET`
+### Alternativa: **Render Cron Job**
 
-> `B2_PUBLIC_BASE_URL` e `STORAGE_DRIVER` não são necessários para este script específico de backup.
+- Cron na Render com imagem que inclua **Node + `postgresql-client`**, ou script num contentor, com as mesmas variáveis que o script de backup.
+
+### Alternativa: **cron no servidor ou no vosso Mac**
+
+- `crontab -e` com `cd .../backend && /usr/bin/env DATABASE_URL=... npm run backup:db-b2` (definir todas as env necessárias).
 
 ---
 
@@ -182,7 +188,7 @@ Este projeto já inclui o workflow:
 | `pg_dump não encontrado` | Instale `postgresql-client` (Ubuntu `apt`; macOS `brew install libpq`; CI: instalar no job). |
 | `DATABASE_URL em falta` | Exporte a variável no shell ou nos secrets do CI. |
 | `Credenciais B2 incompletas` | Preencha todas as `B2_*` como no CRM. |
-| `Falha no pg_dump por version mismatch` | O workflow já força Docker `postgres:18`; confirme se a etapa “Validate Docker and pg_dump 18 image” passou. |
+| `STORAGE_DRIVER tem de ser b2` | `export STORAGE_DRIVER=b2` para upload. |
 | Erro SSL ao ligar ao Postgres | Na URL use `?sslmode=require` (Render costuma exigir). |
 | Dump pequeno / vazio | Credenciais erradas ou base errada — não use em produção sem validar. |
 
@@ -191,8 +197,61 @@ Este projeto já inclui o workflow:
 ## 10. Ficheiros relacionados no repositório
 
 - `backend/scripts/backupDatabaseToB2.js` — script principal.
-- `.github/workflows/main.yml` — agendamento automático semanal.
 - `backend/package.json` — script `backup:db-b2`.
+- Este documento — inclui [anexo YAML](#anexo-yaml-github-actions-opcional) opcional para GitHub Actions **sem** guardar `.github/workflows/` no Git.
 
 Nenhuma rota HTTP do CRM foi alterada para este fluxo: é **infraestrutura** isolada.
 
+---
+
+## Anexo: YAML GitHub Actions (opcional)
+
+Use quando forem criar o workflow **no GitHub** (ou com commit, **só** se o token tiver permissão `workflow`). Copie e ajuste o cron e os secrets.
+
+```yaml
+name: Backup base de dados (semanal)
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: backup-database-b2
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar cliente PostgreSQL (pg_dump)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: npm ci (backend, sem postinstall)
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Executar backup → B2
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STORAGE_DRIVER: b2
+          B2_S3_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET: ${{ secrets.B2_BUCKET }}
+          B2_PUBLIC_BASE_URL: ${{ secrets.B2_PUBLIC_BASE_URL }}
+          NODE_ENV: production
+        run: node scripts/backupDatabaseToB2.js
+```
