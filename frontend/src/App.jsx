@@ -355,6 +355,9 @@ const DESPESA_CATEGORIAS = [
 
 const labelDespesaCategoria = (id) => DESPESA_CATEGORIAS.find((c) => c.id === id)?.label || id;
 
+/** Formas de pagamento para lançamentos financeiros (seleção manual ou complemento à sugestão PIX). */
+const FIN_FORMAS_OPCOES = ['PIX', 'Transferência', 'TED', 'Boleto', 'Dinheiro', 'Outro'];
+
 const fieldLabels = {
   tipo_pessoa: 'Tipo de pessoa',
   documento: 'Documento',
@@ -820,6 +823,7 @@ function App({ authUser, onLogout = () => {} }) {
 
   const [finResumo, setFinResumo] = useState(null);
   const [finRecebimentos, setFinRecebimentos] = useState([]);
+  const [finPagamentosModelo, setFinPagamentosModelo] = useState([]);
   const [finOsOptions, setFinOsOptions] = useState([]);
   const [finLoading, setFinLoading] = useState(false);
   const [finError, setFinError] = useState('');
@@ -842,18 +846,44 @@ function App({ authUser, onLogout = () => {} }) {
     valor: '',
     data_recebimento: '',
     observacao: '',
+    forma_pagamento: '',
+    destino_pagamento: '',
   });
   const [finPagarLinha, setFinPagarLinha] = useState(null);
   const [finPagarDraft, setFinPagarDraft] = useState({
     valor: '',
     data_pagamento: '',
     observacao: '',
+    forma_pagamento: '',
+    destino_pagamento: '',
+  });
+  const [finExtratoTipo, setFinExtratoTipo] = useState('modelo');
+  const [finExtratoId, setFinExtratoId] = useState('');
+  const [finExtratoData, setFinExtratoData] = useState(null);
+  const [finExtratoLoading, setFinExtratoLoading] = useState(false);
+  const [finExtratoMsg, setFinExtratoMsg] = useState('');
+  const [finMovForm, setFinMovForm] = useState({
+    pessoa_tipo: 'modelo',
+    pessoa_id: '',
+    natureza: 'debito',
+    categoria: 'adiantamento',
+    valor: '',
+    data_movimento: new Date().toISOString().slice(0, 10),
+    forma_pagamento: 'PIX',
+    destino_pagamento: '',
+    observacao: '',
   });
 
-  const [extratoRows, setExtratoRows] = useState([]);
+  const [extratoResumoList, setExtratoResumoList] = useState([]);
+  const [extratoVista, setExtratoVista] = useState('lista');
+  const [extratoSelecionadoId, setExtratoSelecionadoId] = useState('');
+  const [extratoDetalhe, setExtratoDetalhe] = useState(null);
+  const [extratoFiltroVerTudo, setExtratoFiltroVerTudo] = useState(false);
+  const [extratoFiltroMes, setExtratoFiltroMes] = useState('');
+  const [extratoFiltroDe, setExtratoFiltroDe] = useState('');
+  const [extratoFiltroAte, setExtratoFiltroAte] = useState('');
   const [extratoLoading, setExtratoLoading] = useState(false);
   const [extratoError, setExtratoError] = useState('');
-  const [extratoModeloFilter, setExtratoModeloFilter] = useState('');
 
   const current = useMemo(() => cadastroConfig[tab], [tab]);
   const tabEntries = useMemo(() => Object.entries(cadastroConfig), []);
@@ -937,17 +967,19 @@ function App({ authUser, onLogout = () => {} }) {
       if (finDespesaFiltroCategoria) despParams.set('categoria', finDespesaFiltroCategoria);
       if (finDespesaFiltroOsId) despParams.set('os_id', finDespesaFiltroOsId);
       const despQ = despParams.toString() ? `?${despParams.toString()}` : '';
-      const [r1, r2, r3, r4] = await Promise.all([
+      const [r1, r2, r3, r4, r5] = await Promise.all([
         fetch(`${API_BASE}/financeiro/resumo`),
         fetch(`${API_BASE}/financeiro/recebimentos`),
         fetch(`${API_BASE}/ordens-servico`),
         fetch(`${API_BASE}/financeiro/despesas${despQ}`),
+        fetch(`${API_BASE}/financeiro/pagamentos-modelo`),
       ]);
-      if (!r1.ok || !r2.ok || !r3.ok || !r4.ok) throw new Error();
+      if (!r1.ok || !r2.ok || !r3.ok || !r4.ok || !r5.ok) throw new Error();
       setFinResumo(await r1.json());
       setFinRecebimentos(await r2.json());
       setFinOsOptions(await r3.json());
       setFinDespesas(await r4.json());
+      setFinPagamentosModelo(await r5.json());
       await refreshAlertasOperacionais();
     } catch {
       setFinError(LOAD_ERROR_MESSAGE);
@@ -960,6 +992,72 @@ function App({ authUser, onLogout = () => {} }) {
     finDespesaFiltroCategoria,
     finDespesaFiltroOsId,
   ]);
+
+  const loadExtratoPessoa = useCallback(async () => {
+    setFinExtratoMsg('');
+    const id = Number(finExtratoId);
+    if (!finExtratoId || Number.isNaN(id)) {
+      setFinExtratoData(null);
+      return;
+    }
+    setFinExtratoLoading(true);
+    try {
+      const r = await fetch(
+        `${API_BASE}/financeiro/extrato-pessoa?tipo=${encodeURIComponent(finExtratoTipo)}&id=${id}`,
+      );
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || 'Não foi possível carregar o extrato.');
+      setFinExtratoData(data);
+    } catch (e) {
+      setFinExtratoData(null);
+      setFinExtratoMsg(e.message || LOAD_ERROR_MESSAGE);
+    } finally {
+      setFinExtratoLoading(false);
+    }
+  }, [finExtratoTipo, finExtratoId]);
+
+  const registrarMovimentoAvulso = async (e) => {
+    e.preventDefault();
+    setFinError('');
+    const pid = Number(finMovForm.pessoa_id);
+    const tipoMov = finMovForm.pessoa_tipo;
+    const idMovStr = String(finMovForm.pessoa_id || '');
+    if (!finMovForm.pessoa_id || Number.isNaN(pid)) {
+      setFinError('Selecione a pessoa para o movimento.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/financeiro/movimentos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pessoa_tipo: tipoMov,
+          pessoa_id: pid,
+          natureza: finMovForm.natureza,
+          categoria: finMovForm.categoria || 'avulso',
+          valor: Number(finMovForm.valor),
+          data_movimento: finMovForm.data_movimento,
+          forma_pagamento: finMovForm.forma_pagamento || '',
+          destino_pagamento: finMovForm.destino_pagamento || '',
+          observacao: finMovForm.observacao || '',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Erro ao gravar movimento.');
+      setFinMovForm((p) => ({
+        ...p,
+        valor: '',
+        observacao: '',
+        destino_pagamento: '',
+      }));
+      if (finExtratoTipo === tipoMov && String(finExtratoId) === idMovStr) {
+        await loadExtratoPessoa();
+      }
+      await loadFinanceiroPage({ quiet: true });
+    } catch (err) {
+      setFinError(err.message || LOAD_ERROR_MESSAGE);
+    }
+  };
 
   useEffect(() => {
     const checkApi = async () => {
@@ -1016,16 +1114,29 @@ function App({ authUser, onLogout = () => {} }) {
     let cancelled = false;
     const load = async () => {
       try {
-        const r = await fetch(`${API_BASE}/financeiro/os/${finReceberOsId}/contexto`);
-        if (!r.ok) {
-          return;
+        const [rCtx, rSug] = await Promise.all([
+          fetch(`${API_BASE}/financeiro/os/${finReceberOsId}/contexto`),
+          fetch(
+            `${API_BASE}/financeiro/sugestao-pagamento?contexto=recebimento&os_id=${encodeURIComponent(finReceberOsId)}`,
+          ),
+        ]);
+        if (!rCtx.ok) return;
+        const c = await rCtx.json();
+        let sug = { forma_pagamento: '', destino_pagamento: '' };
+        if (rSug.ok) {
+          const j = await rSug.json();
+          sug = {
+            forma_pagamento: j.forma_pagamento || '',
+            destino_pagamento: j.destino_pagamento || '',
+          };
         }
-        const c = await r.json();
         if (cancelled) return;
         setFinReceberDraft((prev) => ({
           ...prev,
           valor:
             c.saldo_receber > 0.005 ? String(Number(c.saldo_receber).toFixed(2)) : prev.valor,
+          forma_pagamento: sug.forma_pagamento,
+          destino_pagamento: sug.destino_pagamento,
         }));
       } catch {
         /* ignore */
@@ -1036,6 +1147,54 @@ function App({ authUser, onLogout = () => {} }) {
       cancelled = true;
     };
   }, [finReceberOsId, finModal]);
+
+  useEffect(() => {
+    if (!finPagarLinha?.os_modelo_id || finModal !== 'pagar') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE}/financeiro/sugestao-pagamento?contexto=pagamento_modelo&os_modelo_id=${encodeURIComponent(finPagarLinha.os_modelo_id)}`,
+        );
+        if (!r.ok || cancelled) return;
+        const s = await r.json();
+        if (cancelled) return;
+        setFinPagarDraft((prev) => ({
+          ...prev,
+          forma_pagamento: s.forma_pagamento || prev.forma_pagamento || '',
+          destino_pagamento: s.destino_pagamento || prev.destino_pagamento || '',
+        }));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [finPagarLinha?.os_modelo_id, finModal]);
+
+  useEffect(() => {
+    if (module !== 'financeiro') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [mRes, bRes, pRes] = await Promise.all([
+          fetch(`${API_BASE}/modelos`),
+          fetch(`${API_BASE}/bookers`),
+          fetch(`${API_BASE}/parceiros`),
+        ]);
+        if (cancelled) return;
+        if (mRes.ok) setModelosList(await mRes.json());
+        if (bRes.ok) setBookersList(await bRes.json());
+        if (pRes.ok) setParceirosList(await pRes.json());
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [module]);
 
   useEffect(() => {
     if (module !== 'cadastros') return;
@@ -1232,31 +1391,55 @@ function App({ authUser, onLogout = () => {} }) {
     loadFinanceiroPage();
   }, [module, loadFinanceiroPage]);
 
+  const loadExtratoResumo = async () => {
+    setExtratoLoading(true);
+    setExtratoError('');
+    try {
+      const r = await fetch(`${API_BASE}/extrato-modelo/resumo`);
+      if (!r.ok) throw new Error();
+      setExtratoResumoList(await r.json());
+    } catch {
+      setExtratoResumoList([]);
+      setExtratoError(LOAD_ERROR_MESSAGE);
+    } finally {
+      setExtratoLoading(false);
+    }
+  };
+
+  const loadExtratoLinhas = async (modeloId, opts) => {
+    if (!modeloId) return;
+    setExtratoLoading(true);
+    setExtratoError('');
+    try {
+      const params = new URLSearchParams();
+      const verTudo = opts?.verTudo === true;
+      if (verTudo) params.set('ver_tudo', '1');
+      else if (opts?.mes) params.set('mes', String(opts.mes).slice(0, 7));
+      else {
+        if (opts?.dataDe) params.set('data_de', String(opts.dataDe).slice(0, 10));
+        if (opts?.dataAte) params.set('data_ate', String(opts.dataAte).slice(0, 10));
+      }
+      const qs = params.toString();
+      const url = `${API_BASE}/extrato-modelo/${encodeURIComponent(modeloId)}/linhas${qs ? `?${qs}` : ''}`;
+      const r = await fetch(url);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || LOAD_ERROR_MESSAGE);
+      setExtratoDetalhe(data);
+    } catch (e) {
+      setExtratoDetalhe(null);
+      setExtratoError(e.message || LOAD_ERROR_MESSAGE);
+    } finally {
+      setExtratoLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (module !== 'extrato') return;
-    const load = async () => {
-      setExtratoLoading(true);
-      setExtratoError('');
-      try {
-        const [mRes, exRes] = await Promise.all([
-          fetch(`${API_BASE}/modelos`),
-          fetch(
-            extratoModeloFilter
-              ? `${API_BASE}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
-              : `${API_BASE}/extrato-modelo`,
-          ),
-        ]);
-        if (!mRes.ok || !exRes.ok) throw new Error();
-        setModelosList(await mRes.json());
-        setExtratoRows(await exRes.json());
-      } catch {
-        setExtratoError(LOAD_ERROR_MESSAGE);
-      } finally {
-        setExtratoLoading(false);
-      }
-    };
-    load();
-  }, [module, extratoModeloFilter]);
+    setExtratoVista('lista');
+    setExtratoSelecionadoId('');
+    setExtratoDetalhe(null);
+    loadExtratoResumo();
+  }, [module]);
 
   useEffect(() => {
     if (module !== 'jobs') return;
@@ -1420,7 +1603,14 @@ function App({ authUser, onLogout = () => {} }) {
     }
   };
 
-  const registrarRecebimento = async ({ os_id, valor, data_recebimento, observacao }) => {
+  const registrarRecebimento = async ({
+    os_id,
+    valor,
+    data_recebimento,
+    observacao,
+    forma_pagamento,
+    destino_pagamento,
+  }) => {
     setFinError('');
     try {
       const res = await fetch(`${API_BASE}/financeiro/recebimentos`, {
@@ -1431,6 +1621,8 @@ function App({ authUser, onLogout = () => {} }) {
           valor: Number(valor),
           data_recebimento,
           observacao: observacao || '',
+          forma_pagamento: forma_pagamento || '',
+          destino_pagamento: destino_pagamento || '',
         }),
       });
       const data = await res.json();
@@ -1487,7 +1679,15 @@ function App({ authUser, onLogout = () => {} }) {
     }
   };
 
-  const submitPagamentoModelo = async ({ os_modelo_id, valor, data_pagamento, observacao }) => {
+  const submitPagamentoModelo = async ({
+    os_modelo_id,
+    valor,
+    data_pagamento,
+    observacao,
+    forma_pagamento,
+    destino_pagamento,
+    modelo_id,
+  }) => {
     setExtratoError('');
     setFinError('');
     try {
@@ -1499,20 +1699,38 @@ function App({ authUser, onLogout = () => {} }) {
           valor: Number(valor),
           data_pagamento,
           observacao: observacao || '',
+          forma_pagamento: forma_pagamento || '',
+          destino_pagamento: destino_pagamento || '',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Erro ao salvar.');
       setFinPagarLinha(null);
       setFinModal(null);
-      const exRes = await fetch(
-        extratoModeloFilter
-          ? `${API_BASE}/extrato-modelo?modelo_id=${encodeURIComponent(extratoModeloFilter)}`
-          : `${API_BASE}/extrato-modelo`,
-      );
-      if (exRes.ok) setExtratoRows(await exRes.json());
+      if (module === 'extrato') {
+        await loadExtratoResumo();
+        if (
+          extratoVista === 'detalhe' &&
+          modelo_id != null &&
+          String(extratoSelecionadoId) === String(modelo_id)
+        ) {
+          await loadExtratoLinhas(String(modelo_id), {
+            verTudo: extratoFiltroVerTudo,
+            mes: extratoFiltroMes || undefined,
+            dataDe: extratoFiltroDe || undefined,
+            dataAte: extratoFiltroAte || undefined,
+          });
+        }
+      }
       await refreshAlertasOperacionais();
       await loadFinanceiroPage({ quiet: true });
+      if (
+        modelo_id != null &&
+        finExtratoTipo === 'modelo' &&
+        String(finExtratoId) === String(modelo_id)
+      ) {
+        await loadExtratoPessoa();
+      }
     } catch (e) {
       setExtratoError(e.message || LOAD_ERROR_MESSAGE);
       setFinError(e.message || LOAD_ERROR_MESSAGE);
@@ -3140,7 +3358,9 @@ function App({ authUser, onLogout = () => {} }) {
                                 ? `${formatBRL(finResumo.total_recebido_cliente)} rec.`
                                 : '—'
                               : module === 'extrato'
-                                ? `${extratoRows.length} linha(s)`
+                                ? extratoVista === 'detalhe' && extratoDetalhe?.linhas
+                                  ? `${extratoDetalhe.linhas.length} mov.`
+                                  : `${extratoResumoList.length} modelo(s)`
                                 : module === 'atendimento'
                                   ? 'Demonstração'
                                   : module === 'website'
@@ -3235,6 +3455,8 @@ function App({ authUser, onLogout = () => {} }) {
                                         : '',
                                     data_recebimento: new Date().toISOString().slice(0, 10),
                                     observacao: '',
+                                    forma_pagamento: '',
+                                    destino_pagamento: '',
                                   });
                                 }}
                               >
@@ -3307,6 +3529,8 @@ function App({ authUser, onLogout = () => {} }) {
                                             : '',
                                         data_pagamento: new Date().toISOString().slice(0, 10),
                                         observacao: '',
+                                        forma_pagamento: '',
+                                        destino_pagamento: '',
                                       });
                                     }}
                                   >
@@ -3405,6 +3629,8 @@ function App({ authUser, onLogout = () => {} }) {
                                                     : '',
                                                 data_recebimento: new Date().toISOString().slice(0, 10),
                                                 observacao: '',
+                                                forma_pagamento: '',
+                                                destino_pagamento: '',
                                               });
                                             }}
                                           >
@@ -3428,6 +3654,8 @@ function App({ authUser, onLogout = () => {} }) {
                                 valor: finReceberDraft.valor,
                                 data_recebimento: finReceberDraft.data_recebimento,
                                 observacao: finReceberDraft.observacao,
+                                forma_pagamento: finReceberDraft.forma_pagamento,
+                                destino_pagamento: finReceberDraft.destino_pagamento,
                               });
                             }}
                           >
@@ -3470,6 +3698,38 @@ function App({ authUser, onLogout = () => {} }) {
                                 className="w-full rounded-lg border border-slate-300 px-3 py-2"
                               />
                             </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Forma de pagamento</span>
+                              <select
+                                value={finReceberDraft.forma_pagamento}
+                                onChange={(e) =>
+                                  setFinReceberDraft((p) => ({ ...p, forma_pagamento: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              >
+                                <option value="">— escolher —</option>
+                                {FIN_FORMAS_OPCOES.map((f) => (
+                                  <option key={f} value={f}>
+                                    {f}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Destino (ex.: chave Pix, conta)</span>
+                              <input
+                                value={finReceberDraft.destino_pagamento}
+                                onChange={(e) =>
+                                  setFinReceberDraft((p) => ({ ...p, destino_pagamento: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                placeholder="Opcional; preenchido automaticamente se houver Pix no cadastro"
+                              />
+                            </label>
+                            <p className="text-xs text-slate-500">
+                              Com chave Pix no cliente, o sistema sugere PIX e o destino; pode alterar antes de
+                              confirmar.
+                            </p>
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
@@ -3561,6 +3821,8 @@ function App({ authUser, onLogout = () => {} }) {
                                                         : '',
                                                     data_pagamento: new Date().toISOString().slice(0, 10),
                                                     observacao: '',
+                                                    forma_pagamento: '',
+                                                    destino_pagamento: '',
                                                   });
                                                 }}
                                               >
@@ -3586,6 +3848,9 @@ function App({ authUser, onLogout = () => {} }) {
                                 valor: finPagarDraft.valor,
                                 data_pagamento: finPagarDraft.data_pagamento,
                                 observacao: finPagarDraft.observacao,
+                                forma_pagamento: finPagarDraft.forma_pagamento,
+                                destino_pagamento: finPagarDraft.destino_pagamento,
+                                modelo_id: finPagarLinha.modelo_id,
                               });
                             }}
                           >
@@ -3628,6 +3893,38 @@ function App({ authUser, onLogout = () => {} }) {
                                 className="w-full rounded-lg border border-slate-300 px-3 py-2"
                               />
                             </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Forma de pagamento</span>
+                              <select
+                                value={finPagarDraft.forma_pagamento}
+                                onChange={(e) =>
+                                  setFinPagarDraft((p) => ({ ...p, forma_pagamento: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              >
+                                <option value="">— escolher —</option>
+                                {FIN_FORMAS_OPCOES.map((f) => (
+                                  <option key={f} value={f}>
+                                    {f}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block text-sm text-slate-600">
+                              <span className="mb-1 block">Destino (ex.: chave Pix da modelo)</span>
+                              <input
+                                value={finPagarDraft.destino_pagamento}
+                                onChange={(e) =>
+                                  setFinPagarDraft((p) => ({ ...p, destino_pagamento: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                placeholder="Opcional; sugerido automaticamente se houver Pix no cadastro"
+                              />
+                            </label>
+                            <p className="text-xs text-slate-500">
+                              Com Pix cadastrado na modelo, o sistema sugere PIX e o destino; pode alterar antes de
+                              confirmar.
+                            </p>
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
@@ -3753,6 +4050,8 @@ function App({ authUser, onLogout = () => {} }) {
                         valor: '',
                         data_recebimento: new Date().toISOString().slice(0, 10),
                         observacao: '',
+                        forma_pagamento: '',
+                        destino_pagamento: '',
                       });
                     }}
                   >
@@ -3769,6 +4068,8 @@ function App({ authUser, onLogout = () => {} }) {
                         valor: '',
                         data_pagamento: new Date().toISOString().slice(0, 10),
                         observacao: '',
+                        forma_pagamento: '',
+                        destino_pagamento: '',
                       });
                     }}
                   >
@@ -3925,6 +4226,8 @@ function App({ authUser, onLogout = () => {} }) {
                                         : '',
                                     data_recebimento: new Date().toISOString().slice(0, 10),
                                     observacao: '',
+                                    forma_pagamento: '',
+                                    destino_pagamento: '',
                                   });
                                 }}
                               >
@@ -4001,6 +4304,8 @@ function App({ authUser, onLogout = () => {} }) {
                                             : '',
                                         data_pagamento: new Date().toISOString().slice(0, 10),
                                         observacao: '',
+                                        forma_pagamento: '',
+                                        destino_pagamento: '',
                                       });
                                     }}
                                   >
@@ -4015,6 +4320,266 @@ function App({ authUser, onLogout = () => {} }) {
                     </table>
                   </div>
                 )}
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Extrato por pessoa</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Modelos, bookers e fornecedores: entradas (jobs/comissões), saídas (pagamentos e lançamentos avulsos) e
+                  saldo.
+                </p>
+                <div className="mt-4 flex flex-wrap items-end gap-3">
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Tipo</span>
+                    <select
+                      value={finExtratoTipo}
+                      onChange={(e) => {
+                        setFinExtratoTipo(e.target.value);
+                        setFinExtratoId('');
+                        setFinExtratoData(null);
+                        setFinExtratoMsg('');
+                      }}
+                      className="rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="modelo">Modelo</option>
+                      <option value="booker">Booker</option>
+                      <option value="parceiro">Fornecedor</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600">
+                    <span className="mb-1 block">Pessoa</span>
+                    <select
+                      value={finExtratoId}
+                      onChange={(e) => {
+                        setFinExtratoId(e.target.value);
+                        setFinExtratoData(null);
+                        setFinExtratoMsg('');
+                      }}
+                      className="min-w-[14rem] rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="">— escolher —</option>
+                      {finExtratoTipo === 'modelo'
+                        ? modelosList.map((m) => (
+                            <option key={m.id} value={String(m.id)}>
+                              {m.nome}
+                            </option>
+                          ))
+                        : finExtratoTipo === 'booker'
+                          ? bookersList.map((b) => (
+                              <option key={b.id} value={String(b.id)}>
+                                {b.nome}
+                              </option>
+                            ))
+                          : parceirosList.map((p) => (
+                              <option key={p.id} value={String(p.id)}>
+                                {p.razao_social_ou_nome || p.nome_fantasia || `#${p.id}`}
+                              </option>
+                            ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                    style={{ backgroundColor: BRAND_ORANGE }}
+                    onClick={() => loadExtratoPessoa()}
+                  >
+                    Consultar
+                  </button>
+                </div>
+                {finExtratoMsg ? <p className="mt-2 text-sm text-red-600">{finExtratoMsg}</p> : null}
+                {finExtratoLoading ? (
+                  <p className="mt-3 text-sm text-slate-500">A carregar extrato...</p>
+                ) : finExtratoData ? (
+                  <div className="mt-4 space-y-3">
+                    <p className="text-sm font-medium text-slate-800">
+                      {finExtratoData.nome || '—'}{' '}
+                      <span className="text-slate-500">
+                        ({finExtratoData.pessoa_tipo} #{finExtratoData.pessoa_id})
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap gap-4 text-sm">
+                      <span className="text-emerald-800">
+                        + Entradas: <strong>{formatBRL(finExtratoData.totais?.entradas ?? 0)}</strong>
+                      </span>
+                      <span className="text-red-800">
+                        − Saídas: <strong>{formatBRL(finExtratoData.totais?.saidas ?? 0)}</strong>
+                      </span>
+                      <span className="text-slate-900">
+                        Saldo: <strong>{formatBRL(finExtratoData.totais?.saldo ?? 0)}</strong>
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
+                            <th className="px-2 py-2">Tipo</th>
+                            <th className="px-2 py-2">Data</th>
+                            <th className="px-2 py-2">Descrição</th>
+                            <th className="px-2 py-2">Forma</th>
+                            <th className="px-2 py-2">Destino</th>
+                            <th className="px-2 py-2 text-right">Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(finExtratoData.linhas || []).map((ln) => (
+                            <tr key={ln.ref} className="border-b border-slate-100">
+                              <td className="px-2 py-2 whitespace-nowrap">
+                                {ln.tipo === 'entrada' ? (
+                                  <span className="text-emerald-700">Entrada</span>
+                                ) : (
+                                  <span className="text-red-700">Saída</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 whitespace-nowrap">{String(ln.data || '').slice(0, 10)}</td>
+                              <td className="px-2 py-2">{ln.descricao}</td>
+                              <td className="px-2 py-2">{ln.forma_pagamento || '—'}</td>
+                              <td className="px-2 py-2 max-w-[12rem] truncate" title={ln.destino_pagamento}>
+                                {ln.destino_pagamento || '—'}
+                              </td>
+                              <td className="px-2 py-2 text-right font-medium">{formatBRL(ln.valor)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Movimento avulso</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Adiantamentos, ajustes ou pagamentos fora da O.S. (ex.: «Adiantamento Booker João — R$ 200»).
+                </p>
+                <form className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={registrarMovimentoAvulso}>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Tipo de pessoa</span>
+                    <select
+                      value={finMovForm.pessoa_tipo}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, pessoa_tipo: e.target.value, pessoa_id: '' }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="modelo">Modelo</option>
+                      <option value="booker">Booker</option>
+                      <option value="parceiro">Fornecedor</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Pessoa</span>
+                    <select
+                      value={finMovForm.pessoa_id}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, pessoa_id: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    >
+                      <option value="">— escolher —</option>
+                      {finMovForm.pessoa_tipo === 'modelo'
+                        ? modelosList.map((m) => (
+                            <option key={m.id} value={String(m.id)}>
+                              {m.nome}
+                            </option>
+                          ))
+                        : finMovForm.pessoa_tipo === 'booker'
+                          ? bookersList.map((b) => (
+                              <option key={b.id} value={String(b.id)}>
+                                {b.nome}
+                              </option>
+                            ))
+                          : parceirosList.map((p) => (
+                              <option key={p.id} value={String(p.id)}>
+                                {p.razao_social_ou_nome || p.nome_fantasia || `#${p.id}`}
+                              </option>
+                            ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Natureza</span>
+                    <select
+                      value={finMovForm.natureza}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, natureza: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="debito">Saída / pagamento (débito)</option>
+                      <option value="credito">Entrada / crédito</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Categoria</span>
+                    <select
+                      value={finMovForm.categoria}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, categoria: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      <option value="adiantamento">Adiantamento</option>
+                      <option value="ajuste">Ajuste</option>
+                      <option value="outro">Outro</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Valor (R$)</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={finMovForm.valor}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, valor: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Data</span>
+                    <input
+                      type="date"
+                      autoComplete="off"
+                      value={toDateInputValue(finMovForm.data_movimento)}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, data_movimento: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      required
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Forma</span>
+                    <select
+                      value={finMovForm.forma_pagamento}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, forma_pagamento: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                    >
+                      {FIN_FORMAS_OPCOES.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-1">
+                    <span className="mb-1 block">Destino</span>
+                    <input
+                      value={finMovForm.destino_pagamento}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, destino_pagamento: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      placeholder="Chave Pix, conta, etc."
+                    />
+                  </label>
+                  <label className="text-sm text-slate-600 sm:col-span-2">
+                    <span className="mb-1 block">Observação</span>
+                    <input
+                      value={finMovForm.observacao}
+                      onChange={(e) => setFinMovForm((p) => ({ ...p, observacao: e.target.value }))}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      placeholder="Ex.: Adiantamento Booker João"
+                    />
+                  </label>
+                  <div className="sm:col-span-2">
+                    <button
+                      type="submit"
+                      className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                      style={{ backgroundColor: BRAND_ORANGE }}
+                    >
+                      Registar movimento
+                    </button>
+                  </div>
+                </form>
               </section>
 
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -4152,6 +4717,8 @@ function App({ authUser, onLogout = () => {} }) {
                           <th className="px-2 py-2">Cliente</th>
                           <th className="px-2 py-2">Valor</th>
                           <th className="px-2 py-2">Data</th>
+                          <th className="px-2 py-2">Forma</th>
+                          <th className="px-2 py-2">Destino</th>
                           <th className="px-2 py-2">Obs.</th>
                         </tr>
                       </thead>
@@ -4162,9 +4729,59 @@ function App({ authUser, onLogout = () => {} }) {
                             <td className="px-2 py-2">{r.nome_empresa || r.nome_fantasia}</td>
                             <td className="px-2 py-2">{formatBRL(r.valor)}</td>
                             <td className="px-2 py-2">{String(r.data_recebimento).slice(0, 10)}</td>
+                            <td className="px-2 py-2">{r.forma_pagamento || '—'}</td>
+                            <td className="px-2 py-2 max-w-[10rem] truncate" title={r.destino_pagamento}>
+                              {r.destino_pagamento || '—'}
+                            </td>
                             <td className="px-2 py-2">{r.observacao}</td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-base font-semibold text-slate-800">Últimos pagamentos a modelos</h3>
+                {finLoading ? (
+                  <p className="mt-2 text-sm text-slate-500">Carregando...</p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-slate-500">
+                          <th className="px-2 py-2">O.S.</th>
+                          <th className="px-2 py-2">Modelo</th>
+                          <th className="px-2 py-2">Valor</th>
+                          <th className="px-2 py-2">Data</th>
+                          <th className="px-2 py-2">Forma</th>
+                          <th className="px-2 py-2">Destino</th>
+                          <th className="px-2 py-2">Obs.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {finPagamentosModelo.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-2 py-6 text-center text-slate-500">
+                              Nenhum pagamento registado.
+                            </td>
+                          </tr>
+                        ) : (
+                          finPagamentosModelo.map((p) => (
+                            <tr key={p.id} className="border-b border-slate-100">
+                              <td className="px-2 py-2">#{p.os_id}</td>
+                              <td className="px-2 py-2">{p.modelo_nome}</td>
+                              <td className="px-2 py-2">{formatBRL(p.valor)}</td>
+                              <td className="px-2 py-2">{String(p.data_pagamento).slice(0, 10)}</td>
+                              <td className="px-2 py-2">{p.forma_pagamento || '—'}</td>
+                              <td className="px-2 py-2 max-w-[10rem] truncate" title={p.destino_pagamento}>
+                                {p.destino_pagamento || '—'}
+                              </td>
+                              <td className="px-2 py-2">{p.observacao}</td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -4177,85 +4794,221 @@ function App({ authUser, onLogout = () => {} }) {
           {module === 'extrato' && (
             <>
               <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-base font-semibold text-slate-800">Extrato por linha (job × modelo)</h3>
+                    <h3 className="text-base font-semibold text-slate-800">Extrato por modelo</h3>
                     <p className="mt-1 text-sm text-slate-500">
-                      Líquido calculado como na O.S.; pago é a soma dos lançamentos em pagamentos de modelo.
+                      Histórico automático (jobs, pagamentos, adiantamentos e ajustes). O extrato não pode ser
+                      editado manualmente — reflete o financeiro e as O.S.
                     </p>
                   </div>
-                  <label className="text-sm text-slate-600">
-                    Filtrar por modelo
-                    <select
-                      value={extratoModeloFilter}
-                      onChange={(e) => setExtratoModeloFilter(e.target.value)}
-                      className="ml-2 rounded-lg border border-slate-300 px-3 py-2"
+                  {extratoVista === 'detalhe' ? (
+                    <button
+                      type="button"
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                      onClick={() => {
+                        setExtratoVista('lista');
+                        setExtratoSelecionadoId('');
+                        setExtratoDetalhe(null);
+                        loadExtratoResumo();
+                      }}
                     >
-                      <option value="">Todos</option>
-                      {modelosParaSelecao.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.nome}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      ← Voltar à lista
+                    </button>
+                  ) : null}
                 </div>
-                {extratoLoading ? (
-                  <p className="mt-4 text-sm text-slate-500">Carregando...</p>
-                ) : (
-                  <div className="mt-4 overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="px-2 py-2">Linha</th>
-                          <th className="px-2 py-2">Job (O.S.)</th>
-                          <th className="px-2 py-2">Cliente</th>
-                          <th className="px-2 py-2">Modelo</th>
-                          <th className="px-2 py-2">Líquido</th>
-                          <th className="px-2 py-2">Pago</th>
-                          <th className="px-2 py-2">Saldo</th>
-                          <th className="px-2 py-2">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {extratoRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="px-2 py-6 text-center text-sm text-slate-500">
-                              Nenhuma linha de modelo em O.S. Aprove um orçamento e adicione modelos na O.S.
-                            </td>
-                          </tr>
-                        ) : (
-                          extratoRows.map((row) => (
-                            <tr key={row.os_modelo_id} className="border-b border-slate-100">
-                              <td className="px-2 py-2 font-mono text-xs text-slate-600">{row.os_modelo_id}</td>
-                              <td className="px-2 py-2 font-medium">#{row.job_id}</td>
-                              <td className="px-2 py-2">{row.cliente}</td>
-                              <td className="px-2 py-2">{row.modelo_nome}</td>
-                              <td className="px-2 py-2">{formatBRL(row.liquido)}</td>
-                              <td className="px-2 py-2">{formatBRL(row.pago)}</td>
-                              <td className="px-2 py-2">{formatBRL(row.saldo)}</td>
-                              <td className="px-2 py-2">
-                                <span
-                                  className={
-                                    row.status === 'quitado'
-                                      ? 'rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-800'
-                                      : 'rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-900'
-                                  }
-                                >
-                                  {row.status}
-                                </span>
-                              </td>
+
+                {extratoVista === 'lista' ? (
+                  <>
+                    {extratoLoading ? (
+                      <p className="mt-4 text-sm text-slate-500">A carregar…</p>
+                    ) : (
+                      <div className="mt-4 overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 text-left text-slate-500">
+                              <th className="px-2 py-2">Modelo</th>
+                              <th className="px-2 py-2 text-right">Saldo atual</th>
+                              <th className="px-2 py-2" />
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                          </thead>
+                          <tbody>
+                            {extratoResumoList.length === 0 ? (
+                              <tr>
+                                <td colSpan={3} className="px-2 py-6 text-center text-slate-500">
+                                  Nenhum modelo cadastrado.
+                                </td>
+                              </tr>
+                            ) : (
+                              extratoResumoList.map((m) => (
+                                <tr key={m.id} className="border-b border-slate-100">
+                                  <td className="px-2 py-2 font-medium text-slate-900">{m.nome}</td>
+                                  <td className="px-2 py-2 text-right tabular-nums">{formatBRL(m.saldo_atual)}</td>
+                                  <td className="px-2 py-2 text-right">
+                                    <button
+                                      type="button"
+                                      className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
+                                      style={{ backgroundColor: BRAND_ORANGE }}
+                                      onClick={() => {
+                                        setExtratoSelecionadoId(String(m.id));
+                                        setExtratoVista('detalhe');
+                                        setExtratoFiltroVerTudo(false);
+                                        setExtratoFiltroMes('');
+                                        setExtratoFiltroDe('');
+                                        setExtratoFiltroAte('');
+                                        loadExtratoLinhas(String(m.id), {});
+                                      }}
+                                    >
+                                      Ver extrato
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                      <p className="text-sm font-medium text-slate-800">
+                        {extratoDetalhe?.nome || '—'}{' '}
+                        <span className="font-normal text-slate-500">(#{extratoSelecionadoId})</span>
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-end gap-3">
+                        <label className="flex items-center gap-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={extratoFiltroVerTudo}
+                            onChange={(e) => {
+                              setExtratoFiltroVerTudo(e.target.checked);
+                              if (e.target.checked) {
+                                setExtratoFiltroMes('');
+                                setExtratoFiltroDe('');
+                                setExtratoFiltroAte('');
+                              }
+                            }}
+                          />
+                          Ver tudo
+                        </label>
+                        {!extratoFiltroVerTudo ? (
+                          <>
+                            <label className="text-sm text-slate-600">
+                              <span className="mb-1 block">Mês (AAAA-MM)</span>
+                              <input
+                                type="month"
+                                value={extratoFiltroMes}
+                                onChange={(e) => {
+                                  setExtratoFiltroMes(e.target.value);
+                                  setExtratoFiltroDe('');
+                                  setExtratoFiltroAte('');
+                                }}
+                                className="rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                            </label>
+                            <span className="text-xs text-slate-500">ou</span>
+                            <label className="text-sm text-slate-600">
+                              <span className="mb-1 block">De</span>
+                              <input
+                                type="date"
+                                autoComplete="off"
+                                value={toDateInputValue(extratoFiltroDe)}
+                                onChange={(e) => {
+                                  setExtratoFiltroDe(e.target.value);
+                                  setExtratoFiltroMes('');
+                                }}
+                                className="rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                            </label>
+                            <label className="text-sm text-slate-600">
+                              <span className="mb-1 block">Até</span>
+                              <input
+                                type="date"
+                                autoComplete="off"
+                                value={toDateInputValue(extratoFiltroAte)}
+                                onChange={(e) => {
+                                  setExtratoFiltroAte(e.target.value);
+                                  setExtratoFiltroMes('');
+                                }}
+                                className="rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                            </label>
+                          </>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="rounded-xl px-4 py-2 text-sm font-semibold text-white"
+                          style={{ backgroundColor: BRAND_ORANGE }}
+                          onClick={() =>
+                            loadExtratoLinhas(extratoSelecionadoId, {
+                              verTudo: extratoFiltroVerTudo,
+                              mes: extratoFiltroMes || undefined,
+                              dataDe: extratoFiltroDe || undefined,
+                              dataAte: extratoFiltroAte || undefined,
+                            })
+                          }
+                        >
+                          Aplicar filtros
+                        </button>
+                      </div>
+                      {extratoDetalhe?.filtros?.periodo_inicio ? (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Período: {extratoDetalhe.filtros.periodo_inicio} a {extratoDetalhe.filtros.periodo_fim}
+                          {extratoDetalhe.filtros.mes_corrente ? ' (mês corrente)' : ''}
+                        </p>
+                      ) : null}
+                    </div>
+                    {extratoLoading ? (
+                      <p className="mt-4 text-sm text-slate-500">A carregar…</p>
+                    ) : (
+                      <div className="mt-4 overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
+                              <th className="px-2 py-2">Data</th>
+                              <th className="px-2 py-2">Descrição</th>
+                              <th className="px-2 py-2">Cliente</th>
+                              <th className="px-2 py-2">O.S.</th>
+                              <th className="px-2 py-2 text-right">Crédito</th>
+                              <th className="px-2 py-2 text-right">Débito</th>
+                              <th className="px-2 py-2 text-right">Saldo</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {!extratoDetalhe?.linhas?.length ? (
+                              <tr>
+                                <td colSpan={7} className="px-2 py-6 text-center text-slate-500">
+                                  Sem movimentos neste período.
+                                </td>
+                              </tr>
+                            ) : (
+                              extratoDetalhe.linhas.map((ln) => (
+                                <tr key={ln.id} className="border-b border-slate-100">
+                                  <td className="px-2 py-2 whitespace-nowrap">{ln.data}</td>
+                                  <td className="px-2 py-2">{ln.descricao}</td>
+                                  <td className="px-2 py-2">{ln.cliente || '—'}</td>
+                                  <td className="px-2 py-2">{ln.os_id != null ? `#${ln.os_id}` : '—'}</td>
+                                  <td className="px-2 py-2 text-right text-emerald-800">
+                                    {ln.credito > 0 ? formatBRL(ln.credito) : '—'}
+                                  </td>
+                                  <td className="px-2 py-2 text-right text-red-800">
+                                    {ln.debito > 0 ? formatBRL(ln.debito) : '—'}
+                                  </td>
+                                  <td className="px-2 py-2 text-right font-medium tabular-nums">
+                                    {formatBRL(ln.saldo_acumulado)}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
                 )}
-                {extratoError && <p className="mt-3 text-sm text-red-600">{extratoError}</p>}
-                <p className="mt-4 text-sm text-slate-500">
-                  Pagamentos a modelos são registrados no módulo <strong>Financeiro</strong>.
-                </p>
+                {extratoError ? <p className="mt-3 text-sm text-red-600">{extratoError}</p> : null}
               </section>
             </>
           )}

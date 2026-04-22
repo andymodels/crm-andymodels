@@ -667,6 +667,7 @@ makeCrudRoutes({
     'uf',
     'website',
     'instagram',
+    'formas_pagamento',
     'observacoes',
   ],
 });
@@ -711,6 +712,7 @@ makeCrudRoutes({
     'uf',
     'website',
     'instagram',
+    'formas_pagamento',
     'observacoes',
   ],
 });

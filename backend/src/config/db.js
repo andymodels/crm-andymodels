@@ -86,6 +86,10 @@ const initDb = async () => {
     ALTER TABLE clientes
     ADD COLUMN IF NOT EXISTS instagram TEXT NOT NULL DEFAULT '';
   `);
+  await pool.query(`
+    ALTER TABLE clientes
+    ADD COLUMN IF NOT EXISTS formas_pagamento JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
 
   try {
     await pool.query(`
@@ -704,6 +708,8 @@ const initDb = async () => {
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+  await pool.query(`ALTER TABLE recebimentos ADD COLUMN IF NOT EXISTS forma_pagamento TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE recebimentos ADD COLUMN IF NOT EXISTS destino_pagamento TEXT NOT NULL DEFAULT '';`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pagamentos_modelo (
@@ -714,6 +720,52 @@ const initDb = async () => {
       observacao TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+  `);
+  await pool.query(`ALTER TABLE pagamentos_modelo ADD COLUMN IF NOT EXISTS forma_pagamento TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE pagamentos_modelo ADD COLUMN IF NOT EXISTS destino_pagamento TEXT NOT NULL DEFAULT '';`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fin_movimentos (
+      id SERIAL PRIMARY KEY,
+      pessoa_tipo TEXT NOT NULL,
+      pessoa_id INTEGER NOT NULL,
+      natureza TEXT NOT NULL,
+      categoria TEXT NOT NULL DEFAULT 'avulso',
+      valor NUMERIC(12, 2) NOT NULL,
+      data_movimento DATE NOT NULL,
+      forma_pagamento TEXT NOT NULL DEFAULT '',
+      destino_pagamento TEXT NOT NULL DEFAULT '',
+      observacao TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT fin_movimentos_pessoa_chk CHECK (pessoa_tipo IN ('modelo', 'booker', 'parceiro')),
+      CONSTRAINT fin_movimentos_natureza_chk CHECK (natureza IN ('credito', 'debito')),
+      CONSTRAINT fin_movimentos_valor_chk CHECK (valor > 0)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_fin_movimentos_pessoa ON fin_movimentos (pessoa_tipo, pessoa_id);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS extrato_modelo_linhas (
+      id SERIAL PRIMARY KEY,
+      modelo_id INTEGER NOT NULL REFERENCES modelos(id) ON DELETE CASCADE,
+      data_lancamento DATE NOT NULL,
+      descricao TEXT NOT NULL,
+      cliente TEXT NOT NULL DEFAULT '',
+      os_id INTEGER REFERENCES ordens_servico(id) ON DELETE SET NULL,
+      credito NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      debito NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      tipo_linha TEXT NOT NULL,
+      ref_tipo TEXT NOT NULL,
+      ref_id INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT extrato_modelo_tipo_chk CHECK (tipo_linha IN ('job', 'pagamento', 'adiantamento', 'ajuste')),
+      CONSTRAINT extrato_modelo_cred_deb_chk CHECK (credito >= 0 AND debito >= 0),
+      CONSTRAINT uq_extrato_modelo_ref UNIQUE (ref_tipo, ref_id)
+    );
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_extrato_modelo_modelo_data
+    ON extrato_modelo_linhas (modelo_id, data_lancamento, id);
   `);
 
   await pool.query(`
@@ -982,6 +1034,13 @@ const initDb = async () => {
   await pool.query(`
     ALTER TABLE radio_tracks ALTER COLUMN audio_storage_path DROP NOT NULL;
   `);
+
+  try {
+    const { backfillExtratoModeloIfEmpty } = require('../services/extratoModeloSync');
+    await backfillExtratoModeloIfEmpty(pool);
+  } catch (e) {
+    console.warn('[initDb] extrato modelo backfill:', e.message);
+  }
 };
 
 module.exports = {

@@ -1,74 +1,53 @@
 const express = require('express');
 const { pool } = require('../config/db');
-const { lineLiquido } = require('../services/osFinanceiro');
+const { getExtratoModeloLinhas } = require('../services/extratoModeloRead');
 
 const router = express.Router();
 
-router.get('/extrato-modelo', async (req, res, next) => {
+const n = (v) => Number(v || 0);
+
+/**
+ * Lista de modelos com saldo atual (soma crédito − débito nas linhas do extrato).
+ * GET /extrato-modelo/resumo
+ */
+router.get('/extrato-modelo/resumo', async (req, res, next) => {
   try {
-    const modeloId = req.query.modelo_id != null && req.query.modelo_id !== '' ? Number(req.query.modelo_id) : null;
-    if (modeloId != null && Number.isNaN(modeloId)) {
+    const r = await pool.query(`
+      SELECT
+        m.id,
+        m.nome,
+        COALESCE(SUM(e.credito - e.debito), 0)::numeric AS saldo_atual
+      FROM modelos m
+      LEFT JOIN extrato_modelo_linhas e ON e.modelo_id = m.id
+      GROUP BY m.id, m.nome
+      ORDER BY m.nome ASC
+    `);
+    res.json(
+      r.rows.map((row) => ({
+        id: row.id,
+        nome: row.nome,
+        saldo_atual: n(row.saldo_atual),
+      })),
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Extrato detalhado (somente leitura).
+ * GET /extrato-modelo/:modeloId/linhas
+ */
+router.get('/extrato-modelo/:modeloId/linhas', async (req, res, next) => {
+  try {
+    const modeloId = Number(req.params.modeloId);
+    if (Number.isNaN(modeloId) || modeloId <= 0) {
       return res.status(400).json({ message: 'modelo_id invalido.' });
     }
-
-    let sql = `
-      SELECT
-        om.id AS os_modelo_id,
-        om.os_id,
-        om.modelo_id,
-        om.cache_modelo,
-        om.emite_nf_propria,
-        os.imposto_percent,
-        os.agencia_fee_percent,
-        c.nome_empresa,
-        c.nome_fantasia,
-        COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
-        os.status AS os_status
-      FROM os_modelos om
-      JOIN ordens_servico os ON os.id = om.os_id
-      JOIN clientes c ON c.id = os.cliente_id
-      LEFT JOIN modelos m ON m.id = om.modelo_id
-    `;
-    const params = [];
-    if (modeloId != null) {
-      sql += ' WHERE om.modelo_id = $1';
-      params.push(modeloId);
-    }
-    sql += ' ORDER BY om.os_id DESC, om.id';
-
-    const { rows } = await pool.query(sql, params);
-    const out = [];
-
-    for (const row of rows) {
-      const liquido = lineLiquido(
-        row.cache_modelo,
-        row.imposto_percent,
-        row.agencia_fee_percent,
-        row.emite_nf_propria,
-      );
-      const pay = await pool.query(
-        'SELECT COALESCE(SUM(valor), 0) AS pago FROM pagamentos_modelo WHERE os_modelo_id = $1',
-        [row.os_modelo_id],
-      );
-      const pago = Number(pay.rows[0].pago);
-      const saldo = liquido - pago;
-      const status = Math.abs(saldo) < 0.01 ? 'quitado' : 'pendente';
-
-      out.push({
-        os_modelo_id: row.os_modelo_id,
-        job_id: row.os_id,
-        cliente: row.nome_empresa || row.nome_fantasia || '',
-        modelo_nome: row.modelo_nome,
-        liquido,
-        pago,
-        saldo,
-        status,
-        os_status: row.os_status,
-      });
-    }
-
+    const out = await getExtratoModeloLinhas(pool, modeloId, req.query);
     res.json(out);
   } catch (e) {
+    if (e.status === 404) return res.status(404).json({ message: e.message });
     next(e);
   }
 });

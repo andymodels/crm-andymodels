@@ -96,6 +96,7 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
         os.emitir_contrato,
         os.contrato_status,
         COALESCE(NULLIF(TRIM(m.nome), ''), NULLIF(TRIM(om.rotulo), ''), 'A definir') AS modelo_nome,
+        om.modelo_id,
         c.nome_empresa,
         c.nome_fantasia
       FROM os_modelos om
@@ -136,6 +137,7 @@ router.get('/dashboard/alertas', async (_req, res, next) => {
         pagamentosModeloPendentes.push({
           os_modelo_id: row.os_modelo_id,
           job_id: row.os_id,
+          modelo_id: row.modelo_id,
           modelo_nome: row.modelo_nome,
           cliente: row.nome_empresa || row.nome_fantasia || '',
           liquido,

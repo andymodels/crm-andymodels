@@ -12,6 +12,7 @@ const {
   loadOsSnapshotMeta,
 } = require('../services/contratoWorkflow');
 const storage = require('../services/storage');
+const { deleteJobLinesForOs } = require('../services/extratoModeloSync');
 
 const router = express.Router();
 
@@ -650,6 +651,8 @@ router.post('/ordens-servico/:id/cancelar', async (req, res, next) => {
           message: 'Nao e possivel cancelar: ha pagamentos a modelos registrados para esta O.S.',
         });
       }
+
+      await deleteJobLinesForOs(pool, id);
 
       await pool.query(
         `

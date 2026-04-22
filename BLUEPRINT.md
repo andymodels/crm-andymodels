@@ -258,7 +258,7 @@ Na tela da **O.S. / Job:** bloco **“Documentos”** com ações **Gerar contra
 | O.S. | `GET /ordens-servico`, `GET /ordens-servico/:id`, `PUT /ordens-servico/:id`, `GET /ordens-servico/:id/pdf` (HTML para impressão) |
 | Documentos O.S. | `POST /ordens-servico/:id/documentos`, `GET .../documentos/:docId/download`, `DELETE ...` |
 | Dashboard | `GET /dashboard/contratos-pendentes`, `GET /dashboard/alertas`, `GET /dashboard/calendario?from=&to=` |
-| Extrato modelo | `GET /extrato-modelo` (?modelo_id opcional) |
+| Extrato modelo | `GET /extrato-modelo/resumo` (lista + saldo) · `GET /extrato-modelo/:id/linhas` (?ver_tudo, mes, data_de, data_ate) |
 | Financeiro | `GET /financeiro/resumo`, `GET/POST /financeiro/recebimentos`, `GET/POST /financeiro/pagamentos-modelo` |
 
 ---

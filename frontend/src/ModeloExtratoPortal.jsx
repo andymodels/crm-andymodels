@@ -11,7 +11,7 @@ export default function ModeloExtratoPortal() {
   const [senha, setSenha] = useState('');
   const [token, setToken] = useState('');
   const [modelo, setModelo] = useState(null);
-  const [rows, setRows] = useState([]);
+  const [extrato, setExtrato] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -38,7 +38,7 @@ export default function ModeloExtratoPortal() {
         const exData = await ex.json();
         if (cancelled) return;
         setModelo(meData.modelo || null);
-        setRows(Array.isArray(exData) ? exData : []);
+        setExtrato(exData && typeof exData === 'object' ? exData : null);
       } catch (e) {
         if (!cancelled) {
           setToken('');
@@ -79,9 +79,11 @@ export default function ModeloExtratoPortal() {
   const logout = () => {
     setToken('');
     setModelo(null);
-    setRows([]);
+    setExtrato(null);
     localStorage.removeItem('modelo_extrato_token');
   };
+
+  const linhas = Array.isArray(extrato?.linhas) ? extrato.linhas : [];
 
   if (!token) {
     return (
@@ -129,36 +131,55 @@ export default function ModeloExtratoPortal() {
       <div className="mx-auto max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h1 className="text-xl font-semibold text-slate-900">Extrato do modelo</h1>
-            <p className="text-sm text-slate-500">{modelo?.nome} · {modelo?.email}</p>
+            <h1 className="text-xl font-semibold text-slate-900">Extrato financeiro</h1>
+            <p className="text-sm text-slate-500">
+              {modelo?.nome} · {modelo?.email}
+            </p>
           </div>
           <button type="button" onClick={logout} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm">
             Sair
           </button>
         </div>
+        <p className="mb-3 text-xs text-slate-500">
+          Movimentos gerados automaticamente a partir das O.S. e do financeiro (pagamentos e lançamentos à modelo).
+        </p>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-left text-slate-500">
+              <tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500">
                 <th className="px-2 py-2">Data</th>
                 <th className="px-2 py-2">Descrição</th>
-                <th className="px-2 py-2">Valor</th>
-                <th className="px-2 py-2">Status</th>
+                <th className="px-2 py-2">Cliente</th>
+                <th className="px-2 py-2">O.S.</th>
+                <th className="px-2 py-2 text-right">Crédito</th>
+                <th className="px-2 py-2 text-right">Débito</th>
+                <th className="px-2 py-2 text-right">Saldo</th>
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
+              {linhas.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-2 py-6 text-center text-slate-500">Sem lançamentos.</td>
+                  <td colSpan={7} className="px-2 py-6 text-center text-slate-500">
+                    Sem lançamentos.
+                  </td>
                 </tr>
-              ) : rows.map((r) => (
-                <tr key={r.id} className="border-b border-slate-100">
-                  <td className="px-2 py-2">{r.data || '—'}</td>
-                  <td className="px-2 py-2">{r.descricao || 'Job publicidade'}</td>
-                  <td className="px-2 py-2">{formatBRL(r.valor)}</td>
-                  <td className="px-2 py-2">{r.status === 'pago' ? 'pago' : 'a receber'}</td>
-                </tr>
-              ))}
+              ) : (
+                linhas.map((ln) => (
+                  <tr key={ln.id} className="border-b border-slate-100">
+                    <td className="px-2 py-2 whitespace-nowrap">{ln.data || '—'}</td>
+                    <td className="px-2 py-2">{ln.descricao}</td>
+                    <td className="px-2 py-2">{ln.cliente || '—'}</td>
+                    <td className="px-2 py-2">{ln.os_id != null ? `#${ln.os_id}` : '—'}</td>
+                    <td className="px-2 py-2 text-right text-emerald-800">
+                      {ln.credito > 0 ? formatBRL(ln.credito) : '—'}
+                    </td>
+                    <td className="px-2 py-2 text-right text-red-800">
+                      {ln.debito > 0 ? formatBRL(ln.debito) : '—'}
+                    </td>
+                    <td className="px-2 py-2 text-right font-medium tabular-nums">{formatBRL(ln.saldo_acumulado)}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

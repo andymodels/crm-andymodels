@@ -2,7 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { comparePassword } = require('../utils/auth');
-const { lineLiquido } = require('../services/osFinanceiro');
+const { getExtratoModeloLinhas } = require('../services/extratoModeloRead');
 
 const router = express.Router();
 
@@ -95,55 +95,14 @@ router.get('/modelo/auth/me', requireModeloAuth, async (req, res, next) => {
 router.get('/modelo/extrato', requireModeloAuth, async (req, res, next) => {
   try {
     const modeloId = Number(req.modeloAuth.modelo_id);
-    const sql = `
-      SELECT
-        om.id AS os_modelo_id,
-        om.cache_modelo,
-        om.emite_nf_propria,
-        os.imposto_percent,
-        os.agencia_fee_percent,
-        os.data_trabalho,
-        os.tipo_trabalho,
-        os.descricao,
-        os.created_at
-      FROM os_modelos om
-      JOIN ordens_servico os ON os.id = om.os_id
-      WHERE om.modelo_id = $1
-        AND os.status IS DISTINCT FROM 'cancelada'
-      ORDER BY os.data_trabalho DESC NULLS LAST, os.id DESC, om.id DESC
-    `;
-
-    const { rows } = await pool.query(sql, [modeloId]);
-    const out = [];
-    for (const row of rows) {
-      const liquido = lineLiquido(
-        row.cache_modelo,
-        row.imposto_percent,
-        row.agencia_fee_percent,
-        row.emite_nf_propria,
-      );
-      const pay = await pool.query(
-        'SELECT COALESCE(SUM(valor), 0) AS pago FROM pagamentos_modelo WHERE os_modelo_id = $1',
-        [row.os_modelo_id],
-      );
-      const pago = Number(pay.rows[0].pago);
-      const saldo = liquido - pago;
-      const status = Math.abs(saldo) < 0.01 ? 'pago' : 'a receber';
-      const dataRef = row.data_trabalho || row.created_at;
-      const descricao =
-        String(row.tipo_trabalho || '').trim() ||
-        String(row.descricao || '').trim() ||
-        'Job publicidade';
-      out.push({
-        id: row.os_modelo_id,
-        data: dataRef ? String(dataRef).slice(0, 10) : '',
-        descricao,
-        valor: liquido,
-        status,
-      });
+    const q = { ...req.query };
+    if (q.ver_tudo == null || String(q.ver_tudo).trim() === '') {
+      q.ver_tudo = '1';
     }
+    const out = await getExtratoModeloLinhas(pool, modeloId, q);
     return res.json(out);
   } catch (error) {
+    if (error.status === 404) return res.status(404).json({ message: error.message });
     next(error);
   }
 });

@@ -5,6 +5,7 @@ const { computeOsFinancials } = require('../services/osFinanceiro');
 const { buildOrcamentoDocumentHtml } = require('../services/documentoOrcamentoOsHtml');
 const { generateContratoForOs, sendContratoAssinaturaEmail } = require('../services/contratoWorkflow');
 const { excluirOrcamentoDefinitivo } = require('../services/excluirOrcamentoDefinitivo');
+const { upsertJobLine } = require('../services/extratoModeloSync');
 
 const router = express.Router();
 
@@ -679,13 +680,15 @@ router.post('/orcamentos/:id/aprovar', async (req, res, next) => {
       if (tipoProp === 'com_modelo') {
         for (const row of modRowsReais) {
           const rotulo = String(row.rotulo || '').trim() || String(row.modelo_nome || 'Modelo');
-          await client.query(
+          const insOm = await client.query(
             `
             INSERT INTO os_modelos (os_id, modelo_id, cache_modelo, emite_nf_propria, rotulo)
             VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
             `,
             [osIdTx, row.modelo_id, row.cache_modelo, Boolean(row.emite_nf_propria), rotulo],
           );
+          await upsertJobLine(client, insOm.rows[0].id);
         }
       }
 
