@@ -26,8 +26,11 @@ jobs:
         run: npm install
         working-directory: backend
 
-      - name: Rodar backup
-        run: npm run backup:db-b2
+      - name: Rodar backup (forçando pg_dump 18)
+        run: |
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          pg_dump --version
+          npm run backup:db-b2
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
