@@ -27,9 +27,40 @@ function onlyDigits(s) {
 }
 
 function instagramUrlFromUsername(u) {
-  const t = String(u ?? '').trim().replace(/^@/, '');
+  const raw = String(u ?? '')
+    .trim()
+    .replace(/^@/, '');
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      if (url.hostname.replace(/^www\./, '').includes('instagram.com')) {
+        url.hash = '';
+        let path = url.pathname || '/';
+        if (path !== '/' && path.length > 1) path = path.replace(/\/$/, '');
+        return `https://www.instagram.com${path}${url.search || ''}`;
+      }
+      return raw;
+    } catch {
+      return raw;
+    }
+  }
+  const bare = raw
+    .replace(/^(https?:\/\/)?(www\.)?instagram\.com\/?/i, '')
+    .split(/[/?#]/)[0];
+  if (!bare || !/^[\w.]+$/.test(bare)) return '';
+  return `https://www.instagram.com/${bare}`;
+}
+
+function tiktokUrlFromUsername(u) {
+  const t = String(u ?? '')
+    .trim()
+    .replace(/^@/, '')
+    .replace(/^(https?:\/\/)?(www\.)?tiktok\.com\/@?/i, '');
   if (!t) return '';
-  return `https://instagram.com/${t}`;
+  const bare = t.split(/[/?#]/)[0];
+  if (!bare) return '';
+  return `https://www.tiktok.com/@${bare}`;
 }
 
 function normalizeHttpUrl(v) {
@@ -95,7 +126,28 @@ function crmRowToWebsiteAdminCreatePayload(row) {
     waist: trim(row.medida_cintura) || null,
     instagram: ig,
     show_instagram: perfil.mostrar_instagram !== false ? '1' : '0',
-    tiktok: trim(row.tiktok) || '',
+    tiktok: (() => {
+      const raw = trim(row.tiktok != null ? row.tiktok : perfil.tiktok);
+      if (!raw) return '';
+      if (!/^https?:\/\//i.test(raw)) return tiktokUrlFromUsername(raw);
+      try {
+        const u = new URL(raw);
+        if (u.hostname.replace(/^www\./, '').includes('tiktok.com')) {
+          return tiktokUrlFromUsername(raw);
+        }
+      } catch {
+        /* */
+      }
+      return raw;
+    })(),
+    youtube_canal: trim(row.youtube_canal != null ? row.youtube_canal : perfil.youtube_canal),
+    outras_redes_sociais: (() => {
+      const raw = row.outras_redes_sociais ?? perfil.outras_redes_sociais;
+      if (Array.isArray(raw)) {
+        return raw.map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, 30);
+      }
+      return [];
+    })(),
     ...(() => {
       const v = trim(perfil.video_url);
       if (!v) return { youtube: '', video_url: '' };

@@ -331,6 +331,20 @@ function sanitizeAndValidateModelo(body, partial = false) {
     /* mantém objeto; stringifyJsonbColumns serializa no INSERT/UPDATE */
   }
 
+  if (!partial || b.youtube_canal !== undefined) {
+    b.youtube_canal = String(b.youtube_canal ?? '').trim().slice(0, 2000);
+  }
+
+  if (!partial || b.outras_redes_sociais !== undefined) {
+    let arr = b.outras_redes_sociais;
+    if (!Array.isArray(arr)) arr = [];
+    b.outras_redes_sociais = arr
+      .map((x) => String(x ?? '').trim())
+      .filter(Boolean)
+      .slice(0, 30)
+      .map((x) => x.slice(0, 800));
+  }
+
   return { ok: true, body: b };
 }
 

@@ -738,6 +738,8 @@ makeCrudRoutes({
     'status_cadastro',
     'instagram',
     'tiktok',
+    'youtube_canal',
+    'outras_redes_sociais',
     'sexo',
     'passaporte',
     'rg',

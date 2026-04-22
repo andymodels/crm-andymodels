@@ -3,7 +3,7 @@
  */
 function stringifyJsonbColumns(body) {
   if (body == null || typeof body !== 'object') return;
-  const keys = ['telefones', 'emails', 'formas_pagamento', 'perfil_site'];
+  const keys = ['telefones', 'emails', 'formas_pagamento', 'perfil_site', 'outras_redes_sociais'];
   for (const key of keys) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
     const v = body[key];

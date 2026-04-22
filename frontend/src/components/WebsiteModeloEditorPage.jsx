@@ -19,6 +19,16 @@ import {
   mergeCrmRowIntoWebsiteForm,
 } from '../utils/modeloCrmFormMap';
 import { validateAndBuildPublicCadastroBody } from '../utils/modeloPublicCadastroLink';
+import {
+  instagramDisplayFromStored,
+  instagramUrlFromUsername,
+  instagramUsernameFromStored,
+  outrasRedesSociaisSanitizeList,
+  outrasRedesSociaisToFormList,
+  tiktokUrlFromUsername,
+  tiktokUsernameFromStored,
+  youtubeCanalNormalize,
+} from '../utils/modeloRedesSociais';
 
 /** Upload multipart/galeria: sem timeout no cliente (evita AbortController / «Fetch is aborted»). */
 const FETCH_UPLOAD = { timeoutMs: 0 };
@@ -286,6 +296,8 @@ function createInitialForm() {
     /** Se falso, o utilizador pode guardar o @ mas o site pode ocultar o link no perfil público. */
     mostrar_instagram: true,
     tiktok: '',
+    youtube_canal: '',
+    outras_redes_sociais: [''],
     cpf: '',
     rg: '',
     /** API do site: campo `passport` (não usar `passaporte` no PUT). */
@@ -306,40 +318,6 @@ function createInitialForm() {
     /** URL (ou data URL após escolher ficheiro) — alinhado à coluna `foto_perfil_base64`. */
     foto_perfil_base64: '',
   };
-}
-
-/** Valor do campo no CRM: URL completa no instagram.com; handles só texto viram https://instagram.com/… */
-function instagramDisplayFromStored(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return '';
-  const noAt = s.replace(/^@/, '');
-  try {
-    const u = new URL(/^https?:\/\//i.test(noAt) ? noAt : `https://${noAt.replace(/^\/+/, '')}`);
-    if (u.hostname.replace(/^www\./, '').includes('instagram.com')) {
-      u.hash = '';
-      const host = u.hostname.replace(/^www\./, '');
-      let path = u.pathname || '/';
-      if (path !== '/' && path.length > 1) path = path.replace(/\/$/, '');
-      return `https://${host}${path}${u.search || ''}`;
-    }
-    if (/^https?:\/\//i.test(noAt)) return noAt;
-  } catch {
-    /* handle só texto */
-  }
-  const bare = noAt.replace(/^\//, '').split(/[/?#]/)[0];
-  if (bare && /^[\w.]+$/.test(bare)) {
-    return `https://instagram.com/${bare}`;
-  }
-  return noAt;
-}
-
-function instagramUrlFromUsername(username) {
-  const u = String(username || '')
-    .trim()
-    .replace(/^@/, '')
-    .replace(/^(https?:\/\/)?(www\.)?instagram\.com\//i, '');
-  if (!u) return '';
-  return `https://instagram.com/${u}`;
 }
 
 /** Apenas `model.media` da API, sem cover_image/images/concatenações. */
@@ -492,7 +470,22 @@ function formToWebsiteModelPut(form) {
     waist: trim(form.medida_cintura) || null,
     instagram: ig,
     show_instagram: form.mostrar_instagram ? '1' : '0',
-    tiktok: trim(form.tiktok) || '',
+    tiktok: (() => {
+      let tt = trim(form.tiktok);
+      if (!tt) return '';
+      if (!/^https?:\/\//i.test(tt)) return tiktokUrlFromUsername(tt);
+      try {
+        const u = new URL(tt);
+        if (u.hostname.replace(/^www\./, '').includes('tiktok.com')) {
+          return tiktokUrlFromUsername(tiktokUsernameFromStored(tt));
+        }
+      } catch {
+        /* */
+      }
+      return tt;
+    })(),
+    youtube_canal: youtubeCanalNormalize(trim(form.youtube_canal)),
+    outras_redes_sociais: outrasRedesSociaisSanitizeList(form.outras_redes_sociais),
     ...(() => {
       const v = trim(form.video_url);
       if (!v) return { youtube: '', video_url: '' };
@@ -613,6 +606,10 @@ function mapDetailToForm(detailIn) {
             .join(' · ');
 
   const igStored = detail.instagram != null ? String(detail.instagram) : '';
+  const perfilEmb =
+    detail.perfil_site && typeof detail.perfil_site === 'object' && !Array.isArray(detail.perfil_site)
+      ? detail.perfil_site
+      : {};
 
   const nomeSite = detail.name != null ? String(detail.name) : '';
   const nomeCompletoFromApi = (() => {
@@ -682,6 +679,14 @@ function mapDetailToForm(detailIn) {
       return true;
     })(),
     tiktok: detail.tiktok != null ? String(detail.tiktok) : '',
+    youtube_canal: youtubeCanalNormalize(
+      detail.youtube_canal != null && String(detail.youtube_canal).trim() !== ''
+        ? String(detail.youtube_canal)
+        : perfilEmb.youtube_canal != null
+          ? String(perfilEmb.youtube_canal)
+          : '',
+    ),
+    outras_redes_sociais: outrasRedesSociaisToFormList(detail, perfilEmb),
     telefones: telList,
     emails: emList,
     cep: addr.cep,
@@ -1039,6 +1044,23 @@ export default function WebsiteModeloEditorPage({
     setForm((p) => {
       const t = normalizeList(p.emails).filter((_, j) => j !== i);
       return { ...p, emails: t.length ? t : [''] };
+    });
+
+  const addOutrasRede = () =>
+    setForm((p) => ({
+      ...p,
+      outras_redes_sociais: [...normalizeList(p.outras_redes_sociais), ''],
+    }));
+  const updateOutrasRede = (i, v) =>
+    setForm((p) => {
+      const t = [...normalizeList(p.outras_redes_sociais)];
+      t[i] = v;
+      return { ...p, outras_redes_sociais: t };
+    });
+  const removeOutrasRede = (i) =>
+    setForm((p) => {
+      const t = normalizeList(p.outras_redes_sociais).filter((_, j) => j !== i);
+      return { ...p, outras_redes_sociais: t.length ? t : [''] };
     });
 
   const updateForma = (index, key, value) => {
@@ -2405,18 +2427,24 @@ export default function WebsiteModeloEditorPage({
               onRemove={removeEmail}
             />
           </div>
-          {!isCadastroLink ? (
-            <>
+        </Section>
+
+        <Section title="Redes sociais">
           <Field label="Instagram" className="md:col-span-2">
-            <input
-              value={formSafe.instagram ?? ''}
-              onChange={(e) => setField('instagram', e.target.value.replace(/^@/, '').trim())}
-              type="text"
-              inputMode="url"
-              autoComplete="off"
-              className="w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="https://www.instagram.com/seu_perfil/ ou @usuario"
-            />
+            <div className="flex max-w-xl overflow-hidden rounded-lg border border-slate-300 bg-white text-sm shadow-sm focus-within:ring-1 focus-within:ring-amber-400">
+              <span className="shrink-0 border-r border-slate-200 bg-slate-100 px-2 py-2 text-xs leading-tight text-slate-600 select-none">
+                https://www.instagram.com/
+              </span>
+              <input
+                value={instagramUsernameFromStored(formSafe.instagram ?? '')}
+                onChange={(e) => setField('instagram', instagramUrlFromUsername(e.target.value))}
+                type="text"
+                autoComplete="off"
+                className="min-w-0 flex-1 border-0 px-3 py-2 outline-none"
+                placeholder="nome_utilizador"
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-500">Indique só o nome de utilizador (sem @).</p>
             <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
@@ -2427,16 +2455,47 @@ export default function WebsiteModeloEditorPage({
               <span>Exibir online</span>
             </label>
           </Field>
-          <Field label="TikTok">
-            <input
-              value={formSafe.tiktok ?? ''}
-              onChange={(e) => setField('tiktok', e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              placeholder="@usuario ou URL"
-            />
+          <Field label="TikTok" className="md:col-span-2">
+            <div className="flex max-w-xl overflow-hidden rounded-lg border border-slate-300 bg-white text-sm shadow-sm focus-within:ring-1 focus-within:ring-amber-400">
+              <span className="shrink-0 border-r border-slate-200 bg-slate-100 px-2 py-2 text-xs leading-tight text-slate-600 select-none">
+                https://www.tiktok.com/@
+              </span>
+              <input
+                value={tiktokUsernameFromStored(formSafe.tiktok ?? '')}
+                onChange={(e) => setField('tiktok', tiktokUrlFromUsername(e.target.value))}
+                type="text"
+                autoComplete="off"
+                className="min-w-0 flex-1 border-0 px-3 py-2 outline-none"
+                placeholder="nome_utilizador"
+              />
+            </div>
+            <p className="mt-1 text-xs text-slate-500">Indique só o nome de utilizador (sem @).</p>
           </Field>
-            </>
-          ) : null}
+          <Field label="YouTube" className="md:col-span-2">
+            <input
+              value={formSafe.youtube_canal ?? ''}
+              onChange={(e) => setField('youtube_canal', e.target.value)}
+              onBlur={() =>
+                setForm((p) => ({ ...p, youtube_canal: youtubeCanalNormalize(p.youtube_canal ?? '') }))
+              }
+              type="text"
+              inputMode="url"
+              autoComplete="off"
+              className="w-full max-w-xl rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="https://www.youtube.com/"
+            />
+            <p className="mt-1 text-xs text-slate-500">Canal ou perfil no YouTube (URL completa ou texto).</p>
+          </Field>
+          <div className="md:col-span-2">
+            <DynamicTextListField
+              label="Outras redes sociais"
+              items={normalizeList(formSafe.outras_redes_sociais)}
+              placeholder="URL ou texto (ex.: LinkedIn, X, site pessoal…)"
+              onAdd={addOutrasRede}
+              onUpdate={updateOutrasRede}
+              onRemove={removeOutrasRede}
+            />
+          </div>
         </Section>
 
         <Section title="Documentos">

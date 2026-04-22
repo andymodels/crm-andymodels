@@ -209,6 +209,14 @@ const initDb = async () => {
   `);
   await pool.query(`
     ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS youtube_canal TEXT NOT NULL DEFAULT '';
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
+    ADD COLUMN IF NOT EXISTS outras_redes_sociais JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
+  await pool.query(`
+    ALTER TABLE modelos
     ADD COLUMN IF NOT EXISTS cep TEXT NOT NULL DEFAULT '';
   `);
   await pool.query(`

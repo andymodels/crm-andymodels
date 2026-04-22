@@ -2,6 +2,12 @@ import { onlyDigits } from './brValidators';
 import { formatCpfDisplay } from './brMasks';
 import { formatPhoneBRMask } from './brValidators';
 import { toDateInputValue } from './dateInput';
+import {
+  instagramDisplayFromStored,
+  outrasRedesSociaisSanitizeList,
+  outrasRedesSociaisToFormList,
+  youtubeCanalNormalize,
+} from './modeloRedesSociais';
 
 function parsePerfil(row) {
   const p = row?.perfil_site;
@@ -95,9 +101,11 @@ export function mergeCrmRowIntoWebsiteForm(baseForm, row) {
     medida_olhos: row.medida_olhos != null ? String(row.medida_olhos) : '',
     telefones: telList.length ? telList : [''],
     emails: emList.length ? emList : [''],
-    instagram: instagramFromRow(row, perfil),
+    instagram: instagramDisplayFromStored(instagramFromRow(row, perfil)),
     mostrar_instagram: perfil.mostrar_instagram !== undefined ? Boolean(perfil.mostrar_instagram) : true,
     tiktok: row.tiktok != null ? String(row.tiktok) : '',
+    youtube_canal: youtubeCanalFromRow(row, perfil),
+    outras_redes_sociais: outrasRedesSociaisToFormList(row, perfil),
     cpf: row.cpf != null ? formatCpfDisplay(onlyDigits(String(row.cpf))) : '',
     rg: row.rg != null ? String(row.rg) : '',
     passport: row.passaporte != null ? String(row.passaporte) : '',
@@ -124,6 +132,16 @@ export function mergeCrmRowIntoWebsiteForm(baseForm, row) {
 function instagramFromRow(row, perfil) {
   const ig = perfil.instagram != null ? String(perfil.instagram) : row.instagram != null ? String(row.instagram) : '';
   return ig;
+}
+
+function youtubeCanalFromRow(row, perfil) {
+  const y =
+    row.youtube_canal != null && String(row.youtube_canal).trim() !== ''
+      ? String(row.youtube_canal).trim()
+      : perfil.youtube_canal != null
+        ? String(perfil.youtube_canal).trim()
+        : '';
+  return y;
 }
 
 function firstPixChave(formas) {
@@ -169,6 +187,8 @@ export function buildCrmModeloApiBody(form, crmExtra, apiMediaSnapshot, _mergeFr
     public_info: String(form.public_info ?? ''),
     slug_site: String(form.slug_site ?? ''),
     instagram: String(form.instagram ?? ''),
+    youtube_canal: youtubeCanalNormalize(form.youtube_canal),
+    outras_redes_sociais: outrasRedesSociaisSanitizeList(form.outras_redes_sociais),
   };
 
   const cpfDigits = onlyDigits(form.cpf);
@@ -203,6 +223,8 @@ export function buildCrmModeloApiBody(form, crmExtra, apiMediaSnapshot, _mergeFr
       .slice(0, 2),
     instagram: String(form.instagram ?? ''),
     tiktok: String(form.tiktok ?? ''),
+    youtube_canal: youtubeCanalNormalize(form.youtube_canal),
+    outras_redes_sociais: outrasRedesSociaisSanitizeList(form.outras_redes_sociais),
     formas_pagamento: Array.isArray(form.formas_pagamento) ? form.formas_pagamento : [],
     medida_altura: String(form.medida_altura ?? ''),
     medida_busto: String(form.medida_busto ?? ''),
