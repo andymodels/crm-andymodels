@@ -24,6 +24,7 @@ function validateMedidasWebsiteForm(form) {
       ['medida_busto', 'Busto'],
       ['medida_cintura', 'Cintura'],
       ['medida_quadril', 'Quadril'],
+      ['medida_torax', 'Tamanho (SIZE)'],
       ['medida_sapato', 'Sapato'],
       ['medida_cabelo', 'Cabelo'],
       ['medida_olhos', 'Olhos'],
@@ -36,7 +37,9 @@ function validateMedidasWebsiteForm(form) {
   const need = [
     ['medida_altura', 'Altura'],
     ['medida_torax', 'Tórax'],
-    ['medida_cintura', 'Cintura'],
+    ['medida_busto', 'Terno (SUIT)'],
+    ['medida_cintura', 'Camisa (SHIRT)'],
+    ['medida_quadril', 'Tamanho (SIZE)'],
     ['medida_sapato', 'Sapato'],
     ['medida_cabelo', 'Cabelo'],
     ['medida_olhos', 'Olhos'],
@@ -132,11 +135,10 @@ export function validateAndBuildPublicCadastroBody(form, crmExtra, linkExtras, t
     ativo_crm: false,
   };
 
-  const built = buildCrmModeloApiBody(form, crmMerged, [], {
-    foto_perfil_base64: linkExtras?.foto_perfil_base64,
-  });
-
+  const built = buildCrmModeloApiBody(form, crmMerged, [], null);
   built.formas_pagamento = fr.formas;
+  const linkFoto = trimStr(linkExtras?.foto_perfil_base64);
+  if (linkFoto) built.foto_perfil_base64 = linkFoto;
 
   return {
     ok: true,

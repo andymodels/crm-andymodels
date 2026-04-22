@@ -234,6 +234,30 @@ const emptyFormaRecebimento = () => ({
   tipo_conta: 'corrente',
 });
 
+/** Medidas por sexo — só colunas `medida_*` existentes na BD; rótulos alinhados ao cadastro (PT). */
+const MEDIDAS_CAMPOS_FEMININO = [
+  ['medida_altura', 'Altura'],
+  ['medida_busto', 'Busto'],
+  ['medida_cintura', 'Cintura'],
+  ['medida_quadril', 'Quadril'],
+  ['medida_torax', 'Tamanho (SIZE)'],
+  ['medida_sapato', 'Sapato'],
+  ['medida_cabelo', 'Cabelo'],
+  ['medida_olhos', 'Olhos'],
+];
+const MEDIDAS_CAMPOS_MASCULINO = [
+  ['medida_altura', 'Altura'],
+  ['medida_torax', 'Tórax'],
+  ['medida_busto', 'Terno (SUIT)'],
+  ['medida_cintura', 'Camisa (SHIRT)'],
+  ['medida_quadril', 'Tamanho (SIZE)'],
+  ['medida_sapato', 'Sapato'],
+  ['medida_cabelo', 'Cabelo'],
+  ['medida_olhos', 'Olhos'],
+];
+
+const MEDIDAS_CLEAR_ON_SEX_CHANGE = ['medida_busto', 'medida_torax', 'medida_cintura', 'medida_quadril'];
+
 function createInitialForm() {
   return {
     /** Nome civil / cadastro completo (API: full_name, se o site suportar). */
@@ -279,6 +303,8 @@ function createInitialForm() {
     slug_site: '',
     /** GET/PATCH — texto único opcional exibido no site (ex.: public_info) */
     public_info: '',
+    /** URL (ou data URL após escolher ficheiro) — alinhado à coluna `foto_perfil_base64`. */
+    foto_perfil_base64: '',
   };
 }
 
@@ -496,13 +522,13 @@ function formToWebsiteModelPut(form) {
     out.bust = trim(form.medida_busto) || null;
     out.waist = trim(form.medida_cintura) || null;
     out.hips = trim(form.medida_quadril) || null;
-    out.torax = '';
+    out.torax = trim(form.medida_torax) || null;
   } else {
     out.height = trim(form.medida_altura) || null;
     out.torax = trim(form.medida_torax) || null;
     out.waist = trim(form.medida_cintura) || null;
-    out.bust = '';
-    out.hips = '';
+    out.bust = trim(form.medida_busto) || null;
+    out.hips = trim(form.medida_quadril) || null;
   }
 
   const slug = trim(form.slug_site);
@@ -770,6 +796,7 @@ export default function WebsiteModeloEditorPage({
   const [linkFotoPreview, setLinkFotoPreview] = useState('');
   const [linkEmiteNf, setLinkEmiteNf] = useState(false);
   const linkFotoInputId = `${useId()}-link-foto`;
+  const crmFotoInputId = `${useId()}-crm-foto`;
   const cepLookupRef = useRef(null);
   const localMediaRef = useRef([]);
   useEffect(() => {
@@ -1366,6 +1393,11 @@ export default function WebsiteModeloEditorPage({
         const raw = await r.text();
         const data = parseCrmJson(raw, r);
         setCrmLoadedRow(data);
+        setForm((p) => ({
+          ...p,
+          foto_perfil_base64:
+            data?.foto_perfil_base64 != null ? String(data.foto_perfil_base64).trim() : '',
+        }));
         const widForGallery =
           data?.website_model_id != null && !Number.isNaN(Number(data.website_model_id))
             ? Number(data.website_model_id)
@@ -1929,8 +1961,22 @@ export default function WebsiteModeloEditorPage({
 
   const formas = formSafe.formas_pagamento?.length ? formSafe.formas_pagamento : [emptyFormaRecebimento()];
 
-  const setGenderWomen = () => setForm((p) => ({ ...p, catFeminino: true, catMasculino: false }));
-  const setGenderMen = () => setForm((p) => ({ ...p, catFeminino: false, catMasculino: true }));
+  const setGenderWomen = () =>
+    setForm((p) => {
+      const next = { ...p, catFeminino: true, catMasculino: false };
+      MEDIDAS_CLEAR_ON_SEX_CHANGE.forEach((k) => {
+        next[k] = '';
+      });
+      return next;
+    });
+  const setGenderMen = () =>
+    setForm((p) => {
+      const next = { ...p, catFeminino: false, catMasculino: true };
+      MEDIDAS_CLEAR_ON_SEX_CHANGE.forEach((k) => {
+        next[k] = '';
+      });
+      return next;
+    });
 
   const addVideoToGallery = () => {
     const raw = String(formSafe?.video_url || '').trim();
@@ -2062,6 +2108,59 @@ export default function WebsiteModeloEditorPage({
                 : 'Cadastro interno no CRM — não é exibida na vitrine nem no perfil público do site. A idade ao lado atualiza automaticamente (referência: dia de hoje no teu dispositivo).'}
             </p>
           </Field>
+          {isCrm && !isCadastroLink ? (
+            <div className="md:col-span-2 text-sm text-slate-600">
+              <span className="mb-1 block font-medium text-slate-800">Foto de perfil</span>
+              <p className="mb-2 text-xs text-slate-500">
+                Guardada no CRM (URL após envio). Mesmo fluxo que o cadastro por link.
+              </p>
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                {formSafe.foto_perfil_base64 ? (
+                  <img
+                    src={formSafe.foto_perfil_base64}
+                    alt=""
+                    className="mb-3 h-28 w-28 rounded-lg border border-slate-200 object-cover"
+                  />
+                ) : (
+                  <p className="mb-3 text-xs text-slate-500">Nenhuma foto enviada.</p>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <label
+                    htmlFor={crmFotoInputId}
+                    className="inline-flex cursor-pointer items-center rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700"
+                  >
+                    Escolher foto
+                    <input
+                      id={crmFotoInputId}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (!file) {
+                          setField('foto_perfil_base64', '');
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = () => setField('foto_perfil_base64', String(reader.result || ''));
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                  {formSafe.foto_perfil_base64 ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-red-300 px-3 py-2 text-xs text-red-700"
+                      onClick={() => setField('foto_perfil_base64', '')}
+                    >
+                      Remover foto
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {!isCadastroLink ? (
           <>
           <Field label="Slug (URL no site)" className="md:col-span-2">
@@ -2277,42 +2376,16 @@ export default function WebsiteModeloEditorPage({
         ) : null}
 
         <Section title="Medidas principais">
-          {formSafe.catFeminino
-            ? [
-                ['medida_altura', 'Altura'],
-                ['medida_busto', 'Busto'],
-                ['medida_cintura', 'Cintura'],
-                ['medida_quadril', 'Quadril'],
-                ['medida_sapato', 'Sapato'],
-                ['medida_cabelo', 'Cabelo'],
-                ['medida_olhos', 'Olhos'],
-              ].map(([k, lab]) => (
-                <Field key={k} label={lab}>
-                  <input
-                    value={formSafe[k] ?? ''}
-                    onChange={(e) => setField(k, e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="—"
-                  />
-                </Field>
-              ))
-            : [
-                ['medida_altura', 'Altura'],
-                ['medida_torax', 'Tórax'],
-                ['medida_cintura', 'Cintura'],
-                ['medida_sapato', 'Sapato'],
-                ['medida_cabelo', 'Cabelo'],
-                ['medida_olhos', 'Olhos'],
-              ].map(([k, lab]) => (
-                <Field key={k} label={lab}>
-                  <input
-                    value={formSafe[k] ?? ''}
-                    onChange={(e) => setField(k, e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    placeholder="—"
-                  />
-                </Field>
-              ))}
+          {(formSafe.catFeminino ? MEDIDAS_CAMPOS_FEMININO : MEDIDAS_CAMPOS_MASCULINO).map(([k, lab]) => (
+            <Field key={k} label={lab}>
+              <input
+                value={formSafe[k] ?? ''}
+                onChange={(e) => setField(k, e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="—"
+              />
+            </Field>
+          ))}
         </Section>
 
         <Section title="Contato">

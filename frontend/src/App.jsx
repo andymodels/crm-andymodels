@@ -127,6 +127,7 @@ const medidaCamposFeminino = [
   'medida_busto',
   'medida_cintura',
   'medida_quadril',
+  'medida_torax',
   'medida_sapato',
   'medida_cabelo',
   'medida_olhos',
@@ -134,7 +135,9 @@ const medidaCamposFeminino = [
 const medidaCamposMasculino = [
   'medida_altura',
   'medida_torax',
+  'medida_busto',
   'medida_cintura',
+  'medida_quadril',
   'medida_sapato',
   'medida_cabelo',
   'medida_olhos',
@@ -326,10 +329,10 @@ const fieldLabels = {
   complemento: 'Complemento',
   sexo: 'Sexo',
   medida_altura: 'Altura',
-  medida_busto: 'Busto',
-  medida_torax: 'Torax',
-  medida_cintura: 'Cintura',
-  medida_quadril: 'Quadril',
+  medida_busto: 'Busto / terno (conforme sexo)',
+  medida_torax: 'Tórax / tamanho (conforme sexo)',
+  medida_cintura: 'Cintura / camisa (conforme sexo)',
+  medida_quadril: 'Quadril / tamanho (conforme sexo)',
   medida_sapato: 'Sapato',
   medida_cabelo: 'Cabelo',
   medida_olhos: 'Olhos',
@@ -1403,9 +1406,10 @@ function App({ authUser, onLogout = () => {} }) {
       if (isModeloTab && key === 'sexo') {
         const next = { ...prev, sexo: value };
         const grupo = sexoGrupo(value);
-        if (grupo === 'feminino') next.medida_torax = '';
-        if (grupo === 'masculino') {
+        if (grupo === 'feminino' || grupo === 'masculino') {
           next.medida_busto = '';
+          next.medida_torax = '';
+          next.medida_cintura = '';
           next.medida_quadril = '';
         }
         return next;

@@ -113,6 +113,11 @@ export function mergeCrmRowIntoWebsiteForm(baseForm, row) {
     video_url: perfil.video_url != null ? String(perfil.video_url) : '',
     slug_site: perfil.slug_site != null ? String(perfil.slug_site) : '',
     public_info: perfil.public_info != null ? String(perfil.public_info) : '',
+    /** URL ou data URL — mesmo nome da coluna na API (`mapModeloRowFotoForApi`). */
+    foto_perfil_base64:
+      row.foto_perfil_base64 != null && String(row.foto_perfil_base64).trim() !== ''
+        ? String(row.foto_perfil_base64).trim()
+        : '',
   };
 }
 
@@ -139,7 +144,7 @@ function bancoDadosResumo(formas) {
  * Monta corpo para POST/PUT /api/modelos (tabela `modelos`).
  * `crmExtra` = createCrmExtraInitial / crmRowToCrmExtra.
  */
-export function buildCrmModeloApiBody(form, crmExtra, apiMediaSnapshot, mergeFromRow) {
+export function buildCrmModeloApiBody(form, crmExtra, apiMediaSnapshot, _mergeFromRow) {
   const nomeCompleto = String(form.nome_completo || '').trim();
   const nomeSite = String(form.nome || '').trim();
   const nomeDb = nomeCompleto || nomeSite;
@@ -211,9 +216,7 @@ export function buildCrmModeloApiBody(form, crmExtra, apiMediaSnapshot, mergeFro
     responsavel_cpf: onlyDigits(crmExtra.responsavel_cpf || ''),
     responsavel_telefone: onlyDigits(crmExtra.responsavel_telefone || ''),
     perfil_site,
+    foto_perfil_base64: String(form.foto_perfil_base64 ?? '').trim(),
   };
-  if (mergeFromRow && mergeFromRow.foto_perfil_base64 != null && String(mergeFromRow.foto_perfil_base64).trim() !== '') {
-    body.foto_perfil_base64 = String(mergeFromRow.foto_perfil_base64);
-  }
   return body;
 }

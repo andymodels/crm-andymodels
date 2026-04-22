@@ -88,9 +88,10 @@ router.post('/public/cadastro-modelo', async (req, res, next) => {
       });
     }
 
-    body.origem_cadastro = 'cadastro_site';
+    body.origem_cadastro = 'cadastro_link';
     body.status_cadastro = 'pendente';
     body.ativo = false;
+    body.ativo_site = false;
 
     if (body.perfil_site && typeof body.perfil_site === 'object') {
       delete body.perfil_site.apiMedia;
