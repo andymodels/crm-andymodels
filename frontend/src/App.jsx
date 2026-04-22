@@ -9,9 +9,21 @@ import WebsiteRadioPage from './components/WebsiteRadioPage';
 import WebsitePlaceholderPage from './components/WebsitePlaceholderPage';
 import WebsiteInscricoesPage from './components/WebsiteInscricoesPage';
 import WebsiteModeloEditorPage from './components/WebsiteModeloEditorPage';
+import InputTelefone from './components/InputTelefone';
+import InputCPF from './components/InputCPF';
+import InputCNPJ from './components/InputCNPJ';
+import InputCEP from './components/InputCEP';
 import { fetchWithAuth } from './apiConfig';
 import AtendimentoPage from './components/AtendimentoPage';
-import { sanitizeAndValidateCliente, sanitizeAndValidateModelo, onlyDigits } from './utils/brValidators';
+import {
+  sanitizeAndValidateCliente,
+  sanitizeAndValidateModelo,
+  onlyDigits,
+  isValidEmail,
+  isValidPhoneBR,
+  isValidCPF,
+  isValidCNPJ,
+} from './utils/brValidators';
 import { sanitizeAndValidateFormasPagamentoArray } from './utils/formasPagamento';
 import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDisplay } from './utils/brMasks';
 import { toDateInputValue, toTimeInputValue } from './utils/dateInput';
@@ -381,7 +393,12 @@ const fieldLabels = {
   razao_social_ou_nome: 'Razão social ou nome',
   cnpj_ou_cpf: 'CNPJ ou CPF',
   tipo_servico: 'Tipo de serviço',
-  contato: 'Contato',
+  contato: 'Nome do responsável',
+  cnpj_ou_cpf: 'CPF/CNPJ',
+  razao_social_ou_nome: 'Razão social ou nome completo',
+  responsavel_nome: 'Nome do responsável',
+  nome_completo: 'Nome completo',
+  documento: 'CPF/CNPJ',
   website: 'Website',
 };
 
@@ -445,6 +462,44 @@ const normalizeDynamicTextList = (items) => {
   if (!Array.isArray(items) || items.length === 0) return [''];
   return items.map((item) => String(item || ''));
 };
+
+const PARCEIRO_META_START = '[CADASTRO_PARCEIRO_META]';
+const PARCEIRO_META_END = '[/CADASTRO_PARCEIRO_META]';
+
+function splitParceiroObservacoes(raw) {
+  const text = String(raw || '');
+  const start = text.indexOf(PARCEIRO_META_START);
+  const end = text.indexOf(PARCEIRO_META_END);
+  if (start === -1 || end === -1 || end <= start) {
+    return { baseObservacoes: text.trim(), meta: null };
+  }
+  const baseObservacoes = `${text.slice(0, start)}${text.slice(end + PARCEIRO_META_END.length)}`.trim();
+  const jsonRaw = text
+    .slice(start + PARCEIRO_META_START.length, end)
+    .trim();
+  if (!jsonRaw) return { baseObservacoes, meta: null };
+  try {
+    const parsed = JSON.parse(jsonRaw);
+    if (!parsed || typeof parsed !== 'object') return { baseObservacoes, meta: null };
+    return { baseObservacoes, meta: parsed };
+  } catch {
+    return { baseObservacoes, meta: null };
+  }
+}
+
+function joinParceiroObservacoes(baseObservacoes, metaObj) {
+  const base = String(baseObservacoes || '').trim();
+  const meta = metaObj && typeof metaObj === 'object' ? metaObj : {};
+  const hasMeta = Object.values(meta).some((v) => String(v ?? '').trim() !== '');
+  if (!hasMeta) return base;
+  const metaBlock = `${PARCEIRO_META_START}\n${JSON.stringify(meta)}\n${PARCEIRO_META_END}`;
+  return base ? `${base}\n\n${metaBlock}` : metaBlock;
+}
+
+function parceiroDocumentoMaskByTipo(tipoPessoa, value) {
+  const d = onlyDigits(value);
+  return tipoPessoa === 'PF' ? formatCpfDisplay(d) : formatCnpjDisplay(d);
+}
 
 const calculateAge = (birthDate) => {
   if (!birthDate) return null;
@@ -563,10 +618,22 @@ const cadastroConfig = {
     endpoint: 'parceiros',
     columns: ['razao_social_ou_nome', 'tipo_servico', 'contato', 'telefones', 'formas_pagamento'],
     form: {
+      tipo_pessoa: 'PJ',
+      documento: '',
+      nome_completo: '',
       razao_social_ou_nome: '',
+      nome_fantasia: '',
       cnpj_ou_cpf: '',
       tipo_servico: '',
+      responsavel_nome: '',
       contato: '',
+      cep: '',
+      logradouro: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
+      cidade: '',
+      uf: '',
       telefones: [''],
       emails: [''],
       formas_pagamento: [{ ...emptyFormaRecebimento }],
@@ -1477,30 +1544,53 @@ function App({ authUser, onLogout = () => {} }) {
   };
 
   const buscarDadosEmpresaPorCnpj = async () => {
-    if (!isClienteTab || form.tipo_pessoa !== 'PJ') return;
-    const cnpjDigits = String(form.documento || '').replace(/\D/g, '');
+    if (!(isClienteTab || isParceiroTab) || form.tipo_pessoa !== 'PJ') return;
+    const cnpjDigits = String(form.documento || form.cnpj_ou_cpf || '').replace(/\D/g, '');
     if (cnpjDigits.length !== 14) return;
     try {
       const response = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjDigits}`);
       if (!response.ok) return;
       const data = await response.json();
-      setForm((prev) => ({
-        ...prev,
-        nome_empresa: String(prev.nome_empresa || '').trim() || String(data.razao_social || ''),
-        nome_fantasia: String(prev.nome_fantasia || '').trim() || String(data.nome_fantasia || ''),
-        cep: String(prev.cep || '').trim() || formatCepDisplay(String(data.cep || '').replace(/\D/g, '')),
-        logradouro: String(prev.logradouro || '').trim() || String(data.logradouro || ''),
-        numero: String(prev.numero || '').trim() || String(data.numero || ''),
-        bairro: String(prev.bairro || '').trim() || String(data.bairro || ''),
-        cidade: String(prev.cidade || '').trim() || String(data.municipio || ''),
-        uf: String(prev.uf || '').trim() || String(data.uf || ''),
-      }));
+      setForm((prev) => {
+        if (isClienteTab) {
+          return {
+            ...prev,
+            nome_empresa: String(prev.nome_empresa || '').trim() || String(data.razao_social || ''),
+            nome_fantasia: String(prev.nome_fantasia || '').trim() || String(data.nome_fantasia || ''),
+            cep: String(prev.cep || '').trim() || formatCepDisplay(String(data.cep || '').replace(/\D/g, '')),
+            logradouro: String(prev.logradouro || '').trim() || String(data.logradouro || ''),
+            numero: String(prev.numero || '').trim() || String(data.numero || ''),
+            bairro: String(prev.bairro || '').trim() || String(data.bairro || ''),
+            cidade: String(prev.cidade || '').trim() || String(data.municipio || ''),
+            uf: String(prev.uf || '').trim() || String(data.uf || ''),
+          };
+        }
+        return {
+          ...prev,
+          razao_social_ou_nome: String(prev.razao_social_ou_nome || '').trim() || String(data.razao_social || ''),
+          nome_fantasia: String(prev.nome_fantasia || '').trim() || String(data.nome_fantasia || ''),
+          cep: String(prev.cep || '').trim() || formatCepDisplay(String(data.cep || '').replace(/\D/g, '')),
+          logradouro: String(prev.logradouro || '').trim() || String(data.logradouro || ''),
+          numero: String(prev.numero || '').trim() || String(data.numero || ''),
+          bairro: String(prev.bairro || '').trim() || String(data.bairro || ''),
+          cidade: String(prev.cidade || '').trim() || String(data.municipio || ''),
+          uf: String(prev.uf || '').trim() || String(data.uf || ''),
+        };
+      });
     } catch {
       // Silent fail to keep form usable offline.
     }
   };
 
   const handleMaskedCadastroChange = (field, value) => {
+    if (isParceiroTab && field === 'documento') {
+      onChange(field, parceiroDocumentoMaskByTipo(form.tipo_pessoa || 'PJ', value));
+      return;
+    }
+    if (isParceiroTab && field === 'cep') {
+      onChange(field, formatCepDisplay(onlyDigits(value)));
+      return;
+    }
     if (isClienteTab && field === 'documento') {
       const d = onlyDigits(value);
       onChange(field, form.tipo_pessoa === 'PF' ? formatCpfDisplay(d) : formatCnpjDisplay(d));
@@ -1569,6 +1659,14 @@ function App({ authUser, onLogout = () => {} }) {
           setError('Informe ao menos um telefone e um email válidos.');
           return;
         }
+        if (telefones.some((t) => !isValidPhoneBR(t))) {
+          setError('Telefone inválido. Use DDD + número (10 ou 11 dígitos).');
+          return;
+        }
+        if (emails.some((e) => !isValidEmail(e))) {
+          setError('Email inválido. Verifique o formato dos emails informados.');
+          return;
+        }
 
         if (isModeloTab && isMinor && (!form.responsavel_nome || !form.responsavel_cpf || !form.responsavel_telefone)) {
           setError('Modelo menor de idade exige dados completos do responsável.');
@@ -1579,6 +1677,57 @@ function App({ authUser, onLogout = () => {} }) {
         payload.emails = emails;
         payload.telefone = telefones[0];
         payload.email = emails[0];
+      }
+
+      if (isParceiroTab) {
+        const tipoPessoa = form.tipo_pessoa === 'PF' ? 'PF' : 'PJ';
+        const docDigits = onlyDigits(form.documento || form.cnpj_ou_cpf);
+        if (tipoPessoa === 'PF' && !isValidCPF(docDigits)) {
+          setError('CPF inválido para parceiro pessoa física.');
+          return;
+        }
+        if (tipoPessoa === 'PJ' && !isValidCNPJ(docDigits)) {
+          setError('CNPJ inválido para parceiro pessoa jurídica.');
+          return;
+        }
+        const nomeBase =
+          tipoPessoa === 'PF'
+            ? String(form.nome_completo || '').trim()
+            : String(form.razao_social_ou_nome || '').trim();
+        if (!nomeBase) {
+          setError(tipoPessoa === 'PF' ? 'Informe o nome completo.' : 'Informe a razão social.');
+          return;
+        }
+        if (!String(form.tipo_servico || '').trim()) {
+          setError('Tipo de serviço é obrigatório.');
+          return;
+        }
+        const responsavelNome = String(form.responsavel_nome || form.contato || '').trim();
+        if (!responsavelNome) {
+          setError('Nome do responsável é obrigatório.');
+          return;
+        }
+
+        const { baseObservacoes } = splitParceiroObservacoes(form.observacoes);
+        const metaParceiro = {
+          tipo_pessoa: tipoPessoa,
+          nome_fantasia: String(form.nome_fantasia || '').trim(),
+          cep: onlyDigits(form.cep),
+          logradouro: String(form.logradouro || '').trim(),
+          numero: String(form.numero || '').trim(),
+          complemento: String(form.complemento || '').trim(),
+          bairro: String(form.bairro || '').trim(),
+          cidade: String(form.cidade || '').trim(),
+          uf: String(form.uf || '').trim().toUpperCase().slice(0, 2),
+          nome_completo: String(form.nome_completo || '').trim(),
+        };
+
+        payload.tipo_pessoa = tipoPessoa;
+        payload.cnpj_ou_cpf = docDigits;
+        payload.documento = docDigits;
+        payload.razao_social_ou_nome = nomeBase;
+        payload.contato = responsavelNome;
+        payload.observacoes = joinParceiroObservacoes(baseObservacoes, metaParceiro);
       }
 
       if (isClienteTab) {
@@ -1733,8 +1882,38 @@ function App({ authUser, onLogout = () => {} }) {
       nextForm.uf = item.uf || '';
     }
     if (tab === 'bookers' || tab === 'parceiros') {
-      nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]);
+      nextForm.telefones = normalizeDynamicTextList(item.telefones?.length ? item.telefones : [item.telefone]).map(
+        (t) => formatPhoneDisplay(onlyDigits(String(t))),
+      );
       nextForm.emails = normalizeDynamicTextList(item.emails?.length ? item.emails : [item.email]);
+    }
+    if (tab === 'parceiros') {
+      const { baseObservacoes, meta } = splitParceiroObservacoes(item.observacoes);
+      const tipoPessoaMeta = meta?.tipo_pessoa === 'PF' ? 'PF' : 'PJ';
+      const docDigits = onlyDigits(item.cnpj_ou_cpf || '');
+      const tipoPessoa = docDigits.length === 11 ? 'PF' : docDigits.length === 14 ? 'PJ' : tipoPessoaMeta;
+      nextForm.tipo_pessoa = tipoPessoa;
+      nextForm.documento = parceiroDocumentoMaskByTipo(tipoPessoa, docDigits);
+      nextForm.cnpj_ou_cpf = nextForm.documento;
+      nextForm.nome_completo =
+        tipoPessoa === 'PF'
+          ? String(meta?.nome_completo || item.razao_social_ou_nome || '').trim()
+          : String(meta?.nome_completo || '').trim();
+      nextForm.razao_social_ou_nome =
+        tipoPessoa === 'PJ'
+          ? String(item.razao_social_ou_nome || '').trim()
+          : String(item.razao_social_ou_nome || '').trim();
+      nextForm.nome_fantasia = String(meta?.nome_fantasia || '').trim();
+      nextForm.responsavel_nome = String(item.contato || '').trim();
+      nextForm.contato = nextForm.responsavel_nome;
+      nextForm.cep = formatCepDisplay(onlyDigits(meta?.cep || ''));
+      nextForm.logradouro = String(meta?.logradouro || '').trim();
+      nextForm.numero = String(meta?.numero || '').trim();
+      nextForm.complemento = String(meta?.complemento || '').trim();
+      nextForm.bairro = String(meta?.bairro || '').trim();
+      nextForm.cidade = String(meta?.cidade || '').trim();
+      nextForm.uf = String(meta?.uf || '').trim().toUpperCase().slice(0, 2);
+      nextForm.observacoes = baseObservacoes;
     }
     setForm(nextForm);
     setCadastrosSubView('formulario');
@@ -4484,9 +4663,10 @@ function App({ authUser, onLogout = () => {} }) {
                       label={labelForField(field)}
                       items={normalizeDynamicTextList(form[field])}
                       placeholder={field === 'telefones' ? 'Ex: (11) 99999-9999' : 'Ex: contato@modelo.com'}
+                      inputType={field === 'telefones' ? 'telefone' : 'text'}
                       onAdd={() => addDynamicItem(field)}
                       onUpdate={(index, value) => {
-                        if (field === 'telefones' && (isClienteTab || isModeloTab)) {
+                        if (field === 'telefones') {
                           updateDynamicItem(
                             field,
                             index,
@@ -4559,7 +4739,7 @@ function App({ authUser, onLogout = () => {} }) {
                                     <option value="CPF">CPF</option>
                                     <option value="CNPJ">CNPJ</option>
                                     <option value="E-mail">E-mail</option>
-                                    <option value="Celular">Telefone (celular)</option>
+                                    <option value="Celular">Telefone</option>
                                     <option value="Aleatória">Chave aleatória (UUID)</option>
                                   </select>
                                 </label>
@@ -4795,10 +4975,27 @@ function App({ authUser, onLogout = () => {} }) {
                     'cidade',
                     'uf',
                   ].includes(field);
+                const contractRequiredParceiro =
+                  isParceiroTab
+                  && [
+                    'tipo_pessoa',
+                    'documento',
+                    'nome_completo',
+                    'razao_social_ou_nome',
+                    'responsavel_nome',
+                    'tipo_servico',
+                    'cep',
+                    'logradouro',
+                    'numero',
+                    'bairro',
+                    'cidade',
+                    'uf',
+                  ].includes(field);
                 const useMaskedCadastroInput =
                   (isClienteTab
                     && (field === 'documento' || field === 'documento_representante' || field === 'cep'))
                   || (isBookerTab && field === 'cep')
+                  || (isParceiroTab && (field === 'documento' || field === 'cep'))
                   || (isModeloTab
                     && (field === 'cpf' || field === 'responsavel_cpf' || field === 'responsavel_telefone' || field === 'cep'));
 
@@ -4840,6 +5037,161 @@ function App({ authUser, onLogout = () => {} }) {
                   );
                 }
 
+                if (isParceiroTab && (field === 'cnpj_ou_cpf' || field === 'contato')) {
+                  return null;
+                }
+
+                if (isParceiroTab && field === 'tipo_pessoa') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600">
+                      <span className="mb-1 block">
+                        Tipo de pessoa <span className="text-red-600">*</span>
+                      </span>
+                      <select
+                        value={form.tipo_pessoa || 'PJ'}
+                        onChange={(event) => {
+                          const v = event.target.value === 'PF' ? 'PF' : 'PJ';
+                          setForm((prev) => ({
+                            ...prev,
+                            tipo_pessoa: v,
+                            documento: parceiroDocumentoMaskByTipo(v, prev.documento || prev.cnpj_ou_cpf || ''),
+                            cnpj_ou_cpf: parceiroDocumentoMaskByTipo(v, prev.documento || prev.cnpj_ou_cpf || ''),
+                          }));
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      >
+                        <option value="PF">Pessoa Física (CPF)</option>
+                        <option value="PJ">Pessoa Jurídica (CNPJ)</option>
+                      </select>
+                    </label>
+                  );
+                }
+
+                if (isParceiroTab && field === 'documento') {
+                  const isPf = (form.tipo_pessoa || 'PJ') === 'PF';
+                  return (
+                    <label key={field} className="text-sm text-slate-600">
+                      <span className="mb-1 block">
+                        {isPf ? 'CPF' : 'CNPJ'} <span className="text-red-600">*</span>
+                      </span>
+                      {isPf ? (
+                        <InputCPF
+                          value={form.documento ?? ''}
+                          onChange={(v) => {
+                            onChange('documento', v);
+                            onChange('cnpj_ou_cpf', v);
+                          }}
+                        />
+                      ) : (
+                        <InputCNPJ
+                          value={form.documento ?? ''}
+                          onChange={(v) => {
+                            onChange('documento', v);
+                            onChange('cnpj_ou_cpf', v);
+                          }}
+                          onBlur={buscarDadosEmpresaPorCnpj}
+                        />
+                      )}
+                    </label>
+                  );
+                }
+
+                if (isParceiroTab && field === 'nome_completo' && (form.tipo_pessoa || 'PJ') !== 'PF') {
+                  return null;
+                }
+
+                if (isParceiroTab && field === 'razao_social_ou_nome' && (form.tipo_pessoa || 'PJ') === 'PF') {
+                  return null;
+                }
+
+                if (isParceiroTab && field === 'nome_completo') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">
+                        Nome completo <span className="text-red-600">*</span>
+                      </span>
+                      <input
+                        type="text"
+                        value={form.nome_completo ?? ''}
+                        onChange={(event) => onChange('nome_completo', event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+                      />
+                    </label>
+                  );
+                }
+
+                if (isParceiroTab && field === 'razao_social_ou_nome') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">
+                        Razão social <span className="text-red-600">*</span>
+                      </span>
+                      <input
+                        type="text"
+                        value={form.razao_social_ou_nome ?? ''}
+                        onChange={(event) => onChange('razao_social_ou_nome', event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+                      />
+                    </label>
+                  );
+                }
+
+                if (isParceiroTab && field === 'nome_fantasia' && (form.tipo_pessoa || 'PJ') !== 'PJ') {
+                  return null;
+                }
+
+                if (isParceiroTab && field === 'responsavel_nome') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">
+                        Nome do responsável <span className="text-red-600">*</span>
+                      </span>
+                      <input
+                        type="text"
+                        value={form.responsavel_nome ?? ''}
+                        onChange={(event) => {
+                          onChange('responsavel_nome', event.target.value);
+                          onChange('contato', event.target.value);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+                      />
+                    </label>
+                  );
+                }
+
+                if (isParceiroTab && field === 'cep') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600">
+                      <span className="mb-1 block">
+                        CEP <span className="text-red-600">*</span>
+                      </span>
+                      <InputCEP
+                        value={form.cep ?? ''}
+                        onChange={(v) => onChange('cep', v)}
+                        onBlur={buscarEnderecoPorCep}
+                      />
+                    </label>
+                  );
+                }
+
+                if (isBookerTab && field === 'cep') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600">
+                      <span className="mb-1 block">CEP <span className="text-red-600">*</span></span>
+                      <InputCEP value={form.cep ?? ''} onChange={(v) => onChange('cep', v)} onBlur={buscarEnderecoPorCep} />
+                    </label>
+                  );
+                }
+
+                if (isBookerTab && field === 'cpf') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600">
+                      <span className="mb-1 block">CPF <span className="text-red-600">*</span></span>
+                      <InputCPF value={form.cpf ?? ''} onChange={(v) => onChange('cpf', v)} />
+                    </label>
+                  );
+                }
+
                 return (
                   <label key={field} className="text-sm text-slate-600">
                     <span className="mb-1 block">
@@ -4848,7 +5200,7 @@ function App({ authUser, onLogout = () => {} }) {
                         : isModeloTab && String(field).startsWith('medida_')
                           ? labelMedidaModelo(field, form.sexo) || labelForField(field)
                           : labelForField(field)}
-                      {contractRequiredCliente || (isModeloTab && field === 'cpf') ? (
+                      {contractRequiredCliente || contractRequiredParceiro || (isModeloTab && field === 'cpf') ? (
                         <span className="text-red-600"> *</span>
                       ) : null}
                     </span>
@@ -4864,9 +5216,9 @@ function App({ authUser, onLogout = () => {} }) {
                           : onChange(field, event.target.value)
                       }
                       onBlur={
-                        isClienteTab && field === 'documento' && form.tipo_pessoa === 'PJ'
+                        (isClienteTab || isParceiroTab) && field === 'documento' && form.tipo_pessoa === 'PJ'
                           ? buscarDadosEmpresaPorCnpj
-                          : (isClienteTab || isModeloTab || isBookerTab) && field === 'cep'
+                          : (isClienteTab || isModeloTab || isBookerTab || isParceiroTab) && field === 'cep'
                             ? buscarEnderecoPorCep
                             : undefined
                       }
