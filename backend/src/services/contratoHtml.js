@@ -21,6 +21,17 @@ function fmtMoneyBR(n) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function onlyDigits(v) {
+  return String(v || '').replace(/\D+/g, '');
+}
+
+function formatCpfDisplay(value) {
+  const d = onlyDigits(value).slice(0, 11);
+  if (!d) return '';
+  if (d.length !== 11) return d;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
 function loadAssinaturaDataUri() {
   try {
     const assinaturaPath = path.join(__dirname, '..', 'assets', 'assinatura-andy-models.png');
@@ -37,8 +48,9 @@ function buildListaModelosHtml(linhas) {
   }
   const items = linhas
     .map((l) => {
-      const nome = esc(l.modelo_nome);
-      const cpf = esc(l.modelo_cpf || '');
+      const nome = esc(String(l.modelo_nome || '').trim() || 'Modelo sem nome no cadastro');
+      const cpfFmt = formatCpfDisplay(l.modelo_cpf || '');
+      const cpf = esc(cpfFmt);
       return `<li><strong>${nome}</strong> — <strong>${cpf || 'CPF não informado'}</strong></li>`;
     })
     .join('');
