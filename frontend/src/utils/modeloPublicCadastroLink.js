@@ -1,6 +1,6 @@
 /**
  * Corpo JSON para POST /api/public/cadastro-modelo — mesmo contrato que POST /api/modelos (buildCrmModeloApiBody)
- * + token e senha_acesso para o fluxo do link.
+ * + token e senha_acesso para o fluxo do link (senha gerada no cliente se não for indicada).
  */
 
 import { onlyDigits } from './brValidators';
@@ -9,6 +9,14 @@ import { buildCrmModeloApiBody, createCrmExtraInitial } from './modeloCrmFormMap
 
 function trimStr(v) {
   return String(v ?? '').trim();
+}
+
+/** Senha só para satisfazer POST /public/cadastro-modelo até existir fluxo de extrato/login; não é mostrada ao utilizador. */
+function generatePlaceholderSenhaAcesso() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${crypto.randomUUID().replace(/-/g, '')}Aa1`;
+  }
+  return `link${Date.now()}Z9`;
 }
 
 /** Valida medidas obrigatórias conforme sexo (Feminino/Masculino) a partir do formulário unificado. */
@@ -20,14 +28,14 @@ function validateMedidasWebsiteForm(form) {
   }
   if (fem) {
     const need = [
-      ['medida_altura', 'Altura'],
-      ['medida_busto', 'Busto'],
-      ['medida_cintura', 'Cintura'],
-      ['medida_quadril', 'Quadril'],
-      ['medida_torax', 'Tamanho (SIZE)'],
-      ['medida_sapato', 'Sapato'],
-      ['medida_cabelo', 'Cabelo'],
-      ['medida_olhos', 'Olhos'],
+      ['medida_altura', 'Altura (Height)'],
+      ['medida_busto', 'Busto (Bust)'],
+      ['medida_cintura', 'Cintura (Waist)'],
+      ['medida_quadril', 'Quadril (Hips)'],
+      ['medida_torax', 'Manequim (Size)'],
+      ['medida_sapato', 'Sapatos (Shoes)'],
+      ['medida_cabelo', 'Cabelos (Hair)'],
+      ['medida_olhos', 'Olhos (Eyes)'],
     ];
     for (const [key, label] of need) {
       if (!trimStr(form[key])) return `${label} é obrigatório.`;
@@ -35,14 +43,14 @@ function validateMedidasWebsiteForm(form) {
     return null;
   }
   const need = [
-    ['medida_altura', 'Altura'],
-    ['medida_torax', 'Tórax'],
-    ['medida_busto', 'Terno (SUIT)'],
-    ['medida_cintura', 'Camisa (SHIRT)'],
-    ['medida_quadril', 'Tamanho (SIZE)'],
-    ['medida_sapato', 'Sapato'],
-    ['medida_cabelo', 'Cabelo'],
-    ['medida_olhos', 'Olhos'],
+    ['medida_altura', 'Altura (Height)'],
+    ['medida_torax', 'Tórax (Chest)'],
+    ['medida_busto', 'Terno (Suit)'],
+    ['medida_cintura', 'Camisa (Shirt)'],
+    ['medida_quadril', 'Manequim (Size)'],
+    ['medida_sapato', 'Sapatos (Shoes)'],
+    ['medida_cabelo', 'Cabelos (Hair)'],
+    ['medida_olhos', 'Olhos (Eyes)'],
   ];
   for (const [key, label] of need) {
     if (!trimStr(form[key])) return `${label} é obrigatório.`;
@@ -53,7 +61,7 @@ function validateMedidasWebsiteForm(form) {
 /**
  * @param {object} form — estado WebsiteModeloEditorPage (createInitialForm)
  * @param {object} crmExtra — responsável para menor (mesmo que CRM)
- * @param {{ senha_acesso: string, foto_perfil_base64: string, emite_nf_propria: boolean }} linkExtras
+ * @param {{ senha_acesso?: string, foto_perfil_base64: string, emite_nf_propria: boolean }} linkExtras
  * @param {string} token
  * @returns {{ ok: true, body: object } | { ok: false, message: string }}
  */
@@ -90,9 +98,9 @@ export function validateAndBuildPublicCadastroBody(form, crmExtra, linkExtras, t
     return { ok: false, message: 'Preencha CEP, logradouro, número, bairro, cidade e UF.' };
   }
 
-  const senhaAcesso = String(linkExtras?.senha_acesso || '').trim();
+  let senhaAcesso = String(linkExtras?.senha_acesso || '').trim();
   if (!senhaAcesso || senhaAcesso.length < 8) {
-    return { ok: false, message: 'Defina uma senha de acesso com no mínimo 8 caracteres.' };
+    senhaAcesso = generatePlaceholderSenhaAcesso();
   }
 
   const idade = (() => {

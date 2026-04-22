@@ -234,26 +234,26 @@ const emptyFormaRecebimento = () => ({
   tipo_conta: 'corrente',
 });
 
-/** Medidas por sexo — só colunas `medida_*` existentes na BD; rótulos alinhados ao cadastro (PT). */
+/** Medidas por sexo — só colunas `medida_*` existentes na BD; PT principal + EN entre parênteses (padrão agência). */
 const MEDIDAS_CAMPOS_FEMININO = [
-  ['medida_altura', 'Altura'],
-  ['medida_busto', 'Busto'],
-  ['medida_cintura', 'Cintura'],
-  ['medida_quadril', 'Quadril'],
-  ['medida_torax', 'Tamanho (SIZE)'],
-  ['medida_sapato', 'Sapato'],
-  ['medida_cabelo', 'Cabelo'],
-  ['medida_olhos', 'Olhos'],
+  ['medida_altura', 'Altura (Height)'],
+  ['medida_busto', 'Busto (Bust)'],
+  ['medida_cintura', 'Cintura (Waist)'],
+  ['medida_quadril', 'Quadril (Hips)'],
+  ['medida_torax', 'Manequim (Size)'],
+  ['medida_sapato', 'Sapatos (Shoes)'],
+  ['medida_cabelo', 'Cabelos (Hair)'],
+  ['medida_olhos', 'Olhos (Eyes)'],
 ];
 const MEDIDAS_CAMPOS_MASCULINO = [
-  ['medida_altura', 'Altura'],
-  ['medida_torax', 'Tórax'],
-  ['medida_busto', 'Terno (SUIT)'],
-  ['medida_cintura', 'Camisa (SHIRT)'],
-  ['medida_quadril', 'Tamanho (SIZE)'],
-  ['medida_sapato', 'Sapato'],
-  ['medida_cabelo', 'Cabelo'],
-  ['medida_olhos', 'Olhos'],
+  ['medida_altura', 'Altura (Height)'],
+  ['medida_torax', 'Tórax (Chest)'],
+  ['medida_busto', 'Terno (Suit)'],
+  ['medida_cintura', 'Camisa (Shirt)'],
+  ['medida_quadril', 'Manequim (Size)'],
+  ['medida_sapato', 'Sapatos (Shoes)'],
+  ['medida_cabelo', 'Cabelos (Hair)'],
+  ['medida_olhos', 'Olhos (Eyes)'],
 ];
 
 const MEDIDAS_CLEAR_ON_SEX_CHANGE = ['medida_busto', 'medida_torax', 'medida_cintura', 'medida_quadril'];
@@ -790,8 +790,7 @@ export default function WebsiteModeloEditorPage({
   /** Cadastro unificado (CRM): campos orçamento / internos. */
   const [crmExtra, setCrmExtra] = useState(createCrmExtraInitial);
   const [crmLoadedRow, setCrmLoadedRow] = useState(null);
-  /** Link público (token): senha extrato, foto perfil, NF — não faz parte do CRM autenticado. */
-  const [linkSenha, setLinkSenha] = useState('');
+  /** Link público (token): foto perfil, NF — senha de extrato é gerada no cliente até existir login (ver modeloPublicCadastroLink). */
   const [linkFotoBase64, setLinkFotoBase64] = useState('');
   const [linkFotoPreview, setLinkFotoPreview] = useState('');
   const [linkEmiteNf, setLinkEmiteNf] = useState(false);
@@ -1176,7 +1175,6 @@ export default function WebsiteModeloEditorPage({
           form,
           crmExtra,
           {
-            senha_acesso: linkSenha,
             foto_perfil_base64: linkFotoBase64,
             emite_nf_propria: linkEmiteNf,
           },
@@ -1839,7 +1837,6 @@ export default function WebsiteModeloEditorPage({
     isCrm,
     isCadastroLink,
     cadastroLinkToken,
-    linkSenha,
     linkFotoBase64,
     linkEmiteNf,
     onCadastroLinkSuccess,
@@ -1862,7 +1859,6 @@ export default function WebsiteModeloEditorPage({
     setWebsiteModelId(null);
     setApiMedia([]);
     setFileQueueNotice('');
-    setLinkSenha('');
     setLinkFotoBase64('');
     setLinkFotoPreview('');
     setLinkEmiteNf(false);
@@ -2530,19 +2526,7 @@ export default function WebsiteModeloEditorPage({
 
         {isCadastroLink ? (
           <>
-            <Section title="Acesso ao extrato e foto">
-              <label className="text-sm text-slate-600 md:col-span-2">
-                <span className="mb-1 block font-medium text-slate-800">
-                  Senha de acesso ao extrato <span className="text-red-600">*</span>
-                </span>
-                <input
-                  type="password"
-                  value={linkSenha}
-                  onChange={(e) => setLinkSenha(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  autoComplete="new-password"
-                />
-              </label>
+            <Section title="Foto de perfil e NF">
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700 md:col-span-2">
                 <input
                   type="checkbox"

@@ -151,6 +151,44 @@ function sexoGrupo(valor) {
   return '';
 }
 
+/** Rótulos de medidas no CRM: PT principal + EN; padrão feminino vs masculino (campos BD iguais ao WebsiteModeloEditorPage). */
+function labelMedidaModelo(field, sexo) {
+  const g = sexoGrupo(sexo);
+  const fem = {
+    medida_altura: 'Altura (Height)',
+    medida_busto: 'Busto (Bust)',
+    medida_cintura: 'Cintura (Waist)',
+    medida_quadril: 'Quadril (Hips)',
+    medida_torax: 'Manequim (Size)',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
+  };
+  const masc = {
+    medida_altura: 'Altura (Height)',
+    medida_torax: 'Tórax (Chest)',
+    medida_busto: 'Terno (Suit)',
+    medida_cintura: 'Camisa (Shirt)',
+    medida_quadril: 'Manequim (Size)',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
+  };
+  if (g === 'feminino') return fem[field] || null;
+  if (g === 'masculino') return masc[field] || null;
+  const indef = {
+    medida_altura: 'Altura (Height)',
+    medida_busto: 'Busto (Bust) ou Terno (Suit) — defina o sexo',
+    medida_torax: 'Tórax (Chest) ou Manequim (Size) — defina o sexo',
+    medida_cintura: 'Cintura (Waist) ou Camisa (Shirt) — defina o sexo',
+    medida_quadril: 'Quadril (Hips) ou Manequim (Size) — defina o sexo',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
+  };
+  return indef[field] || null;
+}
+
 function createEmptyOrcamentoForm() {
   return {
     cliente_id: '',
@@ -328,14 +366,14 @@ const fieldLabels = {
   rg: 'RG',
   complemento: 'Complemento',
   sexo: 'Sexo',
-  medida_altura: 'Altura',
-  medida_busto: 'Busto / terno (conforme sexo)',
-  medida_torax: 'Tórax / tamanho (conforme sexo)',
-  medida_cintura: 'Cintura / camisa (conforme sexo)',
-  medida_quadril: 'Quadril / tamanho (conforme sexo)',
-  medida_sapato: 'Sapato',
-  medida_cabelo: 'Cabelo',
-  medida_olhos: 'Olhos',
+  medida_altura: 'Altura (Height)',
+  medida_busto: 'Busto (Bust) / Terno (Suit)',
+  medida_torax: 'Tórax (Chest) / Manequim (Size)',
+  medida_cintura: 'Cintura (Waist) / Camisa (Shirt)',
+  medida_quadril: 'Quadril (Hips) / Manequim (Size)',
+  medida_sapato: 'Sapatos (Shoes)',
+  medida_cabelo: 'Cabelos (Hair)',
+  medida_olhos: 'Olhos (Eyes)',
   foto_perfil_base64: 'Foto de perfil',
   instagram: 'Instagram',
   tiktok: 'TikTok',
@@ -4807,7 +4845,9 @@ function App({ authUser, onLogout = () => {} }) {
                     <span className="mb-1 block">
                       {isClienteTab && field === 'documento'
                         ? (form.tipo_pessoa === 'PF' ? 'CPF' : 'CNPJ')
-                        : labelForField(field)}
+                        : isModeloTab && String(field).startsWith('medida_')
+                          ? labelMedidaModelo(field, form.sexo) || labelForField(field)
+                          : labelForField(field)}
                       {contractRequiredCliente || (isModeloTab && field === 'cpf') ? (
                         <span className="text-red-600"> *</span>
                       ) : null}

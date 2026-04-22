@@ -55,7 +55,59 @@ function tryParseJsonString(value) {
   }
 }
 
-function labelForField(field) {
+function sexoGrupoModelo(valor) {
+  const v = String(valor || '')
+    .trim()
+    .toLowerCase();
+  if (!v) return '';
+  if (v.startsWith('f')) return 'feminino';
+  if (v.startsWith('m')) return 'masculino';
+  return '';
+}
+
+/** Rótulos de medidas para PDF/export: PT + EN; conforme sexo do modelo quando disponível. */
+function labelMedidaModeloField(field, row) {
+  const g = sexoGrupoModelo(row?.sexo);
+  const fem = {
+    medida_altura: 'Altura (Height)',
+    medida_busto: 'Busto (Bust)',
+    medida_cintura: 'Cintura (Waist)',
+    medida_quadril: 'Quadril (Hips)',
+    medida_torax: 'Manequim (Size)',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
+  };
+  const masc = {
+    medida_altura: 'Altura (Height)',
+    medida_torax: 'Tórax (Chest)',
+    medida_busto: 'Terno (Suit)',
+    medida_cintura: 'Camisa (Shirt)',
+    medida_quadril: 'Manequim (Size)',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
+  };
+  if (g === 'feminino') return fem[field];
+  if (g === 'masculino') return masc[field];
+  const indef = {
+    medida_altura: 'Altura (Height)',
+    medida_busto: 'Busto (Bust) ou Terno (Suit)',
+    medida_torax: 'Tórax (Chest) ou Manequim (Size)',
+    medida_cintura: 'Cintura (Waist) ou Camisa (Shirt)',
+    medida_quadril: 'Quadril (Hips) ou Manequim (Size)',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
+  };
+  return indef[field];
+}
+
+function labelForField(field, row = null) {
+  if (row && String(field).startsWith('medida_')) {
+    const lab = labelMedidaModeloField(field, row);
+    if (lab) return lab;
+  }
   const map = {
     id: 'ID',
     nome: 'Nome',
@@ -85,14 +137,14 @@ function labelForField(field) {
     ativo: 'Ativo',
     created_at: 'Criado em',
     updated_at: 'Atualizado em',
-    medida_altura: 'Altura',
-    medida_busto: 'Busto',
-    medida_torax: 'Torax',
-    medida_cintura: 'Cintura',
-    medida_quadril: 'Quadril',
-    medida_sapato: 'Sapato',
-    medida_cabelo: 'Cabelo',
-    medida_olhos: 'Olhos',
+    medida_altura: 'Altura (Height)',
+    medida_busto: 'Busto (Bust)',
+    medida_torax: 'Tórax (Chest)',
+    medida_cintura: 'Cintura (Waist)',
+    medida_quadril: 'Quadril (Hips)',
+    medida_sapato: 'Sapatos (Shoes)',
+    medida_cabelo: 'Cabelos (Hair)',
+    medida_olhos: 'Olhos (Eyes)',
     formas_pagamento: 'Formas de pagamento',
     emite_nf_propria: 'Emite NF propria',
   };
@@ -124,7 +176,7 @@ function cadastroPdfHtml({ title, row }) {
   const foto = row?.foto_perfil_base64 ? String(row.foto_perfil_base64) : '';
   const entries = Object.entries(row || {}).filter(([k]) => k !== 'foto_perfil_base64');
   const rows = entries
-    .map(([k, v]) => `<tr><th>${escHtml(labelForField(k))}</th><td>${fmtValue(v)}</td></tr>`)
+    .map(([k, v]) => `<tr><th>${escHtml(labelForField(k, row))}</th><td>${fmtValue(v)}</td></tr>`)
     .join('');
   return `<!doctype html>
 <html lang="pt-BR">
