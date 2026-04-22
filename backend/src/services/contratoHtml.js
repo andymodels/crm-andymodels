@@ -33,13 +33,13 @@ function loadAssinaturaDataUri() {
 
 function buildListaModelosHtml(linhas) {
   if (!Array.isArray(linhas) || linhas.length === 0) {
-    return '<p class="lista-modelos"><em>Sem modelos vinculados a esta O.S. (serviço sem modelo ou pendente de linhas).</em></p>';
+    return '<p class="lista-modelos"><strong>Sem modelos vinculados a esta O.S.</strong></p>';
   }
   const items = linhas
     .map((l) => {
       const nome = esc(l.modelo_nome);
       const cpf = esc(l.modelo_cpf || '');
-      return `<li>${nome} — ${cpf || 'CPF não informado'}</li>`;
+      return `<li><strong>${nome}</strong> — <strong>${cpf || 'CPF não informado'}</strong></li>`;
     })
     .join('');
   return `<ul class="lista-modelos">${items}</ul>`;
@@ -51,12 +51,11 @@ function buildListaModelosHtml(linhas) {
 function buildContratoDocumentHtml(ctx) {
   const { os, cliente, linhas } = ctx;
 
-  const clienteNome = esc(cliente.nome_fantasia || cliente.nome_empresa || '');
-  const clienteRazao = esc(cliente.nome_empresa || '');
-  const clienteCnpj = esc(cliente.cnpj || '');
-  const clienteIe = esc(cliente.inscricao_estadual || '');
-  const clienteEndereco = esc(cliente.endereco_completo || '');
-  const clienteRepresentante = esc(cliente.contato_principal || '');
+  const clienteNome = esc(cliente.nome_fantasia || cliente.nome_empresa || '—');
+  const clienteRazao = esc(cliente.nome_empresa || '—');
+  const clienteDocumento = esc(cliente.documento || cliente.cnpj || '—');
+  const clienteEndereco = esc(cliente.endereco_completo || '—');
+  const clienteRepresentante = esc(cliente.contato_principal || '—');
   const clienteCpfRepresentante = esc(cliente.documento_representante || '—');
   const osNumero = esc(String(os.id));
 
@@ -65,11 +64,6 @@ function buildContratoDocumentHtml(ctx) {
   const usoTerritorio = esc(os.territorio || '—');
 
   const valorTotal = fmtMoneyBR(os.total_cliente);
-  const formaPagamento = esc(os.condicoes_pagamento || '—');
-
-  const clausulasAdicionais = os.contrato_observacao
-    ? `<p class="clause">${esc(os.contrato_observacao)}</p>`
-    : '<p class="clause muted"><em>Não há cláusulas adicionais registradas na O.S.</em></p>';
 
   const listaModelos = buildListaModelosHtml(linhas);
 
@@ -105,18 +99,8 @@ function buildContratoDocumentHtml(ctx) {
       padding: 0 8mm;
       box-sizing: border-box;
     }
-    .ref-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 7mm;
-      font-size: 10.5pt;
-      color: #374151;
-      border-bottom: 1px solid #d1d5db;
-      padding-bottom: 2mm;
-    }
     h1 {
-      font-size: 13pt;
+      font-size: 12.5pt;
       text-align: center;
       text-transform: uppercase;
       letter-spacing: 0.01em;
@@ -138,7 +122,6 @@ function buildContratoDocumentHtml(ctx) {
       widows: 3;
       page-break-inside: avoid;
     }
-    p.muted { color: #6b7280; }
     ul.lista-modelos {
       margin: 0 0 3mm 0;
       padding-left: 6mm;
@@ -189,80 +172,77 @@ function buildContratoDocumentHtml(ctx) {
 </head>
 <body>
   <main class="documento">
-  <div class="ref-bar">
-    <div><strong>O.S. nº ${osNumero}</strong></div>
-    <div>${esc(dataRef)}</div>
-  </div>
-
-  <h1>Instrumento particular de contrato de prestação de serviços e cessão de imagem por tempo determinado para utilização em campanha publicitária</h1>
+  <h1>INSTRUMENTO PARTICULAR DE CONTRATO DE PRESTAÇÃO DE SERVIÇOS E CESSÃO DE USO DE IMAGEM</h1>
 
   <p class="clause">
-    Pelo presente instrumento particular, de um lado como <strong>CONTRATANTE/CLIENTE</strong>: ${clienteNome}, razão social
-    ${clienteRazao}, inscrito no CNPJ sob nº ${clienteCnpj}, inscrição estadual ${clienteIe}, com endereço em ${clienteEndereco},
-    neste ato representado por <strong>${clienteRepresentante}</strong>, portador(a) do CPF nº ${clienteCpfRepresentante}, e de outro lado como <strong>CONTRATADA</strong>:
-    ANDY MODELS, razão social MEGA STUDIO LTDA, inscrita no CNPJ nº 01.553.737/0001-02, com sede na Av. Nossa Senhora da Penha,
-    386-B, Vila Velha – ES, celebram o presente contrato referente à <strong>O.S. nº ${osNumero}</strong>.
+    Pelo presente instrumento, de um lado como CONTRATANTE/CLIENTE: <strong>${clienteNome}</strong>, razão social
+    <strong>${clienteRazao}</strong>, inscrito sob nº <strong>${clienteDocumento}</strong>, com endereço em
+    <strong>${clienteEndereco}</strong>, neste ato representado por <strong>${clienteRepresentante}</strong>, CPF nº
+    <strong>${clienteCpfRepresentante}</strong>, e de outro lado como CONTRATADA: ANDY MODELS, razão social MEGA STUDIO LTDA,
+    inscrita no CNPJ nº 01.553.737/0001-02, referente à O.S. nº <strong>${osNumero}</strong>.
   </p>
 
   <h2>CLÁUSULA PRIMEIRA – DO OBJETO</h2>
   <p class="clause">
-    O presente contrato tem por objeto a prestação de serviços de disponibilização de modelo(s) para realização de trabalho
-    publicitário conforme definido entre as partes.
+    Prestação de serviços de agenciamento, intermediação e disponibilização de modelo(s), bem como cessão de uso de imagem
+    para fins publicitários, conforme definido na O.S.
   </p>
-  <p class="clause">Os modelos envolvidos neste contrato são:</p>
+  <p class="clause">Modelos envolvidos:</p>
   ${listaModelos}
-  <p class="clause">O trabalho será realizado conforme condições previamente acordadas na O.S.</p>
 
-  <h2>CLÁUSULA SEGUNDA – DO USO DE IMAGEM</h2>
-  <p class="clause">O CLIENTE fica autorizado a utilizar a imagem dos modelos conforme as condições abaixo:</p>
+  <h2>CLÁUSULA SEGUNDA – DA REPRESENTAÇÃO</h2>
   <p class="clause">
-    <strong>Tipo de uso:</strong> ${usoTipo}<br />
-    <strong>Prazo:</strong> ${usoPrazo}<br />
-    <strong>Abrangência territorial:</strong> ${usoTerritorio}
-  </p>
-  <p class="clause">
-    A utilização das imagens está restrita aos meios previamente acordados, sendo vedada qualquer utilização fora do escopo contratado.
-    É expressamente proibido o uso das imagens para inteligência artificial, deepfake, machine learning ou qualquer tecnologia similar
-    sem autorização formal da CONTRATADA.
+    A CONTRATADA declara que possui autorização formal dos modelos para representá-los, negociar e firmar contratos de cessão
+    de uso de imagem em seu nome.
   </p>
 
-  <h2>CLÁUSULA TERCEIRA – DO VALOR E PAGAMENTO</h2>
-  <p class="clause">O valor total deste contrato é de <strong>${valorTotal}</strong>.</p>
-  <p class="clause">A forma de pagamento será conforme acordado entre as partes: <strong>${formaPagamento}</strong>.</p>
+  <h2>CLÁUSULA TERCEIRA – DO USO DE IMAGEM</h2>
   <p class="clause">
-    O não pagamento na data acordada implicará aplicação de multa e juros conforme legislação vigente.
+    Tipo de uso: <strong>${usoTipo}</strong><br />
+    Prazo: <strong>${usoPrazo}</strong><br />
+    Abrangência: <strong>${usoTerritorio}</strong>
+  </p>
+  <p class="clause">
+    O uso está limitado às condições acima. É proibido uso para IA, deepfake ou similares sem autorização.
+    O uso não pode prejudicar honra ou imagem dos modelos.
   </p>
 
-  <h2>CLÁUSULA QUARTA – DA EXCLUSIVIDADE E INTERMEDIAÇÃO</h2>
+  <h2>CLÁUSULA QUARTA – DO VALOR</h2>
+  <p class="clause">Valor total: <strong>${valorTotal}</strong></p>
   <p class="clause">
-    Durante o período de até 2 anos, novas contratações dos modelos envolvidos deverão ser realizadas exclusivamente por
-    intermédio da CONTRATADA.
+    As condições de pagamento são aquelas definidas na O.S.
+  </p>
+  <p class="clause">
+    O valor inclui serviços da CONTRATADA, intermediação e custos operacionais, além da remuneração dos modelos.
   </p>
 
-  <h2>CLÁUSULA QUINTA – DO PRAZO</h2>
-  <p class="clause">O prazo de utilização das imagens será conforme definido neste contrato.</p>
-  <p class="clause">Caso haja necessidade de renovação, deverá ser feito novo acordo entre as partes.</p>
-  <p class="clause">A não utilização do material não isenta o CLIENTE do pagamento.</p>
-
-  <h2>CLÁUSULA SEXTA – DOS MATERIAIS</h2>
+  <h2>CLÁUSULA QUINTA – DA EXCLUSIVIDADE</h2>
   <p class="clause">
-    Os materiais poderão ser utilizados em campanhas publicitárias, mídias digitais, impressos e demais meios acordados.
-    Após o término do prazo, fica proibida a continuidade da utilização sem renovação contratual.
+    Durante o uso da campanha e até 2 anos após sua veiculação, novas contratações devem ser feitas via CONTRATADA.
   </p>
 
-  <h2>CLÁUSULA SÉTIMA – DA CONFIDENCIALIDADE</h2>
-  <p class="clause">As partes se comprometem a manter sigilo sobre todas as informações e condições deste contrato.</p>
+  <h2>CLÁUSULA SEXTA – DO PRAZO</h2>
+  <p class="clause">O uso será pelo período definido na O.S.</p>
+  <p class="clause">Renovação exige novo acordo.</p>
 
-  <h2>CLÁUSULA OITAVA – DA MULTA</h2>
+  <h2>CLÁUSULA SÉTIMA – DOS MATERIAIS</h2>
   <p class="clause">
-    O descumprimento de qualquer cláusula implicará multa equivalente ao valor total do contrato, além de perdas e danos.
+    O uso se limita aos meios definidos.
+  </p>
+  <p class="clause">
+    Uso após prazo caracteriza uso indevido.
   </p>
 
-  <h2>CLÁUSULA NONA – DO FORO</h2>
-  <p class="clause">Fica eleito o foro da comarca de Vila Velha – ES para dirimir quaisquer dúvidas oriundas deste contrato.</p>
+  <h2>CLÁUSULA OITAVA – CONFIDENCIALIDADE</h2>
+  <p class="clause">As partes mantêm sigilo, salvo obrigação legal.</p>
 
-  <h2>CLÁUSULAS ADICIONAIS</h2>
-  ${clausulasAdicionais}
+  <h2>CLÁUSULA NONA – PENALIDADES</h2>
+  <p class="clause">
+    Descumprimento gera multa equivalente ao valor do contrato, além de perdas e danos.
+  </p>
+
+  <h2>CLÁUSULA DÉCIMA – FORO</h2>
+  <p class="clause">Foro de Vila Velha – ES.</p>
 
   <p class="clause" style="margin-top:6mm">E por estarem de acordo, as partes firmam o presente instrumento.</p>
   <p class="rodape-local-data">Vila Velha – ES, ${esc(dataRef)}.</p>
