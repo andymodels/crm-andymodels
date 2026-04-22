@@ -9,6 +9,7 @@ function DynamicTextListField({
   onRemove,
   inputType = 'text',
 }) {
+  const isPhoneField = inputType === 'telefone' || /telefone/i.test(String(label || ''));
   return (
     <div className="md:col-span-2 rounded-lg border border-slate-200 p-3">
       <div className="mb-2 flex items-center justify-between">
@@ -24,7 +25,7 @@ function DynamicTextListField({
       <div className="space-y-2">
         {items.map((item, index) => (
           <div key={`${label}-${index}`} className="grid gap-2 md:grid-cols-[1fr_auto]">
-            {inputType === 'telefone' ? (
+            {isPhoneField ? (
               <InputTelefone
                 value={item}
                 onChange={(v) => onUpdate(index, v)}

@@ -8,17 +8,20 @@ export default function InputTelefone({
   disabled = false,
   required = false,
 }) {
+  const normalized = formatPhoneDisplay(onlyDigits(String(value ?? '')));
   return (
     <input
       type="text"
       inputMode="numeric"
       autoComplete="tel"
-      value={formatPhoneDisplay(String(value ?? ''))}
+      value={normalized}
       onChange={(event) => onChange(formatPhoneDisplay(onlyDigits(event.target.value)))}
+      onBlur={() => onChange(normalized)}
       className={className}
       placeholder={placeholder}
       disabled={disabled}
       required={required}
+      maxLength={15}
     />
   );
 }

@@ -109,6 +109,8 @@ const labelOsStatus = (s) => {
 };
 
 const labelContratoStatus = (s) => {
+  if (s === 'pendente') return 'Pendente';
+  if (s === 'enviado') return 'Enviado';
   if (s === 'aguardando_assinatura') return 'Aguardando assinatura';
   if (s === 'assinado') return 'Assinado';
   if (s === 'recebido') return 'Recebido';
@@ -122,6 +124,15 @@ function pagamentoModeloLiberadoContrato(row) {
   if (!emitir) return true;
   const s = String(row?.contrato_status || '').toLowerCase();
   return s === 'assinado' || s === 'recebido';
+}
+
+function contratoUiStatusFromRow(row) {
+  const emitir = row?.emitir_contrato === true || row?.emitir_contrato === 't' || row?.emitir_contrato === 1;
+  if (!emitir) return 'cancelado';
+  const s = String(row?.contrato_status || '').toLowerCase();
+  if (s === 'assinado' || s === 'recebido') return 'assinado';
+  if (row?.contrato_enviado_em) return 'enviado';
+  return 'pendente';
 }
 
 const nPrev = (v) => Number(v || 0);
@@ -793,6 +804,8 @@ function App({ authUser, onLogout = () => {} }) {
   const [contratoEmailLoading, setContratoEmailLoading] = useState(false);
   const [contratoEmailFallbackLink, setContratoEmailFallbackLink] = useState('');
   const [contratoHtmlFallbackUrl, setContratoHtmlFallbackUrl] = useState('');
+  const [contratoStatusSaving, setContratoStatusSaving] = useState(false);
+  const [contratoListaSavingId, setContratoListaSavingId] = useState(null);
   const [senhaAtual, setSenhaAtual] = useState('');
   const [senhaNova, setSenhaNova] = useState('');
   const [senhaMsg, setSenhaMsg] = useState('');
@@ -2572,6 +2585,63 @@ function App({ authUser, onLogout = () => {} }) {
       }
     } catch (e) {
       setContratosError(e?.message || 'Falha ao reenviar contrato.');
+    }
+  };
+
+  const atualizarStatusContrato = async (osId, status, opts = {}) => {
+    const { silent = false } = opts;
+    if (!osId) return false;
+    if (silent !== true) setContratosError('');
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/contratos/${osId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const raw = await response.text();
+      throwIfHtmlOrCannotPost(raw, response.status);
+      const data = raw ? JSON.parse(raw) : {};
+      if (!response.ok) throw new Error(data.message || 'Falha ao atualizar status do contrato.');
+
+      if (osDraft?.id === osId) {
+        setOsDraft((prev) =>
+          prev
+            ? {
+                ...prev,
+                contrato_status:
+                  status === 'assinado'
+                    ? 'assinado'
+                    : status === 'enviado' || status === 'pendente'
+                      ? 'aguardando_assinatura'
+                      : prev.contrato_status,
+                contrato_assinado_em:
+                  status === 'assinado'
+                    ? prev.contrato_assinado_em || new Date().toISOString()
+                    : null,
+                contrato_enviado_em:
+                  status === 'pendente'
+                    ? null
+                    : status === 'enviado'
+                      ? prev.contrato_enviado_em || new Date().toISOString()
+                      : prev.contrato_enviado_em,
+              }
+            : prev,
+        );
+      }
+
+      const refreshRes = await fetchWithTimeout(`${API_BASE}/contratos`);
+      if (refreshRes.ok) {
+        const refreshed = await refreshRes.json();
+        setContratosList(Array.isArray(refreshed) ? refreshed : []);
+      }
+      await refreshAlertasOperacionais();
+      if (status === 'assinado' && silent !== true) {
+        alert('Contrato marcado como assinado. Pagamentos da O.S. foram liberados automaticamente.');
+      }
+      return true;
+    } catch (e) {
+      if (silent !== true) setContratosError(e?.message || 'Falha ao atualizar status do contrato.');
+      return false;
     }
   };
 
@@ -4384,7 +4454,7 @@ function App({ authUser, onLogout = () => {} }) {
               <div className="mb-3">
                 <h3 className="text-base font-semibold text-slate-800">Lista de contratos</h3>
                 <p className="text-xs text-slate-500">
-                  Um contrato por O.S., com status automático de assinatura.
+                  Um contrato por O.S., com status manual simples (Pendente, Enviado ou Assinado).
                 </p>
               </div>
               {contratosError ? (
@@ -4441,6 +4511,18 @@ function App({ authUser, onLogout = () => {} }) {
                               onClick={() => reenviarContrato(item)}
                             >
                               Reenviar
+                            </button>
+                            <button
+                              type="button"
+                              disabled={contratoListaSavingId === item.os_id || item.status === 'assinado'}
+                              className="rounded-md border border-emerald-300 px-2 py-1 text-xs text-emerald-800 disabled:opacity-60"
+                              onClick={async () => {
+                                setContratoListaSavingId(item.os_id);
+                                await atualizarStatusContrato(item.os_id, 'assinado');
+                                setContratoListaSavingId(null);
+                              }}
+                            >
+                              {contratoListaSavingId === item.os_id ? 'A guardar...' : 'Marcar como assinado'}
                             </button>
                           </td>
                         </tr>
@@ -6406,14 +6488,47 @@ function App({ authUser, onLogout = () => {} }) {
                   {osDraft.emitir_contrato && osOperacional && (
                     <div className="mb-4 rounded-lg border border-slate-200 p-3">
                       <h4 className="text-sm font-semibold text-slate-800">Contrato com cliente</h4>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Status: <strong>{labelContratoStatus(osDraft.contrato_status)}</strong>
-                        {osDraft.contrato_assinado_em && (
-                          <span className="ml-2">
-                            — assinado em {String(osDraft.contrato_assinado_em).slice(0, 10)}
-                          </span>
-                        )}
-                      </p>
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="text-xs text-slate-600">
+                          <span className="mb-0.5 block font-medium">Status do contrato</span>
+                          <select
+                            value={contratoUiStatusFromRow(osDraft)}
+                            disabled={contratoStatusSaving}
+                            onChange={async (e) => {
+                              const nextStatus = e.target.value;
+                              setContratoStatusSaving(true);
+                              await atualizarStatusContrato(osDraft.id, nextStatus);
+                              setContratoStatusSaving(false);
+                            }}
+                            className="rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-60"
+                          >
+                            <option value="pendente">Pendente</option>
+                            <option value="enviado">Enviado</option>
+                            <option value="assinado">Assinado</option>
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          disabled={contratoStatusSaving || contratoUiStatusFromRow(osDraft) === 'assinado'}
+                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+                          style={{ backgroundColor: BRAND_ORANGE }}
+                          onClick={async () => {
+                            setContratoStatusSaving(true);
+                            await atualizarStatusContrato(osDraft.id, 'assinado');
+                            setContratoStatusSaving(false);
+                          }}
+                        >
+                          {contratoStatusSaving ? 'A guardar...' : 'Marcar como assinado'}
+                        </button>
+                        <p className="text-xs text-slate-500">
+                          Estado atual: <strong>{labelContratoStatus(contratoUiStatusFromRow(osDraft))}</strong>
+                          {osDraft.contrato_assinado_em && (
+                            <span className="ml-2">
+                              — assinado em {String(osDraft.contrato_assinado_em).slice(0, 10)}
+                            </span>
+                          )}
+                        </p>
+                      </div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <a
                           href={`${API_BASE}/ordens-servico/${osDraft.id}/contrato-preview`}

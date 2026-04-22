@@ -13,6 +13,14 @@ const n = (v) => Number(v || 0);
 const publicAppBase = () =>
   String(process.env.PUBLIC_APP_URL || 'https://crm-andymodels.onrender.com').replace(/\/$/, '');
 
+function contratoUiStatusFromRow(row) {
+  if (!row || row.emitir_contrato !== true) return 'cancelado';
+  const raw = String(row.contrato_status || '').trim().toLowerCase();
+  if (raw === 'assinado' || raw === 'recebido') return 'assinado';
+  if (row.contrato_enviado_em) return 'enviado';
+  return 'pendente';
+}
+
 async function loadDocumentos(osId) {
   const r = await pool.query(
     `
@@ -249,27 +257,94 @@ router.get('/contratos', async (_req, res, next) => {
     );
 
     const rows = r.rows.map((row) => {
-      const baseStatus = String(row.contrato_status || '').trim();
-      const status =
-        !row.emitir_contrato
-          ? 'cancelado'
-          : baseStatus === 'assinado' || baseStatus === 'recebido'
-            ? 'assinado'
-            : baseStatus === 'aguardando_assinatura'
-              ? 'aguardando_assinatura'
-              : 'aguardando_assinatura';
+      const status = contratoUiStatusFromRow(row);
       return {
         os_id: row.os_id,
         cliente: row.nome_fantasia || row.nome_empresa || '',
         modelos: row.modelos || '',
         created_at: row.created_at,
         status,
+        status_raw: row.contrato_status || null,
         cliente_email: row.cliente_email || '',
         contrato_enviado_em: row.contrato_enviado_em,
         contrato_assinado_em: row.contrato_assinado_em,
       };
     });
     res.json(rows);
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/contratos/:osId/status', async (req, res, next) => {
+  const osId = Number(req.params.osId);
+  try {
+    if (Number.isNaN(osId)) return res.status(400).json({ message: 'ID invalido.' });
+    const target = String(req.body?.status || '')
+      .trim()
+      .toLowerCase();
+    if (!['pendente', 'enviado', 'assinado'].includes(target)) {
+      return res.status(400).json({ message: 'Status invalido. Use pendente, enviado ou assinado.' });
+    }
+
+    const curR = await pool.query(
+      `SELECT id, emitir_contrato, contrato_status, contrato_enviado_em, contrato_assinado_em
+       FROM ordens_servico
+       WHERE id = $1`,
+      [osId],
+    );
+    if (curR.rows.length === 0) return res.status(404).json({ message: 'Contrato nao encontrado.' });
+    const cur = curR.rows[0];
+    if (!cur.emitir_contrato) {
+      return res.status(400).json({ message: 'Contrato desativado para esta O.S.' });
+    }
+
+    if (target === 'assinado') {
+      await pool.query(
+        `UPDATE ordens_servico
+         SET contrato_status = 'assinado',
+             contrato_assinado_em = COALESCE(contrato_assinado_em, NOW()),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [osId],
+      );
+    } else if (target === 'enviado') {
+      await pool.query(
+        `UPDATE ordens_servico
+         SET contrato_status = 'aguardando_assinatura',
+             contrato_enviado_em = COALESCE(contrato_enviado_em, NOW()),
+             contrato_assinado_em = NULL,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [osId],
+      );
+    } else {
+      await pool.query(
+        `UPDATE ordens_servico
+         SET contrato_status = 'aguardando_assinatura',
+             contrato_enviado_em = NULL,
+             contrato_assinado_em = NULL,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [osId],
+      );
+    }
+
+    const outR = await pool.query(
+      `SELECT id, emitir_contrato, contrato_status, contrato_enviado_em, contrato_assinado_em
+       FROM ordens_servico
+       WHERE id = $1`,
+      [osId],
+    );
+    const out = outR.rows[0];
+    return res.json({
+      message: target === 'assinado' ? 'Contrato marcado como assinado.' : `Status alterado para ${target}.`,
+      os_id: osId,
+      status: contratoUiStatusFromRow(out),
+      status_raw: out.contrato_status || null,
+      contrato_enviado_em: out.contrato_enviado_em,
+      contrato_assinado_em: out.contrato_assinado_em,
+    });
   } catch (e) {
     next(e);
   }
