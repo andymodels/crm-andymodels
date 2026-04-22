@@ -58,7 +58,7 @@ Manual (sem Blueprint):
 - **Start Command:** `npm run start:render` (equivale a garantir `public/` → `setup-db` → servidor; ver `backend/package.json`).
 - Defina `DATABASE_URL` (e demais variáveis) no painel do Render se não usar o Blueprint.
 
-**Backup da base de dados (PostgreSQL → B2):** script `backend/scripts/backupDatabaseToB2.js`, agendamento semanal em **GitHub Actions** (`.github/workflows/backup-database-weekly.yml`). Instruções completas: **[`docs/BACKUP_E_RESTAURACAO.md`](./docs/BACKUP_E_RESTAURACAO.md)**.
+**Backup da base de dados (PostgreSQL → B2):** script `backend/scripts/backupDatabaseToB2.js` (`npm run backup:db-b2`). O agendamento automático **não** está incluído no repo (evita pushes bloqueados por permissão `workflow` no PAT); pode correr manualmente ou configurar Cron/Actions no GitHub quando quiserem — ver **[`docs/BACKUP_E_RESTAURACAO.md`](./docs/BACKUP_E_RESTAURACAO.md)**.
 
 **Logs no Render:** a fase **Build** (`npm install`, `npm run build`) aparece no separador **Build** de cada deploy — **não** nos logs de runtime do serviço, onde só vês o **Start Command**. Se só vires `node ...` ou `npm run start:render`, estás nos logs do **arranque do container**, não do build.
 

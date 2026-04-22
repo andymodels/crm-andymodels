@@ -1,0 +1,11 @@
+---
+description: Evita recriar o workflow de backup do GitHub no repositório sem pedido explícito.
+globs: .github/workflows/**
+alwaysApply: false
+---
+
+# Backup e GitHub Actions
+
+- **Não** adicionar, recriar ou sugerir comitar `backup-database-weekly.yml` (ou outro workflow de backup) em `.github/workflows/` a menos que o **utilizador peça explicitamente** a criação desse ficheiro no Git.
+- O agendamento de backup documenta-se em `docs/BACKUP_E_RESTAURACAO.md` (ou anexo YAML em documentação), **não** no repositório, para evitar `git push` bloqueado por falta de permissão `workflow` no token.
+- O script de backup continua em `backend/scripts/backupDatabaseToB2.js` e **não** depende de workflow.
