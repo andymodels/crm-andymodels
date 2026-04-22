@@ -68,7 +68,6 @@ router.post('/public/cadastro-cliente', async (req, res, next) => {
     const sv = sanitizeAndValidateCliente(body, false);
     if (!sv.ok) return res.status(400).json({ message: sv.message });
     Object.assign(body, sv.body);
-    body.instagram = trimStr(raw.instagram);
     body.observacoes = trimStr(body.observacoes);
     if (body.inscricao_estadual === undefined || body.inscricao_estadual === null) {
       body.inscricao_estadual = '';

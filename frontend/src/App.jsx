@@ -440,8 +440,8 @@ const cadastroConfig = {
       bairro: '',
       cidade: '',
       uf: '',
-      website: '',
-      instagram: '',
+      website: 'https://',
+      instagram: 'https://www.instagram.com/',
       observacoes: '',
     },
   },
@@ -1680,7 +1680,14 @@ function App({ authUser, onLogout = () => {} }) {
         nextForm.tipo_pessoa === 'PF' ? formatCpfDisplay(docRaw) : formatCnpjDisplay(docRaw);
       nextForm.documento_representante = formatCpfDisplay(onlyDigits(item.documento_representante || ''));
       nextForm.cep = formatCepDisplay(onlyDigits(item.cep || ''));
-      nextForm.website = item.website != null ? String(item.website) : '';
+      nextForm.website =
+        item.website != null && String(item.website).trim() !== ''
+          ? String(item.website).trim()
+          : 'https://';
+      nextForm.instagram =
+        item.instagram != null && String(item.instagram).trim() !== ''
+          ? String(item.instagram).trim()
+          : 'https://www.instagram.com/';
       nextForm.logradouro = item.logradouro || '';
       nextForm.numero = item.numero || '';
       nextForm.bairro = item.bairro || '';
@@ -4075,7 +4082,7 @@ function App({ authUser, onLogout = () => {} }) {
                   <div>
                     <p className="text-sm font-semibold text-amber-950">Links de modelo</p>
                     <p className="mt-1 max-w-xl text-xs text-amber-950/90">
-                      Gere links únicos de cadastro. Cada link é de uso único e expira automaticamente.
+                      Gere links únicos de cadastro. Cada link é de uso único, válido por 24h e expira automaticamente.
                     </p>
                   </div>
                   <button
@@ -4116,7 +4123,7 @@ function App({ authUser, onLogout = () => {} }) {
                   <div>
                     <p className="text-sm font-semibold text-sky-950">Links de cliente</p>
                     <p className="mt-1 max-w-xl text-xs text-sky-950/90">
-                      Gere links únicos para clientes preencherem o cadastro público com os mesmos dados do cadastro interno.
+                      Gere links únicos para clientes preencherem o cadastro público (válido por 24h, uso único).
                     </p>
                   </div>
                   <button
@@ -4760,19 +4767,37 @@ function App({ authUser, onLogout = () => {} }) {
                 if (isClienteTab && field === 'website') {
                   return (
                     <label key={field} className="text-sm text-slate-600 md:col-span-2">
-                      <span className="mb-1 block">
-                        {labelForField(field)}
-                        <span className="font-normal text-slate-500"> (opcional)</span>
-                      </span>
+                      <span className="mb-1 block">{labelForField(field)}</span>
                       <input
                         type="url"
                         inputMode="url"
                         autoComplete="url"
-                        placeholder="https://www.exemplo.com.br"
+                        placeholder="exemplo.com.br"
                         value={form[field] ?? ''}
-                        onChange={(event) => onChange(field, event.target.value.trim())}
+                        onChange={(event) => onChange(field, event.target.value)}
                         className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
                       />
+                      <span className="mt-1 block text-xs text-slate-500">Começa com https:// — complete o domínio.</span>
+                    </label>
+                  );
+                }
+
+                if (isClienteTab && field === 'instagram') {
+                  return (
+                    <label key={field} className="text-sm text-slate-600 md:col-span-2">
+                      <span className="mb-1 block">{labelForField(field)}</span>
+                      <input
+                        type="url"
+                        inputMode="url"
+                        autoComplete="url"
+                        placeholder="utilizador ou restante do endereço"
+                        value={form[field] ?? ''}
+                        onChange={(event) => onChange(field, event.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none ring-slate-300 focus:ring"
+                      />
+                      <span className="mt-1 block text-xs text-slate-500">
+                        Pré-preenchido com https://www.instagram.com/ — indique só o utilizador, se preferir.
+                      </span>
                     </label>
                   );
                 }

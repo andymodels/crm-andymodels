@@ -283,6 +283,15 @@ const initDb = async () => {
     CREATE INDEX IF NOT EXISTS idx_cadastro_links_tipo_status ON cadastro_links (tipo, status);
   `);
   await pool.query(`
+    ALTER TABLE cadastro_links
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+  `);
+  await pool.query(`
+    UPDATE cadastro_links
+    SET expires_at = criado_em + INTERVAL '24 hours'
+    WHERE expires_at IS NULL;
+  `);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS cadastro_publico_historico (
       id SERIAL PRIMARY KEY,
       entidade TEXT NOT NULL,

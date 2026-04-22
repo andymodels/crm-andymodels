@@ -1,13 +1,27 @@
-/** Horas até o link expirar (padrão 72). Defina CADASTRO_LINK_HORAS_VALIDADE no ambiente. */
+/** Horas até o link expirar (padrão 24). Defina CADASTRO_LINK_HORAS_VALIDADE no ambiente. */
 function getHorasValidade() {
   const n = Number(process.env.CADASTRO_LINK_HORAS_VALIDADE);
-  return Number.isFinite(n) && n > 0 ? n : 72;
+  return Number.isFinite(n) && n > 0 ? n : 24;
 }
 
-function isExpired(criadoEm) {
+/**
+ * @param {{ criado_em?: unknown, expires_at?: unknown }} row
+ * @returns {boolean} true se o link não deve mais ser usado (fail-closed se datas inválidas)
+ */
+function isExpired(row) {
+  if (row == null) return true;
+  const exp = row.expires_at;
+  if (exp != null && String(exp).trim() !== '') {
+    const t = new Date(exp).getTime();
+    if (!Number.isFinite(t)) return true;
+    return Date.now() >= t;
+  }
+  const criadoEm = row.criado_em;
   const horas = getHorasValidade();
-  const limite = new Date(new Date(criadoEm).getTime() + horas * 3600 * 1000);
-  return Date.now() > limite.getTime();
+  const c = new Date(criadoEm).getTime();
+  if (!Number.isFinite(c)) return true;
+  const limite = c + horas * 3600 * 1000;
+  return Date.now() >= limite;
 }
 
 /**
@@ -18,7 +32,7 @@ async function validateTokenReadOnly(pool, token, expectedType = 'modelo') {
   if (!t) return { ok: false, message: 'Token ausente.' };
 
   const r = await pool.query(
-    'SELECT id, token, criado_em, status, usado_em, tipo, modelo_id, cliente_id FROM cadastro_links WHERE token = $1',
+    'SELECT id, token, criado_em, expires_at, status, usado_em, tipo, modelo_id, cliente_id FROM cadastro_links WHERE token = $1',
     [t],
   );
   if (r.rows.length === 0) return { ok: false, message: 'Link invalido ou inexistente.' };
@@ -40,7 +54,7 @@ async function validateTokenReadOnly(pool, token, expectedType = 'modelo') {
   if (row.status === 'usado') return { ok: false, message: 'Este link ja foi utilizado.' };
   if (row.status === 'expirado') return { ok: false, message: 'Este link expirou.' };
 
-  if (isExpired(row.criado_em)) {
+  if (isExpired(row)) {
     await pool.query(`UPDATE cadastro_links SET status = 'expirado' WHERE id = $1`, [row.id]);
     return { ok: false, message: 'Este link expirou.' };
   }
@@ -73,7 +87,7 @@ async function validateAndLockLink(client, token, expectedType = 'modelo') {
   if (row.status === 'usado') return { ok: false, message: 'Este link ja foi utilizado.' };
   if (row.status === 'expirado') return { ok: false, message: 'Este link expirou.' };
 
-  if (isExpired(row.criado_em)) {
+  if (isExpired(row)) {
     await client.query(`UPDATE cadastro_links SET status = 'expirado' WHERE id = $1`, [row.id]);
     return { ok: false, message: 'Este link expirou.' };
   }

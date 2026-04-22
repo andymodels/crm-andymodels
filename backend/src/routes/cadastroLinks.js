@@ -19,15 +19,20 @@ function cadastroPublicBase() {
 router.post('/cadastro-links/gerar', async (req, res, next) => {
   try {
     const token = crypto.randomUUID();
+    const horasIns = getHorasValidade();
     const result = await pool.query(
-      `INSERT INTO cadastro_links (token, status, tipo) VALUES ($1, 'ativo', 'modelo') RETURNING id, criado_em`,
-      [token],
+      `INSERT INTO cadastro_links (token, status, tipo, expires_at)
+       VALUES ($1, 'ativo', 'modelo', NOW() + ($2::double precision * INTERVAL '1 hour'))
+       RETURNING id, criado_em, expires_at`,
+      [token, horasIns],
     );
     const row = result.rows[0];
     const base = cadastroPublicBase();
     const url = `${base}/cadastro-modelo?token=${encodeURIComponent(token)}`;
-    const horas = getHorasValidade();
-    const validoAte = new Date(new Date(row.criado_em).getTime() + horas * 3600 * 1000);
+    const horas = horasIns;
+    const validoAte = row.expires_at
+      ? new Date(row.expires_at)
+      : new Date(new Date(row.criado_em).getTime() + horas * 3600 * 1000);
     return res.status(201).json({
       id: row.id,
       token,
@@ -47,15 +52,20 @@ router.post('/cadastro-links/gerar', async (req, res, next) => {
 router.post('/cadastro-links/clientes/gerar', async (req, res, next) => {
   try {
     const token = crypto.randomUUID();
+    const horasIns = getHorasValidade();
     const result = await pool.query(
-      `INSERT INTO cadastro_links (token, status, tipo) VALUES ($1, 'ativo', 'cliente') RETURNING id, criado_em`,
-      [token],
+      `INSERT INTO cadastro_links (token, status, tipo, expires_at)
+       VALUES ($1, 'ativo', 'cliente', NOW() + ($2::double precision * INTERVAL '1 hour'))
+       RETURNING id, criado_em, expires_at`,
+      [token, horasIns],
     );
     const row = result.rows[0];
     const base = cadastroPublicBase();
     const url = `${base}/cadastro-cliente?token=${encodeURIComponent(token)}`;
-    const horas = getHorasValidade();
-    const validoAte = new Date(new Date(row.criado_em).getTime() + horas * 3600 * 1000);
+    const horas = horasIns;
+    const validoAte = row.expires_at
+      ? new Date(row.expires_at)
+      : new Date(new Date(row.criado_em).getTime() + horas * 3600 * 1000);
     return res.status(201).json({
       id: row.id,
       token,

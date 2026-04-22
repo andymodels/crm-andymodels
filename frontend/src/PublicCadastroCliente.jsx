@@ -7,6 +7,8 @@ import { formatCpfDisplay, formatCnpjDisplay, formatCepDisplay, formatPhoneDispl
 
 const BRAND_ORANGE = '#F59E0B';
 const SUCCESS_TEXT = 'Cadastro de cliente recebido com sucesso. Obrigado.';
+const CLIENTE_WEBSITE_PREFILL = 'https://';
+const CLIENTE_INSTAGRAM_PREFILL = 'https://www.instagram.com/';
 
 const trimStr = (v) => String(v ?? '').trim();
 const normalizeDynamicTextList = (items) => {
@@ -31,8 +33,8 @@ const emptyForm = () => ({
   bairro: '',
   cidade: '',
   uf: '',
-  website: '',
-  instagram: '',
+  website: CLIENTE_WEBSITE_PREFILL,
+  instagram: CLIENTE_INSTAGRAM_PREFILL,
   observacoes: '',
 });
 
@@ -191,7 +193,6 @@ export default function PublicCadastroCliente() {
 
       const body = {
         ...sv.body,
-        instagram: trimStr(form.instagram),
         token: tokenParam,
       };
 
@@ -252,7 +253,6 @@ export default function PublicCadastroCliente() {
           <TextField label="Razão social" value={form.nome_empresa} onChange={(v) => onChange('nome_empresa', v)} required />
           <TextField label="Nome fantasia" value={form.nome_fantasia} onChange={(v) => onChange('nome_fantasia', v)} required />
           <TextField label="Inscrição estadual" value={form.inscricao_estadual} onChange={(v) => onChange('inscricao_estadual', v)} />
-          <TextField label="Instagram (opcional)" value={form.instagram} onChange={(v) => onChange('instagram', v)} />
 
           <BlockTitle>Representante e contato</BlockTitle>
           <TextField label="Representante legal" value={form.contato_principal} onChange={(v) => onChange('contato_principal', v)} required />
@@ -279,8 +279,23 @@ export default function PublicCadastroCliente() {
           <TextField label="Cidade" value={form.cidade} onChange={(v) => onChange('cidade', v)} required />
           <TextField label="UF" value={form.uf} onChange={(v) => onChange('uf', v.toUpperCase())} required />
 
-          <BlockTitle>Outros</BlockTitle>
-          <TextField label="Website" value={form.website} onChange={(v) => onChange('website', v)} placeholder="https://..." className="md:col-span-2" />
+          <BlockTitle>Presença online</BlockTitle>
+          <TextField
+            label="Website"
+            value={form.website}
+            onChange={(v) => onChange('website', v)}
+            placeholder="exemplo.com.br"
+            className="md:col-span-2"
+          />
+          <TextField
+            label="Instagram"
+            value={form.instagram}
+            onChange={(v) => onChange('instagram', v)}
+            placeholder="utilizador ou restante do endereço"
+            className="md:col-span-2"
+          />
+
+          <BlockTitle>Observações</BlockTitle>
           <label className="text-sm text-slate-600 md:col-span-2">
             <span className="mb-1 block font-medium text-slate-800">Observações</span>
             <textarea value={form.observacoes} onChange={(e) => onChange('observacoes', e.target.value)} rows={3} className="w-full rounded-lg border border-slate-300 px-3 py-2" />

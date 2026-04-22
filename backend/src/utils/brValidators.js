@@ -69,6 +69,23 @@ function isValidWebsiteOptional(raw) {
   }
 }
 
+const CLIENTE_WEBSITE_EMPTY = new Set(['', 'https://', 'http://']);
+const CLIENTE_INSTAGRAM_EMPTY = new Set([
+  '',
+  'https://www.instagram.com/',
+  'https://www.instagram.com',
+]);
+
+function normalizeClienteWebsite(raw) {
+  const w = String(raw ?? '').trim();
+  return CLIENTE_WEBSITE_EMPTY.has(w) ? '' : w;
+}
+
+function normalizeClienteInstagram(raw) {
+  const ig = String(raw ?? '').trim();
+  return CLIENTE_INSTAGRAM_EMPTY.has(ig) ? '' : ig;
+}
+
 /**
  * Normaliza e valida payload de cliente (POST completo ou PUT parcial).
  * @returns {{ ok: boolean, message?: string, body?: object }}
@@ -107,16 +124,30 @@ function sanitizeAndValidateCliente(body, partial = false) {
   }
 
   if (!partial) {
-    const w = String(b.website ?? '').trim();
+    const w = normalizeClienteWebsite(b.website);
     b.website = w;
     if (w && !isValidWebsiteOptional(w)) {
       return { ok: false, message: 'Website invalido. Use endereco completo com http:// ou https://' };
     }
-  } else if (b.website !== undefined) {
-    const w = String(b.website).trim();
-    b.website = w;
-    if (w && !isValidWebsiteOptional(w)) {
-      return { ok: false, message: 'Website invalido. Use endereco completo com http:// ou https://' };
+    const ig = normalizeClienteInstagram(b.instagram);
+    b.instagram = ig;
+    if (ig && !isValidWebsiteOptional(ig)) {
+      return { ok: false, message: 'Instagram invalido. Use URL completa com https:// (ex.: perfil no Instagram).' };
+    }
+  } else {
+    if (b.website !== undefined) {
+      const w = normalizeClienteWebsite(b.website);
+      b.website = w;
+      if (w && !isValidWebsiteOptional(w)) {
+        return { ok: false, message: 'Website invalido. Use endereco completo com http:// ou https://' };
+      }
+    }
+    if (b.instagram !== undefined) {
+      const ig = normalizeClienteInstagram(b.instagram);
+      b.instagram = ig;
+      if (ig && !isValidWebsiteOptional(ig)) {
+        return { ok: false, message: 'Instagram invalido. Use URL completa com https:// (ex.: perfil no Instagram).' };
+      }
     }
   }
 
