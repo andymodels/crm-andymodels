@@ -1,7 +1,54 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE, fetchWithAuth, throwIfHtmlOrCannotPost } from '../apiConfig';
+import { onlyDigits } from '../utils/brValidators';
 
 const APPLICATIONS_ADMIN = `${API_BASE}/website/applications/admin`;
+
+/** Telefone apenas com dígitos, com código Brasil 55 quando aplicável (inscrições BR). */
+function whatsappDigitsForBr(phoneRaw) {
+  const d = onlyDigits(phoneRaw);
+  if (!d) return '';
+  if (d.startsWith('55') && d.length >= 12) return d;
+  /** Número nacional típico: DDD + 8 ou 9 dígitos (10 ou 11 dígitos no total). */
+  if (d.length >= 10 && d.length <= 11) return `55${d}`;
+  return '';
+}
+
+function inscricaoWhatsappUrl(phoneRaw, personName) {
+  const num = whatsappDigitsForBr(phoneRaw);
+  if (!num) return null;
+  const nome = String(personName ?? '').trim();
+  const text = nome
+    ? `Olá ${nome}, vi sua inscrição na Andy Models e gostaria de falar com você.`
+    : `Olá, vi sua inscrição na Andy Models e gostaria de falar com você.`;
+  return `https://wa.me/${num}?text=${encodeURIComponent(text)}`;
+}
+
+function WhatsAppTelefoneLink({ phone, personName, className }) {
+  const display = phone != null && String(phone).trim() !== '' ? String(phone).trim() : '';
+  const href = display ? inscricaoWhatsappUrl(display, personName) : null;
+  if (!display) {
+    return <span className="text-slate-500">—</span>;
+  }
+  if (!href) {
+    return <span className="text-slate-800">{display}</span>;
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Abrir WhatsApp"
+      className={
+        className ??
+        'font-medium text-emerald-700 underline decoration-emerald-700/35 underline-offset-2 hover:text-emerald-900'
+      }
+      onClick={(e) => e.stopPropagation()}
+    >
+      {display}
+    </a>
+  );
+}
 
 function formatListDate(iso) {
   if (iso == null || iso === '') return '—';
@@ -291,6 +338,7 @@ export default function WebsiteInscricoesPage() {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
                   <th className="px-3 py-2.5">Nome</th>
+                  <th className="px-3 py-2.5">Telefone</th>
                   <th className="px-3 py-2.5">Cidade / estado</th>
                   <th className="px-3 py-2.5">Data</th>
                 </tr>
@@ -325,6 +373,9 @@ export default function WebsiteInscricoesPage() {
                             </span>
                           ) : null}
                         </span>
+                      </td>
+                      <td className="max-w-[200px] px-3 py-2.5 text-slate-800">
+                        <WhatsAppTelefoneLink phone={row.phone} personName={row.name} />
                       </td>
                       <td className="px-3 py-2.5 text-slate-700">{formatCityState(row)}</td>
                       <td className="px-3 py-2.5 text-slate-600">{formatListDate(row.created_at)}</td>
@@ -409,7 +460,16 @@ export default function WebsiteInscricoesPage() {
                     <FieldRow label="Altura" value={detail.height} />
                     <FieldRow label="Cidade / estado" value={formatCityState(detail)} />
                     <FieldRow label="E-mail" value={detail.email} />
-                    <FieldRow label="Telefone" value={detail.phone} />
+                    <div className="grid gap-1 border-b border-slate-100 py-2 sm:grid-cols-[118px_1fr]">
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Telefone</dt>
+                      <dd className="text-sm text-slate-900">
+                        <WhatsAppTelefoneLink
+                          phone={detail.phone}
+                          personName={detail.name}
+                          className="font-medium text-emerald-700 hover:underline"
+                        />
+                      </dd>
+                    </div>
                     <FieldRow label="Instagram" value={detail.instagram} />
                     <FieldRow label="Data" value={formatListDate(detail.created_at)} />
                   </dl>

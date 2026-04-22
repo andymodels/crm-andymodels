@@ -21,7 +21,8 @@
     "apagar:orcamentos-teste": "node scripts/apagar-orcamentos-teste.js",
     "apagar:radio-teste": "node scripts/apagar-radio-playlists-teste.js",
     "apagar:radio-tudo": "node scripts/apagar-toda-radio.js",
-    "migrate:radio-b2": "node scripts/migrate-radio-local-to-b2.js"
+    "migrate:radio-b2": "node scripts/migrate-radio-local-to-b2.js",
+    "backup:db-b2": "node scripts/backupDatabaseToB2.js"
   },
   "keywords": [],
   "author": "",
