@@ -26,7 +26,7 @@ if (!fs.existsSync(frontendPkg)) {
 console.log('[postinstall-build-web] Render: a compilar React e copiar para public/...');
 try {
   execSync(
-    'npm install --prefix ../frontend && npm run build --prefix ../frontend && node scripts/copy-frontend.js',
+    'node scripts/clean-web-artifacts.js && npm install --prefix ../frontend && npm run build --prefix ../frontend && node scripts/copy-frontend.js',
     { cwd: backendRoot, stdio: 'inherit', env: { ...process.env } },
   );
 } catch (e) {
