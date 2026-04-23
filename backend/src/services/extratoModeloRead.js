@@ -1,3 +1,5 @@
+const { lineLiquido } = require('./osFinanceiro');
+
 const n = (v) => Number(v || 0);
 
 function parseYmd(s) {
@@ -25,31 +27,107 @@ function endOfMonthFromYm(ym) {
   return last.toISOString().slice(0, 10);
 }
 
-async function openingBalanceBefore(pool, modeloId, beforeDate) {
-  if (!beforeDate) return 0;
-  const r = await pool.query(
-    `
-    SELECT COALESCE(SUM(credito - debito), 0)::numeric AS s
-    FROM extrato_modelo_linhas
-    WHERE modelo_id = $1 AND data_lancamento < $2::date
-    `,
-    [modeloId, beforeDate],
-  );
-  return n(r.rows[0].s);
+function inPeriod(dateYmd, startYmd, endYmd) {
+  if (startYmd && dateYmd < startYmd) return false;
+  if (endYmd && dateYmd > endYmd) return false;
+  return true;
 }
 
-function mapLinha(row) {
-  return {
-    id: row.id,
-    data: row.data,
-    descricao: row.descricao,
-    cliente: row.cliente || '',
-    os_id: row.os_id,
-    credito: n(row.credito),
-    debito: n(row.debito),
-    saldo_acumulado: n(row.saldo_acumulado),
-    tipo_linha: row.tipo_linha,
-  };
+function compareLinha(a, b) {
+  if (a.data !== b.data) return String(a.data).localeCompare(String(b.data));
+  if (a.ref_tipo !== b.ref_tipo) return String(a.ref_tipo).localeCompare(String(b.ref_tipo));
+  return Number(a.ref_id || 0) - Number(b.ref_id || 0);
+}
+
+function toYmd(d) {
+  return String(d || '').slice(0, 10);
+}
+
+async function loadRowsFromSource(pool, modeloId) {
+  const [jobsRes, pagamentosRes] = await Promise.all([
+    pool.query(
+      `
+      SELECT
+        om.id AS os_modelo_id,
+        om.os_id,
+        om.cache_modelo,
+        om.emite_nf_propria,
+        os.imposto_percent,
+        os.agencia_fee_percent,
+        os.created_at,
+        COALESCE(NULLIF(TRIM(c.nome_fantasia), ''), NULLIF(TRIM(c.nome_empresa), ''), '') AS cliente
+      FROM os_modelos om
+      JOIN ordens_servico os ON os.id = om.os_id
+      JOIN clientes c ON c.id = os.cliente_id
+      WHERE om.modelo_id = $1
+        AND os.status IS DISTINCT FROM 'cancelada'
+      ORDER BY os.created_at ASC, om.id ASC
+      `,
+      [modeloId],
+    ),
+    pool.query(
+      `
+      SELECT
+        p.id,
+        p.valor,
+        p.data_pagamento,
+        p.observacao,
+        om.os_id,
+        COALESCE(NULLIF(TRIM(c.nome_fantasia), ''), NULLIF(TRIM(c.nome_empresa), ''), '') AS cliente
+      FROM pagamentos_modelo p
+      JOIN os_modelos om ON om.id = p.os_modelo_id
+      JOIN ordens_servico os ON os.id = om.os_id
+      JOIN clientes c ON c.id = os.cliente_id
+      WHERE om.modelo_id = $1
+      ORDER BY p.data_pagamento ASC, p.id ASC
+      `,
+      [modeloId],
+    ),
+  ]);
+
+  const linhas = [];
+
+  for (const row of jobsRes.rows) {
+    const credito = n(
+      lineLiquido(
+        row.cache_modelo,
+        row.imposto_percent,
+        row.agencia_fee_percent,
+        row.emite_nf_propria,
+      ),
+    );
+    if (credito <= 0.005) continue;
+    linhas.push({
+      ref_tipo: 'job_os_modelo',
+      ref_id: Number(row.os_modelo_id),
+      data: toYmd(row.created_at),
+      descricao: `Job realizado – O.S. #${row.os_id}`,
+      cliente: row.cliente || '',
+      os_id: row.os_id,
+      credito,
+      debito: 0,
+      tipo_linha: 'job',
+    });
+  }
+
+  for (const row of pagamentosRes.rows) {
+    const debito = n(row.valor);
+    if (debito <= 0.005) continue;
+    linhas.push({
+      ref_tipo: 'pagamento_modelo',
+      ref_id: Number(row.id),
+      data: toYmd(row.data_pagamento),
+      descricao: 'Pagamento realizado',
+      cliente: row.cliente || '',
+      os_id: row.os_id,
+      credito: 0,
+      debito,
+      tipo_linha: 'pagamento',
+    });
+  }
+
+  linhas.sort(compareLinha);
+  return linhas;
 }
 
 /**
@@ -71,34 +149,25 @@ async function getExtratoModeloLinhas(pool, modeloId, query = {}) {
 
   let filtros = { ver_tudo: true, mes: null, data_de: null, data_ate: null };
 
+  const todasLinhas = await loadRowsFromSource(pool, modeloId);
+
   if (verTudo) {
-    const q = await pool.query(
-      `
-      SELECT
-        e.id,
-        to_char(e.data_lancamento, 'YYYY-MM-DD') AS data,
-        e.descricao,
-        e.cliente,
-        e.os_id,
-        e.credito,
-        e.debito,
-        e.tipo_linha,
-        SUM(e.credito - e.debito) OVER (
-          ORDER BY e.data_lancamento ASC, e.id ASC
-          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS saldo_acumulado
-      FROM extrato_modelo_linhas e
-      WHERE e.modelo_id = $1
-      ORDER BY e.data_lancamento ASC, e.id ASC
-      `,
-      [modeloId],
-    );
-    return {
-      modelo_id: modeloId,
-      nome,
-      filtros,
-      linhas: q.rows.map(mapLinha),
-    };
+    let saldo = 0;
+    const linhas = todasLinhas.map((ln) => {
+      saldo += ln.credito - ln.debito;
+      return {
+        id: `${ln.ref_tipo}:${ln.ref_id}`,
+        data: ln.data,
+        descricao: ln.descricao,
+        cliente: ln.cliente || '',
+        os_id: ln.os_id,
+        credito: ln.credito,
+        debito: ln.debito,
+        saldo_acumulado: n(saldo),
+        tipo_linha: ln.tipo_linha,
+      };
+    });
+    return { modelo_id: modeloId, nome, filtros, linhas };
   }
 
   let periodStart;
@@ -125,39 +194,37 @@ async function getExtratoModeloLinhas(pool, modeloId, query = {}) {
     filtros = { ver_tudo: false, mes: null, data_de: null, data_ate: null, mes_corrente: true };
   }
 
-  const opening = await openingBalanceBefore(pool, modeloId, periodStart);
-  const q = await pool.query(
-    `
-    SELECT
-      e.id,
-      to_char(e.data_lancamento, 'YYYY-MM-DD') AS data,
-      e.descricao,
-      e.cliente,
-      e.os_id,
-      e.credito,
-      e.debito,
-      e.tipo_linha,
-      $2::numeric + SUM(e.credito - e.debito) OVER (
-        ORDER BY e.data_lancamento ASC, e.id ASC
-        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-      ) AS saldo_acumulado
-    FROM extrato_modelo_linhas e
-    WHERE e.modelo_id = $1
-      AND e.data_lancamento >= $3::date
-      AND e.data_lancamento <= $4::date
-    ORDER BY e.data_lancamento ASC, e.id ASC
-    `,
-    [modeloId, opening, periodStart, periodEnd],
-  );
+  let saldo = 0;
+  for (const ln of todasLinhas) {
+    if (ln.data < periodStart) saldo += ln.credito - ln.debito;
+  }
+
+  const linhas = [];
+  for (const ln of todasLinhas) {
+    if (!inPeriod(ln.data, periodStart, periodEnd)) continue;
+    saldo += ln.credito - ln.debito;
+    linhas.push({
+      id: `${ln.ref_tipo}:${ln.ref_id}`,
+      data: ln.data,
+      descricao: ln.descricao,
+      cliente: ln.cliente || '',
+      os_id: ln.os_id,
+      credito: ln.credito,
+      debito: ln.debito,
+      saldo_acumulado: n(saldo),
+      tipo_linha: ln.tipo_linha,
+    });
+  }
 
   return {
     modelo_id: modeloId,
     nome,
     filtros: { ...filtros, periodo_inicio: periodStart, periodo_fim: periodEnd },
-    linhas: q.rows.map(mapLinha),
+    linhas,
   };
 }
 
 module.exports = {
   getExtratoModeloLinhas,
+  loadRowsFromSource,
 };

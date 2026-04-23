@@ -1,34 +1,25 @@
 const express = require('express');
 const { pool } = require('../config/db');
-const { getExtratoModeloLinhas } = require('../services/extratoModeloRead');
+const { getExtratoModeloLinhas, loadRowsFromSource } = require('../services/extratoModeloRead');
 
 const router = express.Router();
 
 const n = (v) => Number(v || 0);
 
 /**
- * Lista de modelos com saldo atual (soma crédito − débito nas linhas do extrato).
+ * Lista de modelos com saldo atual (espelho de O.S. + pagamentos).
  * GET /extrato-modelo/resumo
  */
 router.get('/extrato-modelo/resumo', async (req, res, next) => {
   try {
-    const r = await pool.query(`
-      SELECT
-        m.id,
-        m.nome,
-        COALESCE(SUM(e.credito - e.debito), 0)::numeric AS saldo_atual
-      FROM modelos m
-      LEFT JOIN extrato_modelo_linhas e ON e.modelo_id = m.id
-      GROUP BY m.id, m.nome
-      ORDER BY m.nome ASC
-    `);
-    res.json(
-      r.rows.map((row) => ({
-        id: row.id,
-        nome: row.nome,
-        saldo_atual: n(row.saldo_atual),
-      })),
-    );
+    const modelos = await pool.query(`SELECT id, nome FROM modelos ORDER BY nome ASC`);
+    const out = [];
+    for (const m of modelos.rows) {
+      const linhas = await loadRowsFromSource(pool, Number(m.id));
+      const saldo = linhas.reduce((acc, ln) => acc + n(ln.credito) - n(ln.debito), 0);
+      out.push({ id: m.id, nome: m.nome, saldo_atual: n(saldo) });
+    }
+    res.json(out);
   } catch (e) {
     next(e);
   }
