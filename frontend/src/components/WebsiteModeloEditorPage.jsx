@@ -1284,13 +1284,7 @@ export default function WebsiteModeloEditorPage({
         ) {
           throw new Error('Modelo menor de idade: preencha nome, CPF e telefone do responsável (bloco Cadastro interno).');
         }
-        const pendingVideoLocals = localMediaItems.filter((x) => x.isVideo);
-        if (pendingVideoLocals.length > 0) {
-          throw new Error(
-            'No cadastro CRM não é possível guardar vídeo a partir de ficheiro na galeria. Use «Vídeo (URL)» ou o fluxo Website (proxy do site) para enviar MP4/WebM.',
-          );
-        }
-        const pendingImageLocals = localMediaItems.filter((x) => x.file instanceof File && !x.isVideo);
+        const pendingWebsiteUploads = localMediaItems.filter((x) => x.file instanceof File);
         const parseCrmJson = (raw, r) => {
           throwIfHtmlOrCannotPost(raw, r.status);
           let data;
@@ -1332,10 +1326,10 @@ export default function WebsiteModeloEditorPage({
         let latestRow = crmLoadedRow;
         let workingId = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
 
-        if (pendingImageLocals.length > 0) {
+        if (pendingWebsiteUploads.length > 0) {
           setGalleryUploadBusy(true);
-          const batches = chunkArray(pendingImageLocals, CRM_GALLERY_UPLOAD_BATCH);
-          const total = pendingImageLocals.length;
+          const batches = chunkWebsiteMediaUploads(pendingWebsiteUploads, CRM_GALLERY_UPLOAD_BATCH);
+          const total = pendingWebsiteUploads.length;
           let done = 0;
 
           if (workingId == null) {
@@ -1399,12 +1393,13 @@ export default function WebsiteModeloEditorPage({
 
           for (let bi = 0; bi < batches.length; bi += 1) {
             const batch = batches[bi];
-            setUploadProgress(`${done} de ${total} imagens enviadas`);
+            setUploadProgress(`${done} de ${total} ficheiros enviados`);
             const fd = new FormData();
             const bodySlice = { ...putBase, ordered_images: JSON.stringify(currentMedia) };
             appendModelFieldsToFormData(fd, bodySlice);
             batch.forEach((item) => {
-              fd.append('photos', item.file, item.file.name || 'photo.jpg');
+              const fallback = isVideoFileUpload(item.file) ? 'video.mp4' : 'photo.jpg';
+              fd.append('photos', item.file, item.file.name || fallback);
             });
             const rUp = await fetchWithAuth(`${API_BASE}/admin/models/${widSync}`, {
               method: 'PUT',
@@ -1427,7 +1422,7 @@ export default function WebsiteModeloEditorPage({
             currentMedia = nextMedia;
             setApiMedia(nextMedia);
             done += batch.length;
-            setUploadProgress(`${done} de ${total} imagens enviadas`);
+            setUploadProgress(`${done} de ${total} ficheiros enviados`);
             if (bi + 1 < batches.length) await delay(GALLERY_BATCH_DELAY_MS);
           }
           setUploadProgress('');
