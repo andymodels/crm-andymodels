@@ -66,6 +66,36 @@ function chunkArray(arr, size) {
   return out;
 }
 
+/**
+ * Alguns servidores de upload falham quando imagem + vídeo vão no mesmo multipart.
+ * Estratégia: vídeos sobem um por vez; imagens seguem em lotes curtos.
+ */
+function chunkWebsiteMediaUploads(items, imageBatchSize) {
+  const out = [];
+  const safeImageBatch = Number.isFinite(Number(imageBatchSize)) && Number(imageBatchSize) > 0
+    ? Number(imageBatchSize)
+    : 2;
+  let imageBuffer = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    const f = item?.file;
+    if (isVideoFileUpload(f)) {
+      if (imageBuffer.length > 0) {
+        out.push(imageBuffer);
+        imageBuffer = [];
+      }
+      out.push([item]);
+      continue;
+    }
+    imageBuffer.push(item);
+    if (imageBuffer.length >= safeImageBatch) {
+      out.push(imageBuffer);
+      imageBuffer = [];
+    }
+  }
+  if (imageBuffer.length > 0) out.push(imageBuffer);
+  return out;
+}
+
 function delay(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1088,10 +1118,13 @@ export default function WebsiteModeloEditorPage({
     if (files.length === 0) return;
     setFileQueueNotice('');
     let skippedOther = false;
+    let hasVideo = false;
+    let hasImage = false;
     setLocalMediaItems((prev) => {
       const next = [...prev];
       for (const f of files) {
         if (isVideoFileUpload(f)) {
+          hasVideo = true;
           const id =
             typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
               ? crypto.randomUUID()
@@ -1110,6 +1143,7 @@ export default function WebsiteModeloEditorPage({
           skippedOther = true;
           continue;
         }
+        hasImage = true;
         const id =
           typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
             ? crypto.randomUUID()
@@ -1127,6 +1161,8 @@ export default function WebsiteModeloEditorPage({
     });
     if (skippedOther) {
       setFileQueueNotice('Alguns ficheiros foram ignorados — use imagens (JPEG, PNG…) ou vídeo (MP4, WebM…).');
+    } else if (hasVideo && hasImage) {
+      setFileQueueNotice('Vídeos serão enviados separadamente para evitar falhas de processamento.');
     }
     e.target.value = '';
   };
@@ -1606,7 +1642,7 @@ export default function WebsiteModeloEditorPage({
         if (pendingWebsiteUploads.length > 0) {
           setGalleryUploadBusy(true);
           let currentMedia = [...apiMedia];
-          const batches = chunkArray(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
+          const batches = chunkWebsiteMediaUploads(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
           let done = 0;
           const total = pendingWebsiteUploads.length;
           for (let bi = 0; bi < batches.length; bi += 1) {
@@ -1713,7 +1749,7 @@ export default function WebsiteModeloEditorPage({
         if (pendingWebsiteUploads.length > 0) {
           setGalleryUploadBusy(true);
           let currentMedia = [...apiMedia];
-          const batches = chunkArray(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
+          const batches = chunkWebsiteMediaUploads(pendingWebsiteUploads, WEBSITE_MEDIA_UPLOAD_BATCH);
           let done = 0;
           const total = pendingWebsiteUploads.length;
           let localId = id;
