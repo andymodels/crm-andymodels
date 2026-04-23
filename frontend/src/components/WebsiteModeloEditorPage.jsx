@@ -1376,6 +1376,17 @@ export default function WebsiteModeloEditorPage({
         let latestRow = crmLoadedRow;
         let workingId = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
 
+        const filterSiteMedia = (arr) =>
+          [...(arr || [])].filter(
+            (it) =>
+              it &&
+              typeof it === 'object' &&
+              String(it.url || '').trim() &&
+              !String(it.url).startsWith('data:'),
+          );
+        /** Estado da galeria a gravar no site (ordem/remoções); após uploads usa o último lote, não só apiMedia em cache. */
+        let gallerySnapshot = filterSiteMedia(apiMedia);
+
         if (pendingWebsiteUploads.length > 0) {
           setGalleryUploadBusy(true);
           const batches = chunkWebsiteMediaUploads(pendingWebsiteUploads, CRM_GALLERY_UPLOAD_BATCH);
@@ -1475,8 +1486,53 @@ export default function WebsiteModeloEditorPage({
             setUploadProgress(`${done} de ${total} ficheiros enviados`);
             if (bi + 1 < batches.length) await delay(GALLERY_BATCH_DELAY_MS);
           }
+          gallerySnapshot = filterSiteMedia(currentMedia);
           setUploadProgress('');
           setGalleryUploadBusy(false);
+        }
+
+        /**
+         * Sem novos ficheiros o fluxo anterior não chamava o site — só PUT /modelos — e a ordem/apagados perdiam-se.
+         * PUT multipart só com campos + ordered_images repõe galeria no site (mesmo sem partes `photos`).
+         */
+        let widGallery =
+          latestRow?.website_model_id != null && !Number.isNaN(Number(latestRow.website_model_id))
+            ? Number(latestRow.website_model_id)
+            : null;
+        if ((widGallery == null || widGallery <= 0) && workingId != null) {
+          const rW = await fetchWithAuth(`${API_BASE}/modelos/${workingId}`);
+          const rawW = await rW.text();
+          throwIfHtmlOrCannotPost(rawW, rW.status);
+          const rowW = parseJsonSafeLocal(rawW) || {};
+          if (rW.ok && rowW && typeof rowW === 'object') {
+            latestRow = rowW;
+            widGallery =
+              rowW.website_model_id != null && !Number.isNaN(Number(rowW.website_model_id))
+                ? Number(rowW.website_model_id)
+                : null;
+          }
+        }
+        if (widGallery != null && widGallery > 0 && workingId != null) {
+          const putBaseGal = formToWebsiteModelPut(form);
+          const fdGal = new FormData();
+          const bodyGal = { ...putBaseGal, ordered_images: JSON.stringify(gallerySnapshot) };
+          appendModelFieldsToFormData(fdGal, bodyGal);
+          const rGal = await fetchWithAuth(`${API_BASE}/admin/models/${widGallery}`, {
+            method: 'PUT',
+            body: fdGal,
+            ...FETCH_UPLOAD,
+          });
+          const rawGal = await rGal.text();
+          throwIfHtmlOrCannotPost(rawGal, rGal.status);
+          const dataGal = parseJsonSafeLocal(rawGal) || {};
+          if (!rGal.ok) {
+            const msg = extractApiErrorMessage(dataGal) || `HTTP ${rGal.status}`;
+            throw new Error(msg);
+          }
+          const synced = await loadCrmWebsiteMediaFallback(widGallery, dataGal);
+          if (synced && Array.isArray(synced)) {
+            setApiMedia(synced);
+          }
         }
 
         const body = buildCrmModeloApiBody(form, crmExtra, [], latestRow || crmLoadedRow);
