@@ -12,6 +12,14 @@ const HOST = '0.0.0.0';
 
 const server = app.listen(PORT, HOST);
 
+/** Uploads grandes (vídeo via proxy → site) podem demorar vários minutos; evitar fechar a socket cedo. */
+const longMs = Number(process.env.HTTP_SERVER_LONG_TIMEOUT_MS) || 920000;
+server.timeout = longMs;
+if ('requestTimeout' in server && typeof server.requestTimeout !== 'undefined') {
+  server.requestTimeout = longMs;
+}
+server.headersTimeout = longMs + 20000;
+
 server.once('listening', () => {
   console.log(`API running on http://${HOST}:${PORT}`);
   try {

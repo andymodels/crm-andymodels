@@ -13,7 +13,7 @@ import InputTelefone from './components/InputTelefone';
 import InputCPF from './components/InputCPF';
 import InputCNPJ from './components/InputCNPJ';
 import InputCEP from './components/InputCEP';
-import { fetchWithAuth } from './apiConfig';
+import { fetchWithAuth, throwIfHtmlOrCannotPost } from './apiConfig';
 import AtendimentoPage from './components/AtendimentoPage';
 import {
   sanitizeAndValidateCliente,
@@ -61,21 +61,6 @@ function fetchWithTimeout(url, options = {}) {
   return fetch(url, { credentials: 'include', ...options, signal: controller.signal }).finally(() => {
     clearTimeout(id);
   });
-}
-
-/** Express devolve HTML "Cannot POST /api/..." quando não há rota — outro servidor na mesma porta. */
-function throwIfHtmlOrCannotPost(raw, httpStatus) {
-  const t = String(raw || '');
-  if (!t.includes('<') && !/cannot\s+post/i.test(t)) return;
-  const m = t.match(/Cannot POST\s+([^\s<]+)/i);
-  if (m) {
-    throw new Error(
-      `A porta do backend não é a deste CRM (pedido ${m[1]} foi recusado). Feche o outro programa nessa porta ou alinhe PORT no backend/.env com VITE_DEV_PROXY_PORT no frontend/.env e reinicie.`,
-    );
-  }
-  throw new Error(
-    `Resposta inválida (HTML) do servidor (HTTP ${httpStatus}). Confirme que corre "npm run dev" na pasta backend deste projeto.`,
-  );
 }
 
 const formatBRL = (value) => {

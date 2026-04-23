@@ -140,6 +140,13 @@ export function xhrPostWithAuth(url, body, options = {}) {
 }
 
 export function throwIfHtmlOrCannotPost(raw, httpStatus) {
+  const sc = Number(httpStatus) || 0;
+  /** Gateways (Render, nginx) devolvem HTML em 502/503/504 — não confundir com «porta errada em dev». */
+  if (sc === 502 || sc === 503 || sc === 504) {
+    throw new Error(
+      `O servidor devolveu HTTP ${sc} (tempo esgotado ou gateway à espera do fim do envio). Com vídeos grandes isto é frequente na hospedagem: use um ficheiro mais pequeno (MP4 H.264), envie um vídeo de cada vez, ou use «Vídeo (URL)» em vez de ficheiro na galeria.`,
+    );
+  }
   const t = String(raw || '');
   const trimmed = t.trim();
   /** JSON válido (erros da API, proxy do site) pode conter `<` dentro de `message` — não tratar como página HTML. */
@@ -159,6 +166,8 @@ export function throwIfHtmlOrCannotPost(raw, httpStatus) {
     );
   }
   throw new Error(
-    `Resposta inválida (HTML) do servidor (HTTP ${httpStatus}). Confirme que corre "npm run dev" na pasta backend deste projeto.`,
+    sc === 413
+      ? `Ficheiro demasiado grande (HTTP 413). Reduza o vídeo ou a imagem e tente de novo.`
+      : `Resposta inválida (HTML) do servidor (HTTP ${httpStatus}). Se está no CRM online, pode ser sobrecarga ou timeout do proxy; em desenvolvimento local, confirme que o backend deste projeto está a correr na porta certa.`,
   );
 }

@@ -245,7 +245,12 @@ async function forwardMultipartModelToWebsite(method, urlString, req) {
   if (typeof fetch !== 'function') {
     throw new Error('Multipart requer Node 18+ (fetch).');
   }
-  const r = await fetch(urlString, { method: m, headers, body: fd });
+  const timeoutMs = Number(process.env.WEBSITE_ADMIN_FETCH_TIMEOUT_MS) || 15 * 60 * 1000;
+  const fetchOpts = { method: m, headers, body: fd };
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    fetchOpts.signal = AbortSignal.timeout(Math.max(60_000, timeoutMs));
+  }
+  const r = await fetch(urlString, fetchOpts);
   console.log('RESPONSE STATUS:', r.status);
   const raw = await r.text();
   const preview = raw.length > 800 ? `${raw.slice(0, 800)}… (+${raw.length - 800} chars)` : raw;
