@@ -32,6 +32,60 @@ function stripInternalFieldsMedia(items) {
   });
 }
 
+function str(v) {
+  return v != null ? String(v).trim() : '';
+}
+
+/** Nome/textos como no site público — NUNCA usar `modelos.nome` (nome civil interno). */
+function nomePublicoDoAdmin(adminData) {
+  if (!adminData || typeof adminData !== 'object') return '';
+  const nested = adminData.model && typeof adminData.model === 'object' ? adminData.model : null;
+  const candidates = [
+    adminData.name,
+    adminData.nome,
+    adminData.title,
+    adminData.display_name,
+    nested?.name,
+    nested?.nome,
+    nested?.title,
+  ];
+  for (const c of candidates) {
+    const s = str(c);
+    if (s) return s;
+  }
+  return '';
+}
+
+function bioPublicaDoAdmin(adminData, perfil) {
+  if (!adminData || typeof adminData !== 'object') {
+    return perfil.bio != null ? str(perfil.bio) : '';
+  }
+  const nested = adminData.model && typeof adminData.model === 'object' ? adminData.model : null;
+  const fromAdmin = str(
+    adminData.bio ?? adminData.description ?? nested?.bio ?? nested?.description ?? '',
+  );
+  if (fromAdmin) return fromAdmin;
+  return perfil.bio != null ? str(perfil.bio) : '';
+}
+
+function slugPublicoDoAdmin(adminData, perfil) {
+  const fromPerfil = str(perfil.slug_site);
+  if (!adminData || typeof adminData !== 'object') return fromPerfil;
+  const nested = adminData.model && typeof adminData.model === 'object' ? adminData.model : null;
+  return str(adminData.slug ?? nested?.slug) || fromPerfil;
+}
+
+function instagramPublicoDoAdmin(adminData, perfil, row) {
+  const nested = adminData && adminData.model && typeof adminData.model === 'object' ? adminData.model : null;
+  const fromAdmin = str(
+    adminData?.instagram ?? nested?.instagram ?? adminData?.instagram_username ?? nested?.instagram_username ?? '',
+  );
+  if (fromAdmin) return fromAdmin;
+  if (perfil.instagram != null) return str(perfil.instagram);
+  if (row.instagram != null) return str(row.instagram);
+  return '';
+}
+
 /** Mesmo segmento que o front (`VITE_WEBSITE_MODEL_PATH`), para o cliente montar URL pública quando ativo. */
 function websiteModelPublicSegment() {
   return String(process.env.WEBSITE_MODEL_PUBLIC_PATH || 'modelo')
@@ -59,11 +113,6 @@ router.get('/public/modelo-vitrine', async (req, res, next) => {
     const row = result.rows[0];
     const perfil = parsePerfilSite(row);
 
-    const slug = String(perfil.slug_site || '').trim();
-    const nomeExibicao = String(perfil.nome_site || row.nome || '').trim() || 'Modelo';
-    const bio = perfil.bio != null ? String(perfil.bio).trim() : '';
-    const videoUrl = perfil.video_url != null ? String(perfil.video_url).trim() : '';
-
     const ativoNaVitrine =
       row.ativo_site === true ||
       row.ativo_site === 1 ||
@@ -72,17 +121,18 @@ router.get('/public/modelo-vitrine', async (req, res, next) => {
 
     const wid = row.website_model_id != null ? Number(row.website_model_id) : NaN;
     let media = [];
+    let adminData = null;
 
     if (Number.isFinite(wid) && wid > 0) {
       const url = `${getWebsiteOrigin()}/api/admin/models/${encodeURIComponent(String(wid))}`;
       const { statusCode, raw } = await fetchWebsiteAdminJson(url);
       if (statusCode >= 200 && statusCode < 300 && raw) {
         try {
-          const data = JSON.parse(raw);
-          const m = data.media ?? data.model?.media;
+          adminData = JSON.parse(raw);
+          const m = adminData.media ?? adminData.model?.media;
           if (Array.isArray(m) && m.length > 0) media = m;
         } catch {
-          /* fallback CRM */
+          adminData = null;
         }
       }
     }
@@ -93,23 +143,30 @@ router.get('/public/modelo-vitrine', async (req, res, next) => {
 
     media = stripInternalFieldsMedia(media);
 
+    const nomeExibicao =
+      nomePublicoDoAdmin(adminData) ||
+      str(perfil.nome_site) ||
+      'Modelo';
+    const slug = slugPublicoDoAdmin(adminData, perfil);
+    const bio = bioPublicaDoAdmin(adminData, perfil);
+    const nestedModel = adminData?.model && typeof adminData.model === 'object' ? adminData.model : null;
+    const videoUrl =
+      str(perfil.video_url) ||
+      str(adminData?.video_url ?? nestedModel?.video_url ?? adminData?.video ?? nestedModel?.video ?? '');
+
+    const instagram = instagramPublicoDoAdmin(adminData, perfil, row);
+
     const websiteOrigin = getWebsiteOrigin().replace(/\/$/, '');
     const segment = websiteModelPublicSegment();
     const urlVitrinePublica =
       slug && ativoNaVitrine ? `${websiteOrigin}/${segment}/${encodeURIComponent(slug)}` : null;
 
     res.json({
-      modelo_id: modeloId,
       nome_exibicao: nomeExibicao,
       slug,
       bio,
       video_url: videoUrl,
-      instagram:
-        perfil.instagram != null
-          ? String(perfil.instagram).trim()
-          : row.instagram != null
-            ? String(row.instagram).trim()
-            : '',
+      instagram,
       ativo_na_vitrine: ativoNaVitrine,
       url_vitrine_publica: urlVitrinePublica,
       website_origin: websiteOrigin,

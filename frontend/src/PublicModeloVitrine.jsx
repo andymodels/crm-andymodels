@@ -103,18 +103,20 @@ export default function PublicModeloVitrine() {
     <div className="min-h-screen bg-stone-100 pb-16 pt-8">
       <div className="mx-auto max-w-4xl px-4">
         <div className="mb-6 rounded-2xl border border-amber-200/80 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <strong>Pré-visualização confidencial</strong> — partilhe só com quem deve ver esta ficha. Quando o modelo estiver{' '}
-          <em>ativo na vitrine</em>
+          <strong>Pré-visualização confidencial</strong> — mostra apenas o mesmo tipo de informação que o{' '}
+          <strong>site público</strong> (vitrine): nome artístico, texto, medidas e mídia. Não inclui dados internos do CRM
+          (nome civil, documentos, contactos privados, observações internas). Partilhe só com quem deve ver. Quando o modelo
+          estiver <em>ativo na vitrine</em>
           {urlPublico ? (
             <>
-              , o perfil público é o mesmo conteúdo em{' '}
+              , o endereço público passa a ser{' '}
               <a className="font-medium underline" href={urlPublico} target="_blank" rel="noreferrer">
                 {urlPublico}
-              </a>
-              .
+              </a>{' '}
+              com o mesmo conteúdo.
             </>
           ) : (
-            ' no site institucional, o endereço público passará a mostrar o mesmo perfil.'
+            ', o endereço público no site mostrará o mesmo perfil.'
           )}
         </div>
 
@@ -187,7 +189,7 @@ export default function PublicModeloVitrine() {
           <p className="mt-10 text-center text-sm text-stone-500">Sem mídia para mostrar nesta pré-visualização.</p>
         ) : null}
 
-        <p className="mt-12 text-center text-xs text-stone-400">Andy Models · pré-visualização interna</p>
+        <p className="mt-12 text-center text-xs text-stone-400">Andy Models · pré-visualização da vitrine</p>
       </div>
     </div>
   );
