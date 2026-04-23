@@ -571,14 +571,9 @@ router.get('/modelos/:id/link-secreto-vitrine', async (req, res, next) => {
     }
     const token = signModeloPreviewToken(id);
     const base = publicAppBaseUrl(req);
-    if (!base) {
-      return res.status(500).json({
-        message:
-          'Configure PUBLIC_APP_URL no servidor (URL publica deste CRM) para gerar o link secreto.',
-      });
-    }
-    const url = `${base}/vitrine-secreta?t=${encodeURIComponent(token)}`;
-    res.json({ url });
+    /** URL completa para partilhar (ex.: WhatsApp); o cliente também pode montar com `window.location.origin` + token. */
+    const url = base ? `${base}/vitrine-secreta?t=${encodeURIComponent(token)}` : '';
+    res.json({ url, token });
   } catch (error) {
     next(error);
   }

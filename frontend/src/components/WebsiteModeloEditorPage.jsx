@@ -825,8 +825,8 @@ export default function WebsiteModeloEditorPage({
   /** Cadastro unificado (CRM): campos orçamento / internos. */
   const [crmExtra, setCrmExtra] = useState(createCrmExtraInitial);
   const [crmLoadedRow, setCrmLoadedRow] = useState(null);
-  /** Pré-visualização pública no CRM (token JWT) — funciona mesmo com «Ativo no site» desligado. */
-  const [secretVitrineUrl, setSecretVitrineUrl] = useState('');
+  /** Token JWT para /vitrine-secreta — o href usa sempre o mesmo domínio do browser (evita página em branco se PUBLIC_APP_URL estiver errado). */
+  const [secretVitrineToken, setSecretVitrineToken] = useState('');
   const [secretVitrineLoading, setSecretVitrineLoading] = useState(false);
   const [secretVitrineErr, setSecretVitrineErr] = useState('');
   /** Link público (token): foto perfil, NF — senha de extrato é gerada no cliente até existir login (ver modeloPublicCadastroLink). */
@@ -938,13 +938,13 @@ export default function WebsiteModeloEditorPage({
 
   useEffect(() => {
     if (!isCrm) {
-      setSecretVitrineUrl('');
+      setSecretVitrineToken('');
       setSecretVitrineErr('');
       return undefined;
     }
     const cid = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
     if (cid == null) {
-      setSecretVitrineUrl('');
+      setSecretVitrineToken('');
       setSecretVitrineErr('');
       return undefined;
     }
@@ -966,10 +966,10 @@ export default function WebsiteModeloEditorPage({
           const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
           throw new Error(msg);
         }
-        const u = data?.url != null ? String(data.url).trim() : '';
+        const tok = data?.token != null ? String(data.token).trim() : '';
         if (!cancelled) {
-          if (u) setSecretVitrineUrl(u);
-          else setSecretVitrineErr('Resposta sem URL.');
+          if (tok) setSecretVitrineToken(tok);
+          else setSecretVitrineErr('Resposta sem token de pré-visualização.');
         }
       } catch (e) {
         if (!cancelled) setSecretVitrineErr(e?.message ? String(e.message) : 'Erro ao gerar link.');
@@ -2858,6 +2858,10 @@ export default function WebsiteModeloEditorPage({
                 const slugPublico = String(formSafe.slug_site || editSlug || '').trim();
                 const urlPerfil = slugPublico ? getWebsiteModelPublicUrl(slugPublico) : '';
                 const vitrinePublicaAtiva = Boolean(slugPublico && formSafe.ativo);
+                const secretPreviewHref =
+                  typeof window !== 'undefined' && secretVitrineToken
+                    ? `${window.location.origin}/vitrine-secreta?t=${encodeURIComponent(secretVitrineToken)}`
+                    : '';
 
                 if (isCrm) {
                   return (
@@ -2868,13 +2872,13 @@ export default function WebsiteModeloEditorPage({
                         <span className="text-xs text-red-600" title={secretVitrineErr}>
                           Link secreto indisponível
                         </span>
-                      ) : secretVitrineUrl ? (
+                      ) : secretPreviewHref ? (
                         <a
-                          href={secretVitrineUrl}
+                          href={secretPreviewHref}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="font-medium text-amber-800 underline-offset-2 hover:underline"
-                          title="Abre uma pré-visualização confidencial neste CRM. Funciona mesmo com «Ativo no site» desligado; partilhe só com quem deve ver."
+                          title="Abre a pré-visualização neste mesmo site (CRM). Funciona com «Ativo no site» desligado; partilhe só com quem deve ver."
                         >
                           Link secreto (pré-visualização) ↗
                         </a>
@@ -2892,11 +2896,11 @@ export default function WebsiteModeloEditorPage({
                           Vitrine pública no site ↗
                         </a>
                       ) : slugPublico && !formSafe.ativo ? (
-                        <span
-                          className="text-xs text-slate-500"
-                          title="Com «Ativo no site» desligado, o slug não aparece na vitrine; use o link secreto para mostrar a ficha."
-                        >
-                          Vitrine pública: inativa
+                        <span className="max-w-xl text-xs leading-snug text-slate-600">
+                          <span className="font-medium text-slate-700">Site público (andymodels):</span> inativo — marque{' '}
+                          <strong>«Ativo no site»</strong> na secção <em>Identificação e site</em> (por cima desta) e clique em{' '}
+                          <strong>Guardar cadastro</strong>. Enquanto isso, use só o <strong>link secreto</strong> acima para
+                          mostrar a ficha (não é clicável esta linha).
                         </span>
                       ) : !slugPublico ? (
                         <span className="text-xs text-slate-500" title="Defina o slug em Identificação">
