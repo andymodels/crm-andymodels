@@ -9,6 +9,7 @@ import AuthGate from './AuthGate.jsx'
 import ModeloExtratoPortal from './ModeloExtratoPortal.jsx'
 import ContratoAssinaturaPublica from './ContratoAssinaturaPublica.jsx'
 import PublicAgendaConfirmacao from './PublicAgendaConfirmacao.jsx'
+import PublicModeloVitrine from './PublicModeloVitrine.jsx'
 
 function LegacyAgendaConfirmRedirect() {
   const { search } = useLocation()
@@ -25,6 +26,7 @@ createRoot(document.getElementById('root')).render(
         <Route path="/assinatura-contrato" element={<ContratoAssinaturaPublica />} />
         <Route path="/agenda/confirmar" element={<PublicAgendaConfirmacao />} />
         <Route path="/agenda-confirmar" element={<LegacyAgendaConfirmRedirect />} />
+        <Route path="/vitrine-secreta" element={<PublicModeloVitrine />} />
         <Route path="/*" element={<AuthGate>{({ user, onLogout }) => <App authUser={user} onLogout={onLogout} />}</AuthGate>} />
       </Routes>
     </BrowserRouter>

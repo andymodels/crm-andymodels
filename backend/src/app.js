@@ -24,6 +24,7 @@ const websiteInstagramRouter = require('./routes/websiteInstagram');
 const publicRadioRouter = require('./routes/publicRadio');
 const radioRouter = require('./routes/radio');
 const publicApplicationsRouter = require('./routes/publicApplications');
+const publicModeloVitrineRouter = require('./routes/publicModeloVitrine');
 const { UPLOAD_ROOT } = require('./services/storage');
 
 const app = express();
@@ -98,6 +99,7 @@ app.use('/api', publicContratoAssinaturaRouter);
 app.use('/api', publicAgendaPresencaRouter);
 app.use('/api', publicApplicationsRouter);
 app.use('/api', publicRadioRouter);
+app.use('/api', publicModeloVitrineRouter);
 
 // Restante da API exige sessão admin
 app.use('/api', requireAdminAuth);

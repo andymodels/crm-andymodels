@@ -22,8 +22,18 @@ const {
 } = require('../services/websiteHttpClient');
 const { runImportModelsFromWebsite } = require('../services/importModelsFromWebsite');
 const { missingRequiredFields, MODEL_POST_REQUIRED_FIELDS } = require('../utils/modeloPostRequired');
+const { signModeloPreviewToken } = require('../utils/auth');
 
 const router = express.Router();
+
+function publicAppBaseUrl(req) {
+  const env = String(process.env.PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+  if (env) return env;
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  const host = req.get('host');
+  if (host) return `${proto}://${host}`;
+  return '';
+}
 
 /** Anexos de galeria ao modelo (CRM): vários pedidos pequenos evitam 413/timeout com dezenas de fotos. */
 const modeloGaleriaUpload = multer({
@@ -543,6 +553,32 @@ router.get('/modelos/by-website/:wid', async (req, res, next) => {
       return res.status(404).json({ message: 'Nao encontrado.' });
     }
     return res.json(mapModeloRowFotoForApi(result.rows[0]));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** URL absoluta da página pública «vitrine-secreta» no mesmo domínio do CRM (token JWT). */
+router.get('/modelos/:id/link-secreto-vitrine', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id) || id <= 0) {
+      return res.status(400).json({ message: 'ID invalido.' });
+    }
+    const check = await pool.query('SELECT id FROM modelos WHERE id = $1', [id]);
+    if (check.rows.length === 0) {
+      return res.status(404).json({ message: 'Nao encontrado.' });
+    }
+    const token = signModeloPreviewToken(id);
+    const base = publicAppBaseUrl(req);
+    if (!base) {
+      return res.status(500).json({
+        message:
+          'Configure PUBLIC_APP_URL no servidor (URL publica deste CRM) para gerar o link secreto.',
+      });
+    }
+    const url = `${base}/vitrine-secreta?t=${encodeURIComponent(token)}`;
+    res.json({ url });
   } catch (error) {
     next(error);
   }

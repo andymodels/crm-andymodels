@@ -42,6 +42,32 @@ function verifyUserToken(token) {
   return jwt.verify(token, jwtSecret());
 }
 
+/** Link público «secreto» para pré-visualizar vitrine sem depender de «ativo no site». */
+function modeloPreviewExpiresIn() {
+  const raw = String(process.env.MODELO_PREVIEW_LINK_EXPIRES || '').trim();
+  return raw || '365d';
+}
+
+function signModeloPreviewToken(modeloId) {
+  const mid = Number(modeloId);
+  if (!Number.isFinite(mid) || mid <= 0) {
+    throw new Error('modelo_id invalido.');
+  }
+  return jwt.sign({ typ: 'modelo_preview', mid }, jwtSecret(), {
+    expiresIn: modeloPreviewExpiresIn(),
+  });
+}
+
+function verifyModeloPreviewToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) throw new Error('token ausente.');
+  const p = jwt.verify(raw, jwtSecret());
+  if (!p || p.typ !== 'modelo_preview') throw new Error('tipo invalido.');
+  const mid = Number(p.mid);
+  if (!Number.isFinite(mid) || mid <= 0) throw new Error('mid invalido.');
+  return mid;
+}
+
 function appendSetCookieHeader(res, value) {
   const existing = res.getHeader('Set-Cookie');
   if (!existing) {
@@ -94,6 +120,8 @@ module.exports = {
   readAuthToken,
   signUserToken,
   verifyUserToken,
+  signModeloPreviewToken,
+  verifyModeloPreviewToken,
   setAuthCookie,
   clearAuthCookie,
   hashPassword,

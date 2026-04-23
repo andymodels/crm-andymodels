@@ -825,6 +825,10 @@ export default function WebsiteModeloEditorPage({
   /** Cadastro unificado (CRM): campos orçamento / internos. */
   const [crmExtra, setCrmExtra] = useState(createCrmExtraInitial);
   const [crmLoadedRow, setCrmLoadedRow] = useState(null);
+  /** Pré-visualização pública no CRM (token JWT) — funciona mesmo com «Ativo no site» desligado. */
+  const [secretVitrineUrl, setSecretVitrineUrl] = useState('');
+  const [secretVitrineLoading, setSecretVitrineLoading] = useState(false);
+  const [secretVitrineErr, setSecretVitrineErr] = useState('');
   /** Link público (token): foto perfil, NF — senha de extrato é gerada no cliente até existir login (ver modeloPublicCadastroLink). */
   const [linkFotoBase64, setLinkFotoBase64] = useState('');
   const [linkFotoPreview, setLinkFotoPreview] = useState('');
@@ -925,6 +929,52 @@ export default function WebsiteModeloEditorPage({
         if (!cancelled) setLoadError(e?.message ? String(e.message) : 'Erro ao carregar.');
       } finally {
         if (!cancelled) setLoadLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCrm, crmModeloId]);
+
+  useEffect(() => {
+    if (!isCrm) {
+      setSecretVitrineUrl('');
+      setSecretVitrineErr('');
+      return undefined;
+    }
+    const cid = crmModeloId != null && !Number.isNaN(Number(crmModeloId)) ? Number(crmModeloId) : null;
+    if (cid == null) {
+      setSecretVitrineUrl('');
+      setSecretVitrineErr('');
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setSecretVitrineLoading(true);
+      setSecretVitrineErr('');
+      try {
+        const r = await fetchWithAuth(`${API_BASE}/modelos/${cid}/link-secreto-vitrine`);
+        const raw = await r.text();
+        throwIfHtmlOrCannotPost(raw, r.status);
+        let data = null;
+        try {
+          data = raw ? JSON.parse(raw) : null;
+        } catch {
+          data = null;
+        }
+        if (!r.ok) {
+          const msg = data && typeof data.message === 'string' ? data.message : `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+        const u = data?.url != null ? String(data.url).trim() : '';
+        if (!cancelled) {
+          if (u) setSecretVitrineUrl(u);
+          else setSecretVitrineErr('Resposta sem URL.');
+        }
+      } catch (e) {
+        if (!cancelled) setSecretVitrineErr(e?.message ? String(e.message) : 'Erro ao gerar link.');
+      } finally {
+        if (!cancelled) setSecretVitrineLoading(false);
       }
     })();
     return () => {
@@ -2807,6 +2857,56 @@ export default function WebsiteModeloEditorPage({
               {(() => {
                 const slugPublico = String(formSafe.slug_site || editSlug || '').trim();
                 const urlPerfil = slugPublico ? getWebsiteModelPublicUrl(slugPublico) : '';
+                const vitrinePublicaAtiva = Boolean(slugPublico && formSafe.ativo);
+
+                if (isCrm) {
+                  return (
+                    <div className="flex min-w-0 flex-col gap-1.5 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
+                      {secretVitrineLoading ? (
+                        <span className="text-xs text-slate-500">A gerar link secreto…</span>
+                      ) : secretVitrineErr ? (
+                        <span className="text-xs text-red-600" title={secretVitrineErr}>
+                          Link secreto indisponível
+                        </span>
+                      ) : secretVitrineUrl ? (
+                        <a
+                          href={secretVitrineUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-amber-800 underline-offset-2 hover:underline"
+                          title="Abre uma pré-visualização confidencial neste CRM. Funciona mesmo com «Ativo no site» desligado; partilhe só com quem deve ver."
+                        >
+                          Link secreto (pré-visualização) ↗
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-500">Guarde a ficha para gerar o link secreto.</span>
+                      )}
+                      {vitrinePublicaAtiva && urlPerfil ? (
+                        <a
+                          href={urlPerfil}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-slate-700 underline-offset-2 hover:underline"
+                          title="Perfil público no site institucional (visível para todos quando está ativo)."
+                        >
+                          Vitrine pública no site ↗
+                        </a>
+                      ) : slugPublico && !formSafe.ativo ? (
+                        <span
+                          className="text-xs text-slate-500"
+                          title="Com «Ativo no site» desligado, o slug não aparece na vitrine; use o link secreto para mostrar a ficha."
+                        >
+                          Vitrine pública: inativa
+                        </span>
+                      ) : !slugPublico ? (
+                        <span className="text-xs text-slate-500" title="Defina o slug em Identificação">
+                          (Defina o slug para o link público no site)
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                }
+
                 return urlPerfil ? (
                   <a
                     href={urlPerfil}
